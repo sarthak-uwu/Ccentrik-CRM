@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../../context/AuthContext";
-import { Bell, Search, ChevronDown, User, Settings, LogOut, Sun, Moon, Monitor, Command, Menu, Brain, Plus, UserPlus, BriefcaseBusiness, CalendarCheck } from "lucide-react";
+import { Bell, Search, ChevronDown, Settings, LogOut, Sun, Moon, Monitor, Command, Menu, Brain, Plus, UserPlus, BriefcaseBusiness, CalendarCheck, Shield } from "lucide-react";
 
 const ROLE_LABELS = { owner: "Super Admin", sales_head: "Sales Head", sales_manager: "Sales Manager", employee: "Employee" };
 import { useTheme } from "../../context/ThemeContext";
@@ -326,25 +326,62 @@ export default function Header({ onMobileMenu, onCommandPalette }) {
         <AnimatePresence>
           {showUserMenu && (
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 6 }}
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 4 }}
-              transition={{ duration: 0.16, ease: [0.4,0,0.2,1] }}
+              exit={{ opacity: 0, scale: 0.96, y: 5 }}
+              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
               className="dropdown-menu"
-              style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, width: 215, zIndex: 50 }}
+              style={{ position: "absolute", top: "calc(100% + 10px)", right: 0, width: 238, zIndex: 50, overflow: "hidden" }}
             >
-              <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", letterSpacing: "-0.01em" }}>{profile?.full_name}</div>
-                <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 1 }}>{profile?.email}</div>
+              {/* User card */}
+              <div style={{ padding: "14px 16px 12px", borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#2563EB,#4F46E5)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12.5, fontWeight: 700, color: "#fff", flexShrink: 0, boxShadow: "0 2px 8px rgba(37,99,235,0.35)", overflow: "hidden" }}>
+                    {profile?.avatar_url
+                      ? <img src={profile.avatar_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }} />
+                      : (profile?.full_name?.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2) || "U")}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.015em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{profile?.full_name}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{profile?.email}</div>
+                  </div>
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 99, background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.2)", fontSize: 10.5, fontWeight: 700, color: "#A78BFA", letterSpacing: "0.02em" }}>
+                    <Shield size={9} strokeWidth={2.2} />
+                    {ROLE_LABELS[profile?.role] || "Employee"}
+                  </span>
+                </div>
               </div>
-              {[{ icon: User, label: "Profile" }, { icon: Settings, label: "Settings" }].map((item) => (
-                <button key={item.label} className="dropdown-item" onClick={() => { navigate("/settings"); setShowUserMenu(false); }}>
-                  <item.icon size={13} strokeWidth={1.7} /> {item.label}
+
+              {/* Settings */}
+              <div style={{ padding: "6px 0" }}>
+                <button
+                  className="dropdown-item"
+                  onClick={() => { navigate("/settings"); setShowUserMenu(false); }}
+                  style={{ gap: 10 }}
+                >
+                  <span style={{ width: 26, height: 26, borderRadius: 7, background: "var(--surface-3)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Settings size={13} strokeWidth={1.7} style={{ color: "var(--text-2)" }} />
+                  </span>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)", lineHeight: 1.2 }}>Settings</div>
+                    <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>Account & preferences</div>
+                  </div>
                 </button>
-              ))}
-              <div style={{ borderTop: "1px solid var(--border)" }}>
-                <button className="dropdown-item danger" onClick={handleLogout}>
-                  <LogOut size={13} strokeWidth={1.7} /> Sign out
+              </div>
+
+              {/* Sign out */}
+              <div style={{ borderTop: "1px solid var(--border)", padding: "6px 0 4px" }}>
+                <button
+                  className="dropdown-item danger"
+                  onClick={handleLogout}
+                  style={{ gap: 10 }}
+                >
+                  <span style={{ width: 26, height: 26, borderRadius: 7, background: "rgba(251,113,133,0.08)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <LogOut size={13} strokeWidth={1.7} />
+                  </span>
+                  <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.2 }}>Sign out</div>
                 </button>
               </div>
             </motion.div>

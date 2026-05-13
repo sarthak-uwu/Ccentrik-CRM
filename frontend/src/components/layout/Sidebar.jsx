@@ -6,8 +6,8 @@ import { supabase } from "../../supabaseClient";
 import {
   LayoutDashboard, UserPlus, BriefcaseBusiness, Building2,
   CalendarCheck, CalendarDays, PhoneCall, MessageSquare,
-  BarChart3, PieChart, Users, Brain, Settings2,
-  LogOut, ChevronLeft, ChevronRight, Workflow, Zap,
+  BarChart3, PieChart, Users, Brain,
+  LogOut, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import logoWhite from "../../assets/logo-white.png";
 import logoBlue from "../../assets/Logo-blue.png";
@@ -44,8 +44,7 @@ const NAV = [
 ];
 
 const SYSTEM = [
-  { to: "/ai-assistant", icon: Brain,    label: "AI Sidekick", highlight: true },
-  { to: "/settings",     icon: Settings2, label: "Settings"   },
+  { to: "/ai-assistant", icon: Brain, label: "AI Sidekick", highlight: true },
 ];
 
 /* Sidebar palette — Ccentrik brand: deep black + white type + violet accents */
