@@ -35,9 +35,13 @@ if (!admin.apps.length) {
 console.log("🔥 Firebase Admin connected");
 
 // Routes
-app.use("/api/auth", require("./routes/auth"));
-app.use("/api/leads", require("./routes/leads"));
-app.use("/api/ai", require("./routes/ai"));
+app.use("/api/auth",       require("./routes/auth"));
+app.use("/api/users",      require("./routes/users"));
+app.use("/api/leads",      require("./routes/leads"));
+app.use("/api/deals",      require("./routes/deals"));
+app.use("/api/activities", require("./routes/activities"));
+app.use("/api/analytics",  require("./routes/analytics"));
+app.use("/api/ai",         require("./routes/ai"));
 
 // Health check
 app.get("/api/health", (_, res) => res.json({ status: "ok", ts: new Date().toISOString() }));
@@ -54,5 +58,9 @@ module.exports = app;
 // Start server locally only
 if (!process.env.VERCEL) {
   const PORT = process.env.PORT || 5000;
-  app.listen(PORT, () => console.log(`🚀 Ccentrik CRM backend running on port ${PORT}`));
+  app.listen(PORT, () => {
+    console.log(`🚀 Ccentrik CRM backend running on port ${PORT}`);
+    const { startCronJobs } = require("./utils/cronJobs");
+    startCronJobs();
+  });
 }
