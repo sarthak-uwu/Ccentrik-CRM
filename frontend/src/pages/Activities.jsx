@@ -102,14 +102,37 @@ const CALL_RESPONSES  = ["Interested", "Not Interested", "Call Back", "No Respon
 // ─── Service ──────────────────────────────────────────────────────────────────
 
 const actService = {
-  async getAll() {
-    const token = await auth.currentUser?.getIdToken();
-    const res = await fetch(`${API}/api/activities?limit=500`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) throw new Error("Failed to fetch activities");
-    const json = await res.json();
-    return json.data || [];
+  async getAll(profile) {
+    if (!profile?.id) return [];
+    const { role, id: profileId } = profile;
+
+    let query = supabase
+      .from("activities")
+      .select(
+        "*, created_by_profile:profiles!activities_created_by_fkey(id,full_name,avatar_url,role), assigned_profile:profiles!activities_assigned_to_fkey(id,full_name,avatar_url), lead:leads(id,contact_name,company_name)"
+      )
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (role === "employee" || role === "inside_sales") {
+      query = query.or(`created_by.eq.${profileId},assigned_to.eq.${profileId},user_id.eq.${profileId}`);
+    } else if (role === "sales_manager") {
+      const { data: reports } = await supabase.from("profiles").select("id").eq("manager_id", profileId);
+      const reportIds = (reports || []).map(r => r.id);
+      const scopeIds  = [profileId, ...reportIds];
+      if (scopeIds.length === 1) {
+        query = query.or(`created_by.eq.${profileId},assigned_to.eq.${profileId},user_id.eq.${profileId}`);
+      } else {
+        query = query.or(
+          `created_by.in.(${scopeIds.join(",")}),assigned_to.in.(${scopeIds.join(",")}),user_id.in.(${scopeIds.join(",")})`
+        );
+      }
+    }
+    // sales_head and owner: no filter — see all activities
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    return data || [];
   },
   async create(payload) {
     const token = await auth.currentUser?.getIdToken();
@@ -132,12 +155,22 @@ const actService = {
     return res.json();
   },
   async delete(id) {
-    const token = await auth.currentUser?.getIdToken();
-    const res = await fetch(`${API}/api/activities/${id}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Failed to delete activity"); }
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (token) {
+        const res = await fetch(`${API}/api/activities/${id}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) return;
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || `Server error ${res.status}`);
+      }
+    } catch (err) {
+      // Fallback: delete directly via Supabase
+      const { error } = await supabase.from("activities").delete().eq("id", id);
+      if (error) throw new Error(error.message);
+    }
   },
 };
 
@@ -436,66 +469,83 @@ function TimelineView({ activities, onEdit, onDelete, onStatusChange, onNew, res
 
 // ─── Table View ───────────────────────────────────────────────────────────────
 
+const ROLE_LABELS = { owner: "Super Admin", sales_head: "Sales Head", sales_manager: "Sales Manager", employee: "Sales Executive", inside_sales: "Inside Sales" };
 function TableView({ activities, onEdit, onDelete, onStatusChange, resolveEntity }) {
-  const { profile, isSalesHead } = useAuth();
+  const { profile } = useAuth();
   if (!activities.length) return <EmptyState />;
+  const TH = ({ label }) => (
+    <th style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1.5px solid #E5E7EB", whiteSpace: "nowrap", background: "#F9FAFB" }}>{label}</th>
+  );
   return (
-    <div style={{ overflowX: "auto" }}>
+    <div style={{ overflowX: "auto", borderRadius: 14, border: "1.5px solid #E5E7EB" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead>
-          <tr style={{ background: "#F9FAFB", borderBottom: "2px solid #E5E7EB" }}>
-            {["Type","Title","Status","Priority","Due Date","Linked To","Assigned","Actions"].map((h) => (
-              <th key={h} style={{ padding: "9px 14px", textAlign: "left", fontSize: 10.5, fontWeight: 800, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.07em", whiteSpace: "nowrap" }}>{h}</th>
-            ))}
+          <tr>
+            {["#","Company Name","Contact Person","Employee","Activity Type","Description","Category","Date & Time","Actions"].map(h => <TH key={h} label={h} />)}
           </tr>
         </thead>
         <tbody>
-          {activities.map((a) => {
-            const def         = ACT_TYPES[typeKey(a.type)] || ACT_TYPES.task;
-            const Icon        = def.icon;
-            const desc        = parseJSON(a.description);
-            const isDone      = a.status === "done";
-            const entity      = resolveEntity(a.related_type, a.related_id);
-            const isOverdue   = !isDone && a.due_date && new Date(a.due_date) < new Date();
-            const myRank2     = ROLE_RANK[profile?.role] || 0;
-            const isOwn2      = a.created_by === profile?.id || a.assigned_to === profile?.id;
-            const canEdit     = isOwn2 || myRank2 >= 3;
-            const canDelete   = profile?.role === "owner" || profile?.role === "sales_head";
+          {activities.map((a, idx) => {
+            const def       = ACT_TYPES[typeKey(a.type)] || ACT_TYPES.task;
+            const ActIcon   = def.icon;
+            const company   = resolveCompany(a) || a.title || "—";
+            const contact   = resolveContact(a);
+            const category  = resolveCategory(a);
+            const emp       = a.assigned_profile || a.created_by_profile || null;
+            const empName   = emp?.full_name || "—";
+            const empRole   = emp?.role ? (ROLE_DISPLAY[emp.role] || emp.role) : "";
+            const desc      = extractDescription(a);
+            const isDone    = a.status === "done";
+            const isOverdue = !isDone && a.due_date && new Date(a.due_date) < new Date();
+            const myRank2   = ROLE_RANK[profile?.role] || 0;
+            const canEdit   = a.created_by === profile?.id || a.assigned_to === profile?.id || myRank2 >= 3;
+            const canDelete = profile?.role === "owner" || profile?.role === "sales_head";
+            const dateStr   = a.created_at ? new Date(a.created_at).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}) : "—";
+            const timeStr   = a.created_at ? new Date(a.created_at).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) : "";
             return (
               <tr key={a.id} style={{ borderBottom: "1px solid #F3F4F6", transition: "background 0.1s" }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "#F9FAFB")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
-                <td style={{ padding: "10px 14px" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: def.bg, color: def.color, border: `1px solid ${def.border}` }}>
-                    <Icon size={10} />{def.label}
+                onMouseEnter={e => e.currentTarget.style.background = "#FAFAFA"}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                <td style={{ padding: "11px 14px", color: "#9CA3AF", fontSize: 11, fontWeight: 600 }}>{idx + 1}</td>
+                <td style={{ padding: "11px 14px", maxWidth: 180 }}>
+                  <div style={{ fontWeight: 700, color: isDone ? "#9CA3AF" : "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{company}</div>
+                </td>
+                <td style={{ padding: "11px 14px", maxWidth: 160 }}>
+                  {contact ? (
+                    <div>
+                      <div style={{ fontWeight: 600, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{contact.name}</div>
+                      {contact.role && <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 1 }}>{contact.role}</div>}
+                    </div>
+                  ) : <span style={{ color: "#D1D5DB" }}>—</span>}
+                </td>
+                <td style={{ padding: "11px 14px", whiteSpace: "nowrap" }}>
+                  <div style={{ fontWeight: 600, color: "#374151" }}>{empName}</div>
+                  {empRole && <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 1 }}>{empRole}</div>}
+                </td>
+                <td style={{ padding: "11px 14px" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: def.bg, color: def.color, border: `1px solid ${def.border}`, whiteSpace: "nowrap" }}>
+                    <ActIcon size={10} />{def.label}
                   </span>
                 </td>
-                <td style={{ padding: "10px 14px", maxWidth: 220 }}>
-                  <div style={{ fontWeight: 600, color: isDone ? "#9CA3AF" : "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.title}</div>
-                  {(desc.remarks || desc.notes) && <div style={{ fontSize: 11.5, color: "#9CA3AF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{desc.remarks || desc.notes}</div>}
+                <td style={{ padding: "11px 14px", maxWidth: 200 }}>
+                  <div style={{ fontSize: 12, color: "#6B7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{desc || "—"}</div>
                 </td>
-                <td style={{ padding: "10px 14px" }}><StatusBadge status={a.status || "todo"} /></td>
-                <td style={{ padding: "10px 14px" }}><PriorityBadge priority={a.priority || "medium"} /></td>
-                <td style={{ padding: "10px 14px" }}>
-                  {a.due_date
-                    ? <span style={{ fontSize: 12, color: isOverdue ? "#EF4444" : "#6B7280", display: "flex", alignItems: "center", gap: 3, fontWeight: isOverdue ? 700 : 400 }}><CalendarClock size={11} />{fmtDate(a.due_date)}</span>
-                    : <span style={{ color: "#D1D5DB" }}>—</span>}
+                <td style={{ padding: "11px 14px" }}>
+                  {category ? (
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 99, background: category.bg, color: category.color, border: `1px solid ${category.border}`, whiteSpace: "nowrap" }}>
+                      {category.label}
+                    </span>
+                  ) : <span style={{ color: "#D1D5DB" }}>—</span>}
                 </td>
-                <td style={{ padding: "10px 14px" }}>
-                  {entity
-                    ? <span style={{ fontSize: 11.5, color: "#1D4ED8", fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}><Link2 size={10} />{entity}</span>
-                    : <span style={{ color: "#D1D5DB" }}>—</span>}
+                <td style={{ padding: "11px 14px", whiteSpace: "nowrap" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: isOverdue ? "#EF4444" : "#374151" }}>{dateStr}</div>
+                  {timeStr && <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 1 }}>{timeStr}</div>}
                 </td>
-                <td style={{ padding: "10px 14px" }}>
-                  {a.assigned_profile
-                    ? <div style={{ display: "flex", alignItems: "center", gap: 5 }}><Avatar user={a.assigned_profile} size={20} /><span style={{ fontSize: 12, color: "#4B5563", whiteSpace: "nowrap" }}>{a.assigned_profile.full_name}</span></div>
-                    : <span style={{ color: "#D1D5DB" }}>—</span>}
-                </td>
-                <td style={{ padding: "10px 14px" }}>
+                <td style={{ padding: "11px 14px" }}>
                   <div style={{ display: "flex", gap: 4 }}>
-                    {canEdit && !isDone && <button onClick={() => onStatusChange(a.id, "done")} title="Mark done" style={{ padding: "3px 7px", border: "1.5px solid #D1FAE5", borderRadius: 7, background: "#ECFDF5", color: "#10B981", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Done</button>}
-                    {canEdit && <button onClick={() => onEdit(a)} style={{ padding: "3px 7px", border: "1.5px solid #E5E7EB", borderRadius: 7, background: "#FFFFFF", color: "#6B7280", cursor: "pointer" }}><Pencil size={11} /></button>}
-                    {canDelete && <button onClick={() => onDelete(a.id)} style={{ padding: "3px 7px", border: "1.5px solid #FECACA", borderRadius: 7, background: "#FEF2F2", color: "#EF4444", cursor: "pointer" }}><Trash2 size={11} /></button>}
+                    {canEdit && !isDone && <button onClick={() => onStatusChange(a.id, "done")} style={{ padding: "3px 8px", border: "1.5px solid #D1FAE5", borderRadius: 7, background: "#ECFDF5", color: "#10B981", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Done</button>}
+                    {canEdit && <button onClick={() => onEdit(a)} style={{ width: 28, height: 28, border: "1.5px solid #E5E7EB", borderRadius: 7, background: "#FFFFFF", color: "#6B7280", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Pencil size={11} /></button>}
+                    {canDelete && <button onClick={() => onDelete(a.id)} style={{ width: 28, height: 28, border: "1.5px solid #FECACA", borderRadius: 7, background: "#FEF2F2", color: "#EF4444", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={11} /></button>}
                   </div>
                 </td>
               </tr>
@@ -1450,11 +1500,8 @@ function EmailActivities({ profile }) {
 // ─── Views ────────────────────────────────────────────────────────────────────
 
 const VIEWS = [
-  { key: "grouped",  label: "By User",  icon: Users        },
-  { key: "timeline", label: "Timeline", icon: LayoutList   },
-  { key: "table",    label: "Table",    icon: Table2       },
-  { key: "board",    label: "Board",    icon: Columns      },
-  { key: "calendar", label: "Calendar", icon: CalendarDays },
+  { key: "list",  label: "List",  icon: LayoutList },
+  { key: "table", label: "Table", icon: Table2     },
 ];
 
 const STATUS_TABS = [
@@ -1467,15 +1514,531 @@ const STATUS_TABS = [
   { key: "completed", label: "Done"       },
 ];
 
+// ─── Activity Feed View ───────────────────────────────────────────────────────
+const MODULE_COLORS = {
+  lead:     { bg: "#EEF2FF", color: "#4F46E5", label: "Lead"     },
+  deal:     { bg: "#ECFDF5", color: "#059669", label: "Deal"     },
+  pipeline: { bg: "#FFF7ED", color: "#C2410C", label: "Pipeline" },
+  task:     { bg: "#F0F9FF", color: "#0369A1", label: "Task"     },
+  meeting:  { bg: "#F5F3FF", color: "#7C3AED", label: "Meeting"  },
+};
+
+// ─── Activity Context Helpers ─────────────────────────────────────────────────
+
+function extractDescription(a) {
+  if (!a.description) return "";
+
+  let raw = "";
+  try {
+    const d = typeof a.description === "string" ? JSON.parse(a.description) : a.description;
+    raw = d.remarks || d.notes || d.outcome || d.body || d.agenda || "";
+  } catch { }
+  if (!raw && typeof a.description === "string" && !a.description.startsWith("{")) raw = a.description;
+  raw = (raw || "").trim();
+  if (!raw) return "";
+
+  // Step 1 — strip any bracket-wrapped type prefix at the start.
+  // Handles the most common stored format: [Follow-up Call] text, (Meeting) text, {Note} text
+  // The bracket content can be up to 60 chars; optional separator chars follow.
+  raw = raw.replace(/^[\[({][^\]})]{1,60}[\]})][:\s,.\-]*/i, "").trim();
+
+  // Step 2 — strip plain "Label: " or "Label - " prefixes for known type labels.
+  if (raw) {
+    const knownLabels = Object.values(ACT_TYPES).map(t => t.label);
+    for (const label of knownLabels) {
+      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`^${escaped}[:\\-|]\\s*`, "i");
+      if (re.test(raw)) { raw = raw.replace(re, "").trim(); break; }
+    }
+  }
+
+  // Fallback: if nothing meaningful remains after stripping
+  if (!raw) return "No description provided";
+  return raw;
+}
+
+function resolveCompany(a) {
+  if (a.lead?.company_name) return a.lead.company_name;
+  if (a.deal?.company_name || a.deal?.title) return a.deal?.company_name || a.deal?.title;
+  try {
+    const d = typeof a.description === "string" ? JSON.parse(a.description) : a.description;
+    if (d?.company_name) return d.company_name;
+  } catch { }
+  return null;
+}
+
+function resolveContact(a) {
+  const leadContact = a.lead?.contact_name;
+  let desig = "";
+  try {
+    const d = typeof a.description === "string" ? JSON.parse(a.description) : a.description;
+    desig = d?.designation || d?.contact_role || "";
+    if (!leadContact && (d?.name || d?.contact_name)) return { name: d.name || d.contact_name, role: desig };
+  } catch { }
+  if (leadContact) return { name: leadContact, role: desig };
+  return null;
+}
+
+function resolveCategory(a) {
+  if (a.deal_id || a.related_type === "deal") {
+    return { label: "Deal", color: "#059669", bg: "#DCFCE7", border: "#86EFAC" };
+  }
+  if (a.lead_id || a.related_type === "lead") {
+    const stage = a.lead?.stage;
+    if (!stage || ["pipeline", "new"].includes(stage)) {
+      return { label: "Pipeline", color: "#2563EB", bg: "#DBEAFE", border: "#93C5FD" };
+    }
+    return { label: "Lead", color: "#D97706", bg: "#FEF3C7", border: "#FCD34D" };
+  }
+  return null;
+}
+
+const ROLE_DISPLAY = { owner: "Super Admin", sales_head: "Sales Head", sales_manager: "Sales Manager", employee: "Sales Executive", inside_sales: "Inside Sales" };
+
+// ─── Feed Card ────────────────────────────────────────────────────────────────
+
+function FeedCard({ a, onEdit, onStatusChange, onDelete, resolveEntity }) {
+  const { profile } = useAuth();
+  const def       = ACT_TYPES[typeKey(a.type)] || ACT_TYPES.task;
+  const Icon      = def.icon;
+  const company   = resolveCompany(a);
+  const contact   = resolveContact(a);
+  const category  = resolveCategory(a);
+  const emp       = a.assigned_profile || a.created_by_profile || null;
+  const empName   = emp?.full_name || "—";
+  const empRole   = emp?.role ? (ROLE_DISPLAY[emp.role] || emp.role) : "";
+  const desc      = extractDescription(a);
+  const isDone    = a.status === "done";
+  const isOverdue = !isDone && a.due_date && new Date(a.due_date) < new Date();
+
+  const dateStr = a.created_at ? new Date(a.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "";
+  const timeStr = a.created_at ? new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "";
+
+  const myRank = ROLE_RANK[profile?.role] || 0;
+  const isOwn  = a.created_by === profile?.id || a.assigned_to === profile?.id;
+  const canAct = isOwn || myRank >= 3;
+  const canDel = profile?.role === "sales_head" || profile?.role === "owner";
+
+  return (
+    <motion.div layout initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+      style={{
+        background: "#FFFFFF", borderRadius: 14, padding: "16px 18px",
+        border: `1.5px solid ${isOverdue ? "#FECACA" : isDone ? "#E5E7EB" : "#E5E7EB"}`,
+        boxShadow: "0 1px 4px rgba(0,0,0,0.05)", transition: "box-shadow 0.15s, transform 0.15s",
+      }}
+      onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 4px 18px rgba(0,0,0,0.09)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+      onMouseLeave={e => { e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.05)"; e.currentTarget.style.transform = "none"; }}>
+
+      {/* Row 1: Company Name (most prominent) + Category + DateTime */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {company ? (
+            <div style={{ fontSize: 15.5, fontWeight: 800, color: isDone ? "#9CA3AF" : "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {company}
+            </div>
+          ) : (
+            <div style={{ fontSize: 14, fontWeight: 700, color: isDone ? "#9CA3AF" : "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {a.title}
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          {category && (
+            <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 9px", borderRadius: 99, background: category.bg, color: category.color, border: `1px solid ${category.border}`, whiteSpace: "nowrap" }}>
+              {category.label}
+            </span>
+          )}
+          {isOverdue && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "#FEF2F2", color: "#EF4444", border: "1px solid #FECACA" }}>Overdue</span>}
+          <span style={{ fontSize: 11, color: "#9CA3AF", whiteSpace: "nowrap" }}>{dateStr}{timeStr ? ` | ${timeStr}` : ""}</span>
+        </div>
+      </div>
+
+      {/* Row 2: Contact Person */}
+      {contact && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: "#9CA3AF", whiteSpace: "nowrap" }}>Contact</span>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: "#374151" }}>
+            {contact.name}{contact.role ? <span style={{ fontWeight: 500, color: "#6B7280" }}> ({contact.role})</span> : ""}
+          </span>
+        </div>
+      )}
+
+      {/* Row 3: Employee + Activity Type + Status */}
+      <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", marginBottom: desc ? 10 : 8 }}>
+        {/* Employee */}
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px 3px 6px", borderRadius: 99, background: "#F3F4F6", border: "1.5px solid #E5E7EB" }}>
+          <div style={{ width: 22, height: 22, borderRadius: "50%", background: "linear-gradient(135deg,#6366F1,#8B5CF6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+            {empName[0]?.toUpperCase() || "?"}
+          </div>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>
+            {empName}{empRole ? <span style={{ color: "#9CA3AF", fontWeight: 500 }}> ({empRole})</span> : ""}
+          </span>
+        </div>
+        {/* Activity Type */}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 99, fontSize: 11.5, fontWeight: 700, background: def.bg, color: def.color, border: `1px solid ${def.border}`, whiteSpace: "nowrap" }}>
+          <Icon size={11} />{def.label}
+        </span>
+        {/* Status */}
+        <StatusBadge status={a.status || "todo"} />
+      </div>
+
+      {/* Row 4: Description (meaningful context) */}
+      {desc && (
+        <div style={{ fontSize: 13, color: "#6B7280", lineHeight: 1.55, borderLeft: "3px solid #E5E7EB", paddingLeft: 10, marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+          {desc}
+        </div>
+      )}
+
+      {/* Row 5: Actions */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, paddingTop: 10, borderTop: "1px solid #F3F4F6" }}>
+        {a.due_date && <span style={{ fontSize: 11.5, color: isOverdue ? "#EF4444" : "#9CA3AF", display: "flex", alignItems: "center", gap: 3 }}><CalendarClock size={11} />{fmtDate(a.due_date)}</span>}
+        <div style={{ flex: 1 }} />
+        {canAct && !isDone && <button onClick={() => onStatusChange(a.id, "done")} style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 8, background: "#ECFDF5", border: "1.5px solid #A7F3D0", color: "#10B981", cursor: "pointer" }}>✓ Done</button>}
+        {canAct && <button onClick={() => onEdit(a)} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 8, background: "#F9FAFB", border: "1px solid #E5E7EB", color: "#6B7280", cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}><Pencil size={10} /> Edit</button>}
+        {canDel && <button onClick={() => onDelete(a.id)} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", color: "#EF4444", cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}><Trash2 size={10} /></button>}
+      </div>
+    </motion.div>
+  );
+}
+
+function ActivityFeedView({ activities, onEdit, onDelete, onStatusChange, resolveEntity }) {
+  const [page, setPage] = useState(1);
+  const PER_PAGE = 20;
+  const total = activities.length;
+  const paged = activities.slice(0, page * PER_PAGE);
+  const hasMore = paged.length < total;
+
+  if (!total) return <EmptyState />;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingBottom: 24 }}>
+      <AnimatePresence initial={false}>
+        {paged.map((a) => (
+          <FeedCard key={a.id} a={a} onEdit={onEdit} onDelete={onDelete} onStatusChange={onStatusChange} resolveEntity={resolveEntity} />
+        ))}
+      </AnimatePresence>
+      {hasMore && (
+        <button onClick={() => setPage((p) => p + 1)}
+          style={{ margin: "8px auto 0", padding: "8px 24px", borderRadius: 10, background: "#F9FAFB", border: "1.5px solid #E5E7EB", color: "#374151", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+          Load more ({total - paged.length} remaining)
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Mini Calendar Sidebar ────────────────────────────────────────────────────
+function MiniCalendarWidget({ activities, selectedDate, onSelectDate }) {
+  const [viewMonth, setViewMonth] = useState(() => new Date());
+
+  const year  = viewMonth.getFullYear();
+  const month = viewMonth.getMonth();
+  const firstDay   = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  // Build activity-count map for this month
+  const countMap = {};
+  activities.forEach((a) => {
+    const d = a.created_at ? new Date(a.created_at) : null;
+    const dd = a.due_date ? new Date(a.due_date) : null;
+    [d, dd].forEach((dt) => {
+      if (dt && dt.getFullYear() === year && dt.getMonth() === month) {
+        const key = dt.getDate();
+        countMap[key] = (countMap[key] || 0) + 1;
+      }
+    });
+  });
+
+  const DAYS = ["Su","Mo","Tu","We","Th","Fr","Sa"];
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const selStr = selectedDate ? new Date(selectedDate).toDateString() : null;
+
+  return (
+    <div style={{ width: 244, flexShrink: 0, background: "#FFFFFF", borderRadius: 14, border: "1.5px solid #E5E7EB", padding: "14px 12px", display: "flex", flexDirection: "column", gap: 10, alignSelf: "flex-start", position: "sticky", top: 0 }}>
+      {/* Month nav */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <button onClick={() => setViewMonth(new Date(year, month - 1, 1))} style={{ background: "none", border: "none", cursor: "pointer", color: "#6B7280", padding: 2, display: "flex" }}><ChevronLeft size={14} /></button>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#111827" }}>{MONTHS[month]} {year}</span>
+        <button onClick={() => setViewMonth(new Date(year, month + 1, 1))} style={{ background: "none", border: "none", cursor: "pointer", color: "#6B7280", padding: 2, display: "flex" }}><ChevronRight size={14} /></button>
+      </div>
+      {/* Day headers */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2 }}>
+        {DAYS.map((d) => <div key={d} style={{ textAlign: "center", fontSize: 9.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", padding: "2px 0" }}>{d}</div>)}
+        {cells.map((day, i) => {
+          if (!day) return <div key={`e${i}`} />;
+          const cellDate = new Date(year, month, day);
+          const isToday  = cellDate.toDateString() === today.toDateString();
+          const isSel    = cellDate.toDateString() === selStr;
+          const count    = countMap[day] || 0;
+          return (
+            <div key={day} onClick={() => onSelectDate(isSel ? null : cellDate)}
+              style={{ position: "relative", textAlign: "center", padding: "5px 2px", borderRadius: 7, cursor: count || isToday ? "pointer" : "default", background: isSel ? "#6366F1" : isToday ? "#EEF2FF" : "transparent", border: isToday && !isSel ? "1.5px solid #C7D2FE" : "1.5px solid transparent", transition: "background 0.1s" }}
+              onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = "#F3F4F6"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = isSel ? "#6366F1" : isToday ? "#EEF2FF" : "transparent"; }}>
+              <span style={{ fontSize: 12, fontWeight: isSel || isToday ? 700 : 400, color: isSel ? "#FFFFFF" : isToday ? "#4F46E5" : "#374151" }}>{day}</span>
+              {count > 0 && (
+                <div style={{ position: "absolute", bottom: 1, left: "50%", transform: "translateX(-50%)", width: 4, height: 4, borderRadius: "50%", background: isSel ? "#FFFFFF" : "#6366F1" }} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {/* Legend */}
+      <div style={{ paddingTop: 6, borderTop: "1px solid #F3F4F6", display: "flex", flexDirection: "column", gap: 5 }}>
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.06em" }}>This Month</div>
+        {[
+          { label: "Total Activities", value: Object.values(countMap).reduce((s,v) => s+v, 0), color: "#6366F1" },
+          { label: "Active Days",      value: Object.keys(countMap).length,                     color: "#10B981" },
+        ].map(({ label, value, color }) => (
+          <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 11.5, color: "#6B7280" }}>{label}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color }}>{value}</span>
+          </div>
+        ))}
+        {selectedDate && (
+          <button onClick={() => onSelectDate(null)} style={{ marginTop: 4, padding: "5px 10px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", color: "#EF4444", fontSize: 11, fontWeight: 700, cursor: "pointer", width: "100%", fontFamily: "inherit" }}>
+            Clear Date Filter
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Date Range Dropdown ─────────────────────────────────────────────────────
+
+const DATE_PRESETS = [
+  { key: "today",       label: "Today"         },
+  { key: "yesterday",   label: "Yesterday"     },
+  { key: "last7",       label: "Last 7 Days"   },
+  { key: "last30",      label: "Last 30 Days"  },
+  { key: "last90",      label: "Last 90 Days"  },
+  { key: "week",        label: "This Week"     },
+  { key: "lastweek",    label: "Last Week"     },
+  { key: "month",       label: "This Month"    },
+  { key: "lastmonth",   label: "Last Month"    },
+  { key: "quarter",     label: "This Quarter"  },
+  { key: "lastquarter", label: "Last Quarter"  },
+  { key: "half",        label: "Half-Yearly"   },
+  { key: "year",        label: "This Year"     },
+];
+
+function DateRangeDropdown({ datePreset, setDatePreset, dateFrom, setDateFrom, dateTo, setDateTo }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  const isActive  = datePreset !== "all";
+  const activeLabel = isActive
+    ? (DATE_PRESETS.find(p => p.key === datePreset)?.label || (dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : "Custom Range"))
+    : "Activity Time";
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        display: "flex", alignItems: "center", gap: 6, height: 38, padding: "0 14px",
+        borderRadius: 10, border: `1.5px solid ${isActive ? "#6366F1" : "#E5E7EB"}`,
+        background: isActive ? "#EEF2FF" : "#FFFFFF", color: isActive ? "#4F46E5" : "#6B7280",
+        fontSize: 13, fontWeight: isActive ? 600 : 500, cursor: "pointer", whiteSpace: "nowrap",
+        transition: "all 0.15s",
+      }}>
+        <CalendarDays size={14} style={{ color: isActive ? "#4F46E5" : "#9CA3AF" }} />
+        {activeLabel}
+        {isActive && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#6366F1" }} />}
+        <ChevronDown size={12} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+      </button>
+
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 500,
+          background: "#FFFFFF", border: "1.5px solid #E5E7EB", borderRadius: 14,
+          boxShadow: "0 8px 32px rgba(0,0,0,0.13)", width: 260, padding: "14px 12px",
+        }}>
+          <div style={{ fontSize: 10.5, fontWeight: 800, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Quick Select</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 14 }}>
+            {DATE_PRESETS.map(p => {
+              const isOn = datePreset === p.key;
+              return (
+                <button key={p.key} onClick={() => { setDatePreset(p.key); setDateFrom(""); setDateTo(""); setOpen(false); }}
+                  style={{ padding: "7px 10px", borderRadius: 9, border: `1.5px solid ${isOn ? "#6366F1" : "#E5E7EB"}`, background: isOn ? "#EEF2FF" : "#FAFAFA", color: isOn ? "#4F46E5" : "#374151", fontSize: 12, fontWeight: isOn ? 700 : 400, cursor: "pointer", textAlign: "left", transition: "all 0.1s" }}>
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ height: 1, background: "#F3F4F6", marginBottom: 12 }} />
+          <div style={{ fontSize: 10.5, fontWeight: 800, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Custom Range</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", display: "block", marginBottom: 4 }}>From Date</label>
+              <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setDatePreset("custom"); }}
+                style={{ width: "100%", height: 34, borderRadius: 8, border: "1.5px solid #E5E7EB", padding: "0 10px", fontSize: 12.5, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", display: "block", marginBottom: 4 }}>To Date</label>
+              <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setDatePreset("custom"); }}
+                style={{ width: "100%", height: 34, borderRadius: 8, border: "1.5px solid #E5E7EB", padding: "0 10px", fontSize: 12.5, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
+            </div>
+          </div>
+          {isActive && (
+            <button onClick={() => { setDatePreset("all"); setDateFrom(""); setDateTo(""); setOpen(false); }}
+              style={{ marginTop: 12, width: "100%", padding: "7px", borderRadius: 9, border: "1.5px solid #FECACA", background: "#FEF2F2", color: "#EF4444", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              Clear Date Filter
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Date-Grouped List View ───────────────────────────────────────────────────
+
+function DateGroupedListView({ activities, onEdit, onDelete, onStatusChange, resolveEntity }) {
+  if (!activities.length) return <EmptyState />;
+
+  const groups = {};
+  activities.forEach(a => {
+    const key = a.created_at ? a.created_at.slice(0, 10) : "no-date";
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(a);
+  });
+  const sortedDates = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+
+  const today     = new Date(); today.setHours(0, 0, 0, 0);
+  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 28, paddingBottom: 40 }}>
+      {sortedDates.map(dateKey => {
+        const items = groups[dateKey];
+        let dateLabel = dateKey;
+        if (dateKey !== "no-date") {
+          const d = new Date(dateKey + "T00:00:00");
+          if (d.toDateString() === today.toDateString())     dateLabel = "Today";
+          else if (d.toDateString() === yesterday.toDateString()) dateLabel = "Yesterday";
+          else dateLabel = d.toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
+        } else { dateLabel = "No Date"; }
+        const isToday = dateLabel === "Today";
+
+        return (
+          <div key={dateKey}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+              <div style={{
+                display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 14px",
+                borderRadius: 99, fontSize: 12.5, fontWeight: 700,
+                background: isToday ? "#3B82F6" : "#F3F4F6",
+                color: isToday ? "#FFFFFF" : "#374151",
+                border: isToday ? "none" : "1.5px solid #E5E7EB",
+                flexShrink: 0,
+              }}>
+                <CalendarDays size={11} style={{ color: isToday ? "#fff" : "#9CA3AF" }} />
+                {dateLabel}
+              </div>
+              <div style={{ flex: 1, height: 1, background: "#E5E7EB" }} />
+              <span style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 600, flexShrink: 0 }}>
+                {items.length} {items.length === 1 ? "activity" : "activities"}
+              </span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <AnimatePresence initial={false}>
+                {items.map(a => (
+                  <FeedCard key={a.id} a={a} onEdit={onEdit} onDelete={onDelete} onStatusChange={onStatusChange} resolveEntity={resolveEntity} />
+                ))}
+              </AnimatePresence>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Delete Confirm Modal ─────────────────────────────────────────────────────
+
+function DeleteConfirmModal({ activity, onConfirm, onCancel }) {
+  const [loading, setLoading] = useState(false);
+
+  const handleConfirm = async () => {
+    setLoading(true);
+    await onConfirm(activity);
+    setLoading(false);
+  };
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onCancel()}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 12 }}
+        transition={{ type: "spring", damping: 24, stiffness: 320 }}
+        style={{ background: "#FFFFFF", borderRadius: 16, padding: 28, maxWidth: 420, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+
+        {/* Icon */}
+        <div style={{ width: 52, height: 52, borderRadius: 14, background: "#FEF2F2", border: "2px solid #FECACA", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px" }}>
+          <Trash2 size={22} style={{ color: "#EF4444" }} />
+        </div>
+
+        {/* Title */}
+        <h3 style={{ margin: "0 0 8px", fontSize: 17, fontWeight: 800, color: "#111827", textAlign: "center" }}>
+          Delete Activity?
+        </h3>
+        <p style={{ margin: "0 0 6px", fontSize: 13.5, color: "#6B7280", textAlign: "center", lineHeight: 1.6 }}>
+          Are you sure you want to delete this activity?
+        </p>
+        {activity?.title && (
+          <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 600, color: "#374151", textAlign: "center", background: "#F9FAFB", borderRadius: 8, padding: "6px 12px" }}>
+            "{activity.title}"
+          </p>
+        )}
+        <p style={{ margin: "0 0 24px", fontSize: 12.5, color: "#EF4444", textAlign: "center", fontWeight: 600 }}>
+          This action cannot be undone.
+        </p>
+
+        {/* Buttons */}
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel} disabled={loading}
+            style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "1.5px solid #E5E7EB", background: "#FFFFFF", color: "#374151", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
+            Cancel
+          </button>
+          <button onClick={handleConfirm} disabled={loading}
+            style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: loading ? "#FCA5A5" : "#EF4444", color: "#FFFFFF", fontSize: 13.5, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", transition: "background 0.15s" }}>
+            {loading ? "Deleting…" : "Delete Activity"}
+          </button>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
+  );
+}
+
 export default function Activities() {
   const { profile, isFieldUser, isSalesHead } = useAuth();
   const qc          = useQueryClient();
 
   const [activeModule,     setActiveModule]     = useState("tasks"); // "tasks" | "email" | "targets"
-  const [view,             setView]             = useState("timeline");
+  const [view,             setView]             = useState("list");
+  const [periodFilter,     setPeriodFilter]     = useState("all"); // all|daily|weekly|monthly|quarterly|half|yearly
+  const [calSelectedDate,  setCalSelectedDate]  = useState(null);  // null = no calendar filter active
   const [search,           setSearch]           = useState("");
   const [typeFilter,       setTypeFilter]       = useState("");
-  const [visibilityFilter, setVisibilityFilter] = useState("all"); // "all" | "mine"
+  const [moduleFilter,     setModuleFilter]     = useState(""); // "" | "lead" | "deal" | "follow_up" | "meeting" | "email_act" | "task_act" | "pipeline"
+  // Employees see only their own activities by default; admins see all
+  const [visibilityFilter, setVisibilityFilter] = useState(() =>
+    ["employee","inside_sales"].includes(profile?.role || "") ? "mine" : "all"
+  );
   const [statusFilter,     setStatusFilter]     = useState(""); // "" | "pending" | "in_progress" | "overdue" | "upcoming" | "done"
   const [priorityFilter,   setPriorityFilter]   = useState("");
   const [assignedFilter,   setAssignedFilter]   = useState("");
@@ -1483,15 +2046,38 @@ export default function Activities() {
   const [showModal,        setShowModal]        = useState(false);
   const [editActivity,     setEditActivity]     = useState(null);
   const [defaultType,      setDefaultType]      = useState("follow_up_call");
+  const [sortBy,           setSortBy]           = useState("newest");
+  const [deleteTarget,     setDeleteTarget]     = useState(null); // activity pending deletion
+  const [datePreset,       setDatePreset]       = useState("all");
+  const [dateFrom,         setDateFrom]         = useState("");
+  const [dateTo,           setDateTo]           = useState("");
+  const [relatedFilter,    setRelatedFilter]    = useState("");
 
   const { data: _allActivities = [], isLoading } = useQuery({
-    queryKey: ["activities"],
-    queryFn: actService.getAll,
-    refetchInterval: 15000,
+    queryKey: ["activities", profile?.id],
+    queryFn: () => actService.getAll(profile),
+    enabled: !!profile?.id,
+    staleTime: 0,
+    refetchInterval: 30000,
     refetchOnWindowFocus: true,
   });
-  // Exclude email_contact entries from the tasks/activities view
-  const activities = _allActivities.filter(a => a.type !== "email_contact");
+
+  // Sync visibility filter when profile role is determined
+  useEffect(() => {
+    if (profile?.role) {
+      setVisibilityFilter(
+        ["employee", "inside_sales"].includes(profile.role) ? "mine" : "all"
+      );
+    }
+  }, [profile?.role]);
+  // Exclude email_contact and audit/system activity types (stage changes, conversions etc.)
+  // These audit types belong only in timelines and logs, not the Activities module.
+  const AUDIT_TYPES = new Set([
+    "email_contact", "stage_change", "deal_created", "task_created",
+    "general", "pipeline_change", "lead_converted", "deal_converted",
+    "assignment_change", "ownership_change", "status_change",
+  ]);
+  const activities = _allActivities.filter(a => !AUDIT_TYPES.has(a.type));
   const { data: teamRaw  } = useQuery({ queryKey: ["team-all"],    queryFn: () => teamService.getAll() });
   const { data: leadsRaw } = useQuery({ queryKey: ["leads-light"], queryFn: () => leadsService.getAll({ limit: 300 }) });
   const { data: dealsRaw } = useQuery({ queryKey: ["deals-light"], queryFn: () => dealsService.getAll({ limit: 300 }) });
@@ -1513,18 +2099,19 @@ export default function Activities() {
     return null;
   }, [leads, deals]);
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["activities"] });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["activities", profile?.id] });
 
   // Real-time subscription — refresh when any activity changes
   useEffect(() => {
+    if (!profile?.id) return;
     const ch = supabase
-      .channel("activities-global")
+      .channel(`activities-global-${profile.id}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "activities" }, () => {
-        qc.invalidateQueries({ queryKey: ["activities"] });
+        qc.invalidateQueries({ queryKey: ["activities", profile.id] });
       })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [qc]);
+  }, [qc, profile?.id]);
 
   const createMutation = useMutation({
     mutationFn: (payload) => actService.create({ ...payload, user_id: profile?.id, created_by: profile?.id }),
@@ -1565,7 +2152,31 @@ export default function Activities() {
     }
     return createMutation.mutateAsync(payload);
   }, [editActivity, profile?.id, updateMutation, createMutation]);
-  const handleDelete       = useCallback((id) => { if (window.confirm("Delete this activity?")) deleteMutation.mutate(id); }, [deleteMutation]);
+  const handleDelete = useCallback((id) => {
+    const act = activities.find(a => a.id === id) || _allActivities.find(a => a.id === id) || { id };
+    setDeleteTarget(act);
+  }, [activities, _allActivities]);
+
+  const confirmDelete = useCallback(async (act) => {
+    await deleteMutation.mutateAsync(act.id);
+    // Audit log — type is in AUDIT_TYPES so it stays out of Activities Module
+    await supabase.from("activities").insert({
+      type: "activity_deleted",
+      title: `Activity Deleted: ${act.title || act.id}`,
+      description: JSON.stringify({
+        deleted_activity_id: act.id,
+        deleted_activity_type: act.type,
+        deleted_activity_title: act.title,
+        deleted_by_role: profile?.role,
+        deleted_by_id: profile?.id,
+        reason: "User Action",
+      }),
+      created_by: profile?.id,
+      user_id: profile?.id,
+      status: "done",
+    });
+    setDeleteTarget(null);
+  }, [deleteMutation, profile?.id, profile?.role]);
   const handleEdit         = useCallback((a) => setEditActivity(a), []);
   const handleStatusChange = useCallback((id, status) => updateMutation.mutate({ id, status, updated_at: new Date().toISOString() }), [updateMutation]);
   const openNew            = useCallback((type) => { setDefaultType(type); setEditActivity(null); setShowModal(true); }, []);
@@ -1574,31 +2185,111 @@ export default function Activities() {
 
   const isOwnerOrHead = profile?.role === "owner" || profile?.role === "sales_head";
 
+  const getDateRange = useCallback((preset, from, to) => {
+    if (preset === "all") return null;
+    const s = new Date(); const e = new Date();
+    s.setHours(0,0,0,0); e.setHours(23,59,59,999);
+    if (preset === "custom")      { return { start: from ? new Date(from + "T00:00:00") : null, end: to ? new Date(to + "T23:59:59") : null }; }
+    if (preset === "today")       { return { start: s, end: e }; }
+    if (preset === "yesterday")   { s.setDate(s.getDate()-1); const ey = new Date(s); ey.setHours(23,59,59,999); return { start: s, end: ey }; }
+    if (preset === "last7")       { s.setDate(s.getDate()-7); return { start: s, end: e }; }
+    if (preset === "last30")      { s.setDate(s.getDate()-30); return { start: s, end: e }; }
+    if (preset === "last90")      { s.setDate(s.getDate()-90); return { start: s, end: e }; }
+    if (preset === "week")        { s.setDate(s.getDate()-s.getDay()); return { start: s, end: e }; }
+    if (preset === "lastweek")    { s.setDate(s.getDate()-s.getDay()-7); const ew=new Date(s); ew.setDate(ew.getDate()+6); ew.setHours(23,59,59,999); return { start: s, end: ew }; }
+    if (preset === "month")       { s.setDate(1); e.setMonth(e.getMonth()+1); e.setDate(0); return { start: s, end: e }; }
+    if (preset === "lastmonth")   { s.setDate(1); s.setMonth(s.getMonth()-1); const elm=new Date(s); elm.setMonth(elm.getMonth()+1); elm.setDate(0); elm.setHours(23,59,59,999); return { start: s, end: elm }; }
+    if (preset === "quarter")     { const q=Math.floor(s.getMonth()/3); s.setMonth(q*3,1); e.setMonth(q*3+3,0); return { start: s, end: e }; }
+    if (preset === "lastquarter") { const q=Math.floor(s.getMonth()/3)-1; const lqs=new Date(s); lqs.setMonth(q<0?9:q*3,1); lqs.setHours(0,0,0,0); const lqe=new Date(lqs); lqe.setMonth(lqe.getMonth()+3,0); lqe.setHours(23,59,59,999); return { start: lqs, end: lqe }; }
+    if (preset === "half")        { const h=s.getMonth()<6?0:6; s.setMonth(h,1); e.setMonth(h+6,0); return { start: s, end: e }; }
+    if (preset === "year")        { s.setMonth(0,1); e.setMonth(11,31); return { start: s, end: e }; }
+    return null;
+  }, []);
+
+  const exportActivitiesCSV = useCallback((rows) => {
+    const headers = ["ID","Type","Title","Description","Status","Priority","Module","Linked Record","Employee","Role","Created At","Due Date"];
+    const lines = rows.map((a) => {
+      const emp  = a.assigned_profile?.full_name || a.user?.full_name || "";
+      const role = a.assigned_profile?.role || a.user?.role || "";
+      const desc = (() => { try { const d = typeof a.description === "string" ? JSON.parse(a.description) : a.description; return d?.remarks || d?.notes || a.description || ""; } catch { return a.description || ""; } })();
+      return [
+        (a.id || "").slice(0,8), a.type || "", a.title || "", desc.replace(/"/g,"'"),
+        a.status || "todo", a.priority || "medium",
+        a.related_type || a.lead_id ? "Lead" : a.deal_id ? "Deal" : "",
+        (a.lead?.company_name || a.deal?.title || "").replace(/"/g,"'"),
+        emp, role,
+        a.created_at ? new Date(a.created_at).toLocaleString("en-IN") : "",
+        a.due_date   ? new Date(a.due_date  ).toLocaleString("en-IN") : "",
+      ].map((v) => `"${v}"`).join(",");
+    });
+    const blob = new Blob([headers.join(",") + "\n" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `activities_${new Date().toISOString().slice(0,10)}.csv` });
+    a.click(); URL.revokeObjectURL(a.href);
+  }, []);
+
   const filtered = useMemo(() => {
-    const q = search.toLowerCase();
-    const sevenDays  = new Date(now); sevenDays.setDate(now.getDate() + 7); sevenDays.setHours(23,59,59,999);
-    const todayStart = new Date(now); todayStart.setHours(0,0,0,0);
-    const todayEnd   = new Date(now); todayEnd.setHours(23,59,59,999);
-    const last24h    = new Date(now); last24h.setHours(now.getHours() - 24);
+    const q         = search.toLowerCase();
+    const dateRange = getDateRange(datePreset, dateFrom, dateTo);
+    const sevenDays = new Date(now); sevenDays.setDate(now.getDate() + 7); sevenDays.setHours(23,59,59,999);
 
-    const FOLLOW_UP_TYPES    = ["follow_up_call", "follow_up_email", "follow_up", "followup"];
-    const MEETING_TYPES      = ["meeting_virtual", "meeting_person", "meeting", "virtual_meeting"];
-    const CALL_TYPES         = ["call", "follow_up_call", "phone_call"];
-    const PIPELINE_CHG_TYPES = ["stage_change", "deal_created"];
+    const FOLLOW_UP_TYPES = ["follow_up_call", "follow_up_email", "follow_up", "followup"];
+    const MEETING_TYPES   = ["meeting_virtual", "meeting_person", "meeting", "virtual_meeting"];
+    const EMAIL_TYPES     = ["email", "follow_up_email"];
+    const TASK_TYPES      = ["task", "reminder"];
 
-    return activities.filter((a) => {
-      const tk = typeKey(a.type);
+    const result = activities.filter((a) => {
+      const tk      = typeKey(a.type);
+      const hasLead = !!(a.lead_id || a.related_type === "lead");
+      const hasDeal = !!(a.deal_id || a.related_type === "deal");
 
-      // Search
-      if (q && !a.title?.toLowerCase().includes(q) && !a.type?.toLowerCase().includes(q)) return false;
+      // Date range filter
+      if (dateRange) {
+        const d = a.created_at ? new Date(a.created_at) : null;
+        if (!d) return false;
+        if (dateRange.start && d < dateRange.start) return false;
+        if (dateRange.end   && d > dateRange.end)   return false;
+      }
 
-      // Type
+      // Activity type dropdown (moduleFilter)
+      if (moduleFilter) {
+        if (moduleFilter === "lead"      && !hasLead)                           return false;
+        if (moduleFilter === "deal"      && !hasDeal)                           return false;
+        if (moduleFilter === "meeting"   && !MEETING_TYPES.includes(tk))        return false;
+        if (moduleFilter === "follow_up" && !FOLLOW_UP_TYPES.includes(tk))      return false;
+        if (moduleFilter === "email_act" && !EMAIL_TYPES.includes(tk))          return false;
+        if (moduleFilter === "task_act"  && !TASK_TYPES.includes(tk))           return false;
+      }
+
+      // Related record filter (new dropdown)
+      if (relatedFilter) {
+        if (relatedFilter === "lead"      && !hasLead)                           return false;
+        if (relatedFilter === "deal"      && !hasDeal)                           return false;
+        if (relatedFilter === "meeting"   && !MEETING_TYPES.includes(tk))        return false;
+        if (relatedFilter === "follow_up" && !FOLLOW_UP_TYPES.includes(tk))      return false;
+        if (relatedFilter === "task"      && !TASK_TYPES.includes(tk))           return false;
+        if (relatedFilter === "email"     && !EMAIL_TYPES.includes(tk))          return false;
+      }
+
+      // Search across title, type, description, lead name, deal name, assigned user
+      if (q) {
+        const empName = (a.assigned_profile?.full_name || a.created_by_profile?.full_name || "").toLowerCase();
+        const leadName = (a.lead?.company_name || a.lead?.contact_name || "").toLowerCase();
+        if (
+          !a.title?.toLowerCase().includes(q) &&
+          !a.type?.toLowerCase().includes(q) &&
+          !a.description?.toLowerCase().includes(q) &&
+          !empName.includes(q) &&
+          !leadName.includes(q)
+        ) return false;
+      }
+
+      // Type filter
       if (typeFilter && tk !== typeFilter) return false;
 
-      // Priority
+      // Priority filter
       if (priorityFilter && (a.priority || "medium") !== priorityFilter) return false;
 
-      // Assigned to
+      // Assigned to filter
       if (assignedFilter && a.assigned_to !== assignedFilter && a.created_by !== assignedFilter) return false;
 
       // Visibility
@@ -1606,32 +2297,32 @@ export default function Activities() {
         if (a.created_by !== profile?.id && a.user_id !== profile?.id && a.assigned_to !== profile?.id) return false;
       }
 
-      // Status
+      // Status filter
       if (statusFilter) {
         if      (statusFilter === "overdue")     { if (a.status === "done" || !a.due_date || new Date(a.due_date) >= now) return false; }
         else if (statusFilter === "upcoming")    { if (a.status === "done" || !a.due_date || new Date(a.due_date) < now || new Date(a.due_date) > sevenDays) return false; }
         else if (statusFilter === "pending")     { if (a.status === "done") return false; }
         else if (statusFilter === "done")        { if (a.status !== "done") return false; }
+        else if (statusFilter === "active")      { if ((a.status || "todo") !== "in_progress") return false; }
+        else if (statusFilter === "scheduled")   { if (!a.due_date || new Date(a.due_date) <= now) return false; }
+        else if (statusFilter === "cancelled")   { if ((a.status || "") !== "cancelled") return false; }
         else                                     { if ((a.status || "todo") !== statusFilter) return false; }
-      }
-
-      // Quick filters
-      if (quickFilter) {
-        if      (quickFilter === "today")            { if (!((a.due_date && new Date(a.due_date) >= todayStart && new Date(a.due_date) <= todayEnd) || (a.created_at && new Date(a.created_at) >= todayStart))) return false; }
-        else if (quickFilter === "meetings_today")   { if (!MEETING_TYPES.includes(tk) || !(a.due_date && new Date(a.due_date) >= todayStart && new Date(a.due_date) <= todayEnd)) return false; }
-        else if (quickFilter === "meetings_all")     { if (!MEETING_TYPES.includes(tk)) return false; }
-        else if (quickFilter === "follow_ups_due")   { if (!FOLLOW_UP_TYPES.includes(tk) || a.status === "done") return false; }
-        else if (quickFilter === "calls")            { if (!CALL_TYPES.includes(tk)) return false; }
-        else if (quickFilter === "high_priority")    { if (!["high", "urgent"].includes(a.priority)) return false; }
-        else if (quickFilter === "lead_updates")     { if (a.related_type !== "lead") return false; }
-        else if (quickFilter === "deal_updates")     { if (a.related_type !== "deal") return false; }
-        else if (quickFilter === "recent")           { if (!a.created_at || new Date(a.created_at) < last24h) return false; }
-        else if (quickFilter === "pipeline_changes") { if (!PIPELINE_CHG_TYPES.includes(tk)) return false; }
       }
 
       return true;
     });
-  }, [activities, search, typeFilter, priorityFilter, assignedFilter, visibilityFilter, statusFilter, quickFilter, profile?.id]);
+
+    // Sort
+    result.sort((a, b) => {
+      if (sortBy === "oldest")   return new Date(a.created_at||0) - new Date(b.created_at||0);
+      if (sortBy === "type")     return (a.type||"").localeCompare(b.type||"");
+      if (sortBy === "status")   return (a.status||"").localeCompare(b.status||"");
+      if (sortBy === "assignee") return (a.assigned_profile?.full_name||"").localeCompare(b.assigned_profile?.full_name||"");
+      if (sortBy === "updated")  return new Date(b.updated_at||b.created_at||0) - new Date(a.updated_at||a.created_at||0);
+      return new Date(b.created_at||0) - new Date(a.created_at||0); // newest (default)
+    });
+    return result;
+  }, [activities, search, typeFilter, moduleFilter, relatedFilter, priorityFilter, assignedFilter, visibilityFilter, statusFilter, profile?.id, datePreset, dateFrom, dateTo, sortBy, getDateRange]);
 
   const overdueCount = activities.filter((a) => a.due_date && new Date(a.due_date) < now && a.status !== "done").length;
   const todayCount   = activities.filter((a) => a.due_date && new Date(a.due_date).toDateString() === now.toDateString() && a.status !== "done").length;
@@ -1639,26 +2330,23 @@ export default function Activities() {
   const pendingCount = activities.filter((a) => a.status !== "done").length;
 
   const activeFiltersCount = [
-    visibilityFilter !== "all",
-    statusFilter,
-    typeFilter,
-    priorityFilter,
-    assignedFilter,
-    quickFilter,
+    moduleFilter, statusFilter, datePreset !== "all", assignedFilter,
   ].filter(Boolean).length;
 
   const clearAllFilters = () => {
-    setVisibilityFilter("all");
+    setModuleFilter("");
     setStatusFilter("");
-    setTypeFilter("");
-    setPriorityFilter("");
+    setDatePreset("all");
+    setDateFrom("");
+    setDateTo("");
     setAssignedFilter("");
-    setQuickFilter("");
+    setRelatedFilter("");
+    setSortBy("newest");
     setSearch("");
   };
 
   return (
-    <div style={{ padding: "20px 24px", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div style={{ padding: "20px 24px", minHeight: "100%", display: "flex", flexDirection: "column" }}>
 
       {/* ── Module tabs ── */}
       <div style={{ display: "flex", gap: 4, marginBottom: 18, flexShrink: 0, background: "#F3F4F6", padding: 4, borderRadius: 12, alignSelf: "flex-start" }}>
@@ -1695,226 +2383,129 @@ export default function Activities() {
       {/* ── Tasks & Activities Module ── */}
       {activeModule === "tasks" && <>
 
-      {/* ── Header ── */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexShrink: 0 }}>
-        <p style={{ margin: 0, fontSize: 13, color: "#6B7280" }}>{activities.length} total · {pendingCount} pending · {doneCount} completed</p>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {[
-            { label: "Overdue", value: overdueCount, color: "#EF4444", bg: "#FEF2F2", border: "#FECACA" },
-            { label: "Today",   value: todayCount,   color: "#3B82F6", bg: "#EFF6FF", border: "#BFDBFE" },
-            { label: "Done",    value: doneCount,    color: "#10B981", bg: "#ECFDF5", border: "#A7F3D0" },
-          ].map(({ label, value, color, bg, border }) => (
-            <div key={label} style={{ padding: "6px 14px", background: bg, border: `1.5px solid ${border}`, borderRadius: 11, textAlign: "center", minWidth: 56 }}>
-              <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1.2 }}>{value}</div>
-              <div style={{ fontSize: 10, fontWeight: 700, color, textTransform: "uppercase", letterSpacing: "0.07em", marginTop: 1 }}>{label}</div>
-            </div>
-          ))}
+      {/* ── Page Header ── */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "var(--text, #111827)", letterSpacing: "-0.03em" }}>Activities</h1>
+          <p style={{ margin: "2px 0 0", fontSize: 13, color: "#6B7280" }}>
+            {filtered.length} {filtered.length === 1 ? "activity" : "activities"} found
+          </p>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={() => exportActivitiesCSV(filtered)}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 14px", height: 38, borderRadius: 10, background: "#F9FAFB", color: "#374151", fontSize: 13, fontWeight: 600, border: "1.5px solid #E5E7EB", cursor: "pointer" }}>
+            <Download size={14} /> Export
+          </button>
           {isOwnerOrHead && (
-            <button
-              onClick={() => openNew("follow_up_call")}
-              style={{ display: "flex", alignItems: "center", gap: 7, padding: "0 18px", height: 38, borderRadius: 10, background: "#111827", color: "#FFFFFF", fontSize: 13.5, fontWeight: 700, border: "none", cursor: "pointer", flexShrink: 0, transition: "background 0.15s" }}
+            <button onClick={() => openNew("follow_up_call")}
+              style={{ display: "flex", alignItems: "center", gap: 7, padding: "0 18px", height: 38, borderRadius: 10, background: "#111827", color: "#FFFFFF", fontSize: 13.5, fontWeight: 700, border: "none", cursor: "pointer", transition: "background 0.15s" }}
               onMouseEnter={(e) => { e.currentTarget.style.background = "#1F2937"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "#111827"; }}
-            >
+              onMouseLeave={(e) => { e.currentTarget.style.background = "#111827"; }}>
               <Plus size={15} /> Add Activity
             </button>
           )}
         </div>
       </div>
 
-      {/* ── Dropdown Filter Bar ── */}
-      <div style={{ flexShrink: 0, marginBottom: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      {/* ── Enterprise Filter Bar ── */}
+      <div style={{
+        background: "#FFFFFF", border: "1.5px solid #E5E7EB", borderRadius: 14,
+        padding: "12px 16px", marginBottom: 16,
+        boxShadow: "0 1px 4px rgba(0,0,0,0.05)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
 
-          {/* Visibility */}
+          {/* 1 – Activity Type */}
           <FilterDropdown
-            label="Visibility"
-            options={[{ key: "mine", label: "Mine", icon: Users, color: "#6366F1", bg: "#EEF2FF" }]}
-            value={visibilityFilter === "mine" ? "mine" : ""}
-            onChange={(v) => setVisibilityFilter(v || "all")}
+            label="Activities"
+            options={[
+              { key: "meeting",    label: "Meetings",    icon: Video,        color: "#8B5CF6", bg: "#F5F3FF" },
+              { key: "follow_up",  label: "Follow-Ups",  icon: PhoneCall,    color: "#3B82F6", bg: "#EFF6FF" },
+              { key: "email_act",  label: "Emails",      icon: Mail,         color: "#EC4899", bg: "#FDF2F8" },
+              { key: "task_act",   label: "Tasks",       icon: CheckCircle2, color: "#06B6D4", bg: "#ECFEFF" },
+              { key: "lead",       label: "Lead Activities", icon: TrendingUp, color: "#10B981", bg: "#ECFDF5" },
+              { key: "deal",       label: "Deal Activities", icon: Target,    color: "#F59E0B", bg: "#FFFBEB" },
+            ]}
+            value={moduleFilter}
+            onChange={setModuleFilter}
           />
 
-          {/* Status */}
+          {/* 2 – Status */}
           <FilterDropdown
-            label="Status"
-            options={FILTER_STATUSES.map((s) => ({ key: s.key, label: s.label, icon: s.icon, color: s.color, bg: s.bg }))}
+            label="Activity Status"
+            options={[
+              { key: "done",      label: "Completed",   icon: CheckCircle2, color: "#10B981", bg: "#ECFDF5" },
+              { key: "pending",   label: "Pending",     icon: Clock,        color: "#F59E0B", bg: "#FFFBEB" },
+              { key: "active",    label: "Active",      icon: Activity,     color: "#3B82F6", bg: "#EFF6FF" },
+              { key: "overdue",   label: "Overdue",     icon: AlertCircle,  color: "#EF4444", bg: "#FEF2F2" },
+              { key: "scheduled", label: "Scheduled",   icon: CalendarClock,color: "#8B5CF6", bg: "#F5F3FF" },
+            ]}
             value={statusFilter}
             onChange={setStatusFilter}
           />
 
-          {/* Activity Type */}
-          <FilterDropdown
-            label="Type"
-            options={DISPLAY_TYPES.map((key) => ({ key, label: ACT_TYPES[key].label, icon: ACT_TYPES[key].icon, color: ACT_TYPES[key].color, bg: ACT_TYPES[key].bg }))}
-            value={typeFilter}
-            onChange={setTypeFilter}
+          {/* 3 – Date Range Calendar */}
+          <DateRangeDropdown
+            datePreset={datePreset} setDatePreset={setDatePreset}
+            dateFrom={dateFrom}     setDateFrom={setDateFrom}
+            dateTo={dateTo}         setDateTo={setDateTo}
           />
 
-          {/* Priority */}
-          <FilterDropdown
-            label="Priority"
-            options={PRIORITIES.map((p) => ({ key: p.key, label: p.label, icon: Flag, color: p.color, bg: `${p.color}12` }))}
-            value={priorityFilter}
-            onChange={setPriorityFilter}
-          />
-
-          {/* Quick Filters */}
-          <FilterDropdown
-            label="Quick Filters"
-            options={SMART_FILTERS.map((sf) => ({ key: sf.key, label: sf.label, icon: sf.icon, color: sf.color, bg: sf.bg, desc: sf.desc }))}
-            value={quickFilter}
-            onChange={setQuickFilter}
-          />
-
-          {/* Assigned To — owner / sales_head only */}
+          {/* 4 – Assigned User (admin only) */}
           {isOwnerOrHead && teamMembers.length > 0 && (
             <FilterDropdown
-              label="Assigned To"
+              label="Employee"
               searchable
-              options={teamMembers.map((m) => ({ key: m.id, label: m.full_name, avatar: m, color: "#3B82F6", bg: "#EFF6FF" }))}
+              options={teamMembers.map(m => ({ key: m.id, label: m.full_name, avatar: m, color: "#6366F1", bg: "#EEF2FF" }))}
               value={assignedFilter}
               onChange={setAssignedFilter}
             />
-          )}
-
-          {/* Clear All */}
-          {activeFiltersCount > 0 && (
-            <button
-              onClick={clearAllFilters}
-              style={{ display: "flex", alignItems: "center", gap: 5, height: 34, padding: "0 12px", borderRadius: 9, border: "1.5px solid #FECACA", background: "#FEF2F2", color: "#EF4444", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
-            >
-              <X size={11} /> Clear
-              <span style={{ background: "#EF4444", color: "#fff", borderRadius: 99, padding: "1px 6px", fontSize: 10, fontWeight: 800, minWidth: 16, textAlign: "center" }}>{activeFiltersCount}</span>
-            </button>
           )}
 
           <div style={{ flex: 1 }} />
 
           {/* Search */}
           <div style={{ position: "relative" }}>
-            <Search size={12} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "#9CA3AF" }} />
+            <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#9CA3AF" }} />
             <input
-              style={{ paddingLeft: 28, height: 34, width: 170, fontSize: 12.5, border: "1.5px solid #E5E7EB", borderRadius: 9, background: "#FFFFFF", color: "#111827", outline: "none" }}
-              placeholder="Search activities…"
+              style={{ paddingLeft: 32, height: 38, width: 220, fontSize: 13, border: "1.5px solid #E5E7EB", borderRadius: 10, background: "#FAFAFA", color: "#111827", outline: "none", fontFamily: "inherit" }}
+              placeholder="Search activities, leads, users…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
 
-          {/* View switcher */}
-          <div style={{ display: "flex", background: "#F3F4F6", border: "1.5px solid #E5E7EB", borderRadius: 9, padding: 2, gap: 1 }}>
+          {/* View toggle */}
+          <div style={{ display: "flex", background: "#F3F4F6", border: "1.5px solid #E5E7EB", borderRadius: 10, padding: 3, gap: 2 }}>
             {VIEWS.map(({ key, label, icon: Icon }) => (
               <button key={key} onClick={() => setView(key)} title={label}
-                style={{ display: "flex", alignItems: "center", padding: "4px 9px", borderRadius: 7, border: "none", cursor: "pointer", background: view === key ? "#FFFFFF" : "transparent", color: view === key ? "#111827" : "#9CA3AF", boxShadow: view === key ? "0 1px 3px rgba(0,0,0,0.08)" : "none", transition: "all 0.15s" }}>
-                <Icon size={12} />
+                style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 8, border: "none", cursor: "pointer", background: view === key ? "#FFFFFF" : "transparent", color: view === key ? "#111827" : "#9CA3AF", fontSize: 12, fontWeight: view === key ? 700 : 400, boxShadow: view === key ? "0 1px 3px rgba(0,0,0,0.08)" : "none", transition: "all 0.15s" }}>
+                <Icon size={13} />{label}
               </button>
             ))}
           </div>
 
+          {/* Clear filters */}
+          {activeFiltersCount > 0 && (
+            <button onClick={clearAllFilters}
+              style={{ display: "flex", alignItems: "center", gap: 5, height: 38, padding: "0 12px", borderRadius: 10, border: "1.5px solid #FECACA", background: "#FEF2F2", color: "#EF4444", fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+              <X size={12} /> Clear ({activeFiltersCount})
+            </button>
+          )}
         </div>
-
-        {/* Active filter summary chips */}
-        {activeFiltersCount > 0 && (
-          <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 8 }}>
-            {visibilityFilter === "mine" && (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: "#EEF2FF", color: "#4F46E5", border: "1.5px solid #C7D2FE" }}>
-                <Users size={9} /> Mine
-                <button onClick={() => setVisibilityFilter("all")} style={{ background: "none", border: "none", cursor: "pointer", color: "#4F46E5", padding: 0, display: "flex", alignItems: "center" }}><X size={9} /></button>
-              </span>
-            )}
-            {statusFilter && (() => { const s = FILTER_STATUSES.find(x => x.key === statusFilter); return s ? (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: s.bg, color: s.color, border: `1.5px solid ${s.color}30` }}>
-                <s.icon size={9} /> {s.label}
-                <button onClick={() => setStatusFilter("")} style={{ background: "none", border: "none", cursor: "pointer", color: s.color, padding: 0, display: "flex", alignItems: "center" }}><X size={9} /></button>
-              </span>
-            ) : null; })()}
-            {typeFilter && (() => { const d = ACT_TYPES[typeFilter]; return d ? (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: d.bg, color: d.color, border: `1.5px solid ${d.border}` }}>
-                <d.icon size={9} /> {d.label}
-                <button onClick={() => setTypeFilter("")} style={{ background: "none", border: "none", cursor: "pointer", color: d.color, padding: 0, display: "flex", alignItems: "center" }}><X size={9} /></button>
-              </span>
-            ) : null; })()}
-            {priorityFilter && (() => { const p = PRIORITY_MAP[priorityFilter]; return p ? (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: `${p.color}12`, color: p.color, border: `1.5px solid ${p.color}30` }}>
-                <Flag size={9} fill={p.color} /> {p.label}
-                <button onClick={() => setPriorityFilter("")} style={{ background: "none", border: "none", cursor: "pointer", color: p.color, padding: 0, display: "flex", alignItems: "center" }}><X size={9} /></button>
-              </span>
-            ) : null; })()}
-            {quickFilter && (() => { const sf = SMART_FILTERS.find(x => x.key === quickFilter); return sf ? (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: sf.bg, color: sf.color, border: `1.5px solid ${sf.color}30` }}>
-                <sf.icon size={9} /> {sf.label}
-                <button onClick={() => setQuickFilter("")} style={{ background: "none", border: "none", cursor: "pointer", color: sf.color, padding: 0, display: "flex", alignItems: "center" }}><X size={9} /></button>
-              </span>
-            ) : null; })()}
-            {assignedFilter && (() => { const m = teamMembers.find(x => x.id === assignedFilter); return m ? (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: "#EFF6FF", color: "#1D4ED8", border: "1.5px solid #BFDBFE" }}>
-                <Avatar user={m} size={14} /> {m.full_name?.split(" ")[0]}
-                <button onClick={() => setAssignedFilter("")} style={{ background: "none", border: "none", cursor: "pointer", color: "#1D4ED8", padding: 0, display: "flex", alignItems: "center" }}><X size={9} /></button>
-              </span>
-            ) : null; })()}
-          </div>
-        )}
       </div>
 
-      {/* ── Upcoming 3-day banner ── */}
-      {(() => {
-        const three = new Date(); three.setDate(three.getDate() + 3); three.setHours(23,59,59,999);
-        const upcoming3 = activities.filter((a) =>
-          a.status !== "done" &&
-          a.due_date &&
-          new Date(a.due_date) >= now &&
-          new Date(a.due_date) <= three &&
-          (!statusFilter || statusFilter === "pending" || statusFilter === "upcoming")
-        );
-        if (!upcoming3.length) return null;
-        const todayItems = upcoming3.filter((a) => new Date(a.due_date).toDateString() === now.toDateString());
-        return (
-          <motion.div
-            initial={{ opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            style={{ flexShrink: 0, marginBottom: 10, borderRadius: 12, border: "1.5px solid #FDE68A", background: "linear-gradient(135deg, #FFFBEB 0%, #FEF3C7 100%)", padding: "10px 16px", display: "flex", alignItems: "center", gap: 12 }}
-          >
-            <div style={{ width: 32, height: 32, borderRadius: 9, background: "#F59E0B18", border: "1.5px solid #FDE68A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <Bell size={15} style={{ color: "#D97706" }} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#92400E" }}>
-                {upcoming3.length} task{upcoming3.length > 1 ? "s" : ""} due in the next 3 days
-                {todayItems.length > 0 && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, background: "#EF4444", color: "#fff", borderRadius: 99, padding: "1px 7px" }}>{todayItems.length} today</span>}
-              </div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 5 }}>
-                {upcoming3.slice(0, 5).map((a) => {
-                  const def  = ACT_TYPES[typeKey(a.type)] || ACT_TYPES.task;
-                  const Icon = def.icon;
-                  const isToday = new Date(a.due_date).toDateString() === now.toDateString();
-                  return (
-                    <span key={a.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 99, fontSize: 11.5, fontWeight: 600, background: isToday ? "#FEF2F2" : "#FFFFFF", color: isToday ? "#B91C1C" : "#92400E", border: `1.5px solid ${isToday ? "#FECACA" : "#FDE68A"}`, whiteSpace: "nowrap", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>
-                      <Icon size={9} style={{ color: def.color, flexShrink: 0 }} />
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.title}</span>
-                      <span style={{ flexShrink: 0, opacity: 0.7 }}>· {fmtDate(a.due_date)}</span>
-                    </span>
-                  );
-                })}
-                {upcoming3.length > 5 && <span style={{ fontSize: 11, color: "#D97706", fontWeight: 600, alignSelf: "center" }}>+{upcoming3.length - 5} more</span>}
-              </div>
-            </div>
-          </motion.div>
-        );
-      })()}
-
-      {/* ── Content area ── */}
-      <div style={{ flex: 1, overflowY: "auto", paddingRight: 2 }}>
+      {/* ── Activity Content ── */}
+      <div style={{ flex: 1, minWidth: 0 }}>
         {isLoading ? (
-          <div style={{ display: "flex", justifyContent: "center", padding: 80 }}>
-            <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #E5E7EB", borderTopColor: "#3B82F6", animation: "spin 0.8s linear infinite" }} />
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 80, gap: 14 }}>
+            <div style={{ width: 36, height: 36, borderRadius: "50%", border: "3px solid #E5E7EB", borderTopColor: "#6366F1", animation: "spin 0.8s linear infinite" }} />
+            <span style={{ fontSize: 13, color: "#9CA3AF", fontWeight: 500 }}>Loading activities…</span>
           </div>
         ) : (
           <>
-            {view === "grouped"  && <UserGroupedView activities={filtered} onEdit={handleEdit} onDelete={handleDelete} onStatusChange={handleStatusChange} resolveEntity={resolveEntity} />}
-            {view === "timeline" && <TimelineView  activities={filtered} onEdit={handleEdit} onDelete={handleDelete} onStatusChange={handleStatusChange} onNew={isOwnerOrHead ? openNew : null} resolveEntity={resolveEntity} />}
-            {view === "table"    && <TableView     activities={filtered} onEdit={handleEdit} onDelete={handleDelete} onStatusChange={handleStatusChange} resolveEntity={resolveEntity} />}
-            {view === "board"    && <KanbanBoard   activities={filtered} onEdit={handleEdit} onDelete={handleDelete} onStatusChange={handleStatusChange} resolveEntity={resolveEntity} />}
-            {view === "calendar" && <CalendarView  activities={filtered} onEdit={handleEdit} resolveEntity={resolveEntity} />}
+            {view === "list"  && <DateGroupedListView activities={filtered} onEdit={handleEdit} onDelete={handleDelete} onStatusChange={handleStatusChange} resolveEntity={resolveEntity} />}
+            {view === "table" && <TableView activities={filtered} onEdit={handleEdit} onDelete={handleDelete} onStatusChange={handleStatusChange} resolveEntity={resolveEntity} />}
           </>
         )}
       </div>
@@ -1930,6 +2521,16 @@ export default function Activities() {
             teamMembers={teamMembers}
             leads={leads}
             deals={deals}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {deleteTarget && (
+          <DeleteConfirmModal
+            activity={deleteTarget}
+            onConfirm={confirmDelete}
+            onCancel={() => setDeleteTarget(null)}
           />
         )}
       </AnimatePresence>

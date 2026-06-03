@@ -32,6 +32,7 @@ const Analytics   = lazy(() => import("./pages/Analytics"));
 const Pipeline      = lazy(() => import("./pages/Pipeline"));
 const SecurityLogs  = lazy(() => import("./pages/SecurityLogs"));
 const DSR           = lazy(() => import("./pages/DSR"));
+const AddLead       = lazy(() => import("./pages/Dashboard/AddLead"));
 
 const AuthLoader = () => (
   <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg)" }}>
@@ -119,6 +120,7 @@ export default function App() {
               <Route path="/settings"    element={<Settings />} />
               <Route path="/ai-assistant"   element={<AIAssistant />} />
               <Route path="/security-logs"  element={<OwnerOrHeadRoute><SecurityLogs /></OwnerOrHeadRoute>} />
+              <Route path="/add-lead"        element={<AddLead />} />
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>

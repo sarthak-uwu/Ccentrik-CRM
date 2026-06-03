@@ -1148,8 +1148,10 @@ function QuickAddModal({ type, onClose, profile, qc, navigate }) {
     e.preventDefault(); setSaving(true);
     try {
       if (type === "add_prospect") {
-        await leadsService.create({ company_name: form.title || "New Prospect", stage: "pipeline", pipeline_stage: "new_prospect", created_by: profile?.id, assigned_to: profile?.id });
+        await leadsService.create({ company_name: form.title || "New Prospect", contact_name: "", stage: "pipeline", pipeline_stage: "new_prospect", created_by: profile?.id, assigned_to: profile?.id });
         qc.invalidateQueries({ queryKey: ["pipeline"] });
+        qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
+        qc.invalidateQueries({ queryKey: ["monthly-leads"] });
         toast.success("Prospect added!"); navigate("/pipeline");
       } else if (type === "add_task") {
         await supabase.from("tasks").insert({ title: form.title, priority: form.priority, due_date: form.due_date || null, status: "todo", assigned_to: profile?.id, created_by: profile?.id });
@@ -1349,7 +1351,10 @@ export default function Dashboard() {
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "leads" }, () => {
         qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
-        // Lead deletions can orphan linked activities and tasks
+        qc.invalidateQueries({ queryKey: ["pipeline"] });
+        qc.invalidateQueries({ queryKey: ["leads"] });
+        qc.invalidateQueries({ queryKey: ["monthly-leads"] });
+        qc.invalidateQueries({ queryKey: ["recent-activity"] });
         qc.invalidateQueries({ queryKey: ["my-pending-activities", profile.id] });
         qc.invalidateQueries({ queryKey: ["my-tasks"] });
       })
@@ -1414,8 +1419,21 @@ export default function Dashboard() {
   const canEditContactInfo   = isOwnerOrHeadDash || !(lockSetting ?? false);
 
   const createLeadMutation = useMutation({
-    mutationFn: leadsService.create,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["leads"] }); qc.invalidateQueries({ queryKey: ["dashboard-stats"] }); toast.success("Lead added!"); setShowLeadModal(false); },
+    // Strip _activity (LeadModal embeds a pending follow-up inside the form data;
+    // Leads.jsx handles it via pendingActivityRef — here we just discard it to
+    // prevent Supabase from rejecting the insert with "column not found").
+    mutationFn: (data) => {
+      const { _activity, ...leadData } = data;
+      return leadsService.create(leadData);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      qc.invalidateQueries({ queryKey: ["monthly-leads"] });
+      qc.invalidateQueries({ queryKey: ["recent-activity"] });
+      toast.success("Lead added!");
+      setShowLeadModal(false);
+    },
     onError: (e) => toast.error("Failed: " + e.message),
   });
 

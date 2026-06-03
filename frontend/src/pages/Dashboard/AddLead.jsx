@@ -1,6 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { supabase } from '../../supabaseClient';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
 import {
   User, Phone, Mail, Building2, Briefcase,
   IndianRupee, PackageSearch, Flame, Sun, Snowflake,
@@ -35,6 +37,7 @@ const inputCls =
 
 const AddLead = () => {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [loading, setLoading] = useState(false);
 
   // ── Bulk Upload State ──
@@ -57,13 +60,36 @@ const AddLead = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.remarks.trim()) { alert('Remarks are mandatory!'); return; }
+    if (!formData.remarks.trim()) { toast.error('Remarks are mandatory!'); return; }
     setLoading(true);
-    const { error } = await supabase.from('leads').insert([
-      { ...formData, organization_id: 'ccentrik_01' },
-    ]);
+    // Map legacy field names to current CRM schema
+    const { company, name, phone, email, designation, budget, product_interest,
+            temperature, stage, category, status, source, linkedin, website, remarks } = formData;
+    const { error } = await supabase.from('leads').insert([{
+      company_name:     company || '',
+      contact_name:     name    || '',
+      phone:            phone   || null,
+      email:            email   || null,
+      designation:      designation || null,
+      budget:           Number(budget) || 0,
+      product_interest: product_interest || null,
+      temperature:      (temperature || 'warm').toLowerCase(),
+      stage:            'new',
+      source:           (source || 'other').toLowerCase().replace(/\s+/g, '_'),
+      remarks:          remarks || '',
+      other_notes:      JSON.stringify({ category, status, linkedin: linkedin || '', website: website || '' }),
+    }]);
     setLoading(false);
-    if (error) { alert(error.message); } else { navigate('/dashboard'); }
+    if (error) {
+      toast.error(error.message);
+    } else {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      qc.invalidateQueries({ queryKey: ['monthly-leads'] });
+      qc.invalidateQueries({ queryKey: ['recent-activity'] });
+      toast.success('Lead created successfully!');
+      navigate('/leads');
+    }
   };
 
   // ── Bulk Upload Logic ──
@@ -96,28 +122,27 @@ const AddLead = () => {
     setBulkUploading(true);
     setBulkResult(null);
     const rows = bulkFile.parsed.map((row) => ({
-      company: row.company || '',
-      name: row.name || '',
-      phone: row.phone || '',
-      email: row.email || '',
-      designation: row.designation || '',
-      budget: row.budget || '',
-      product_interest: row.product_interest || '',
-      temperature: row.temperature || row.lead_condition || 'Cold',
-      stage: row.stage || 'Awareness',
-      category: row.category || '',
-      status: row.status || 'New',
-      source: row.source || '',
-      linkedin: row.linkedin || '',
-      website: row.website || '',
-      remarks: row.remarks || '',
-      organization_id: 'ccentrik_01',
+      company_name:     row.company || row.company_name || '',
+      contact_name:     row.name    || row.contact_name || '',
+      phone:            row.phone   || null,
+      email:            row.email   || null,
+      designation:      row.designation || null,
+      budget:           Number(row.budget) || 0,
+      product_interest: row.product_interest || null,
+      temperature:      (row.temperature || row.lead_condition || 'warm').toLowerCase(),
+      stage:            'new',
+      source:           (row.source || 'other').toLowerCase().replace(/\s+/g, '_'),
+      remarks:          row.remarks || '',
+      other_notes:      JSON.stringify({ category: row.category || '', linkedin: row.linkedin || '', website: row.website || '' }),
     }));
     const { error } = await supabase.from('leads').insert(rows);
     setBulkUploading(false);
     if (error) {
       setBulkResult({ success: false, message: error.message });
     } else {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      qc.invalidateQueries({ queryKey: ['monthly-leads'] });
       setBulkResult({ success: true, count: rows.length });
     }
   };
