@@ -1,0 +1,43 @@
+/* ── Country Flag Styles ──────────────────────────────────────────────────── */
+
+.crm-flag {
+  display: inline-block;
+  flex-shrink: 0;
+  border-radius: 3px;
+  object-fit: cover;
+  object-position: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  transform-origin: left center;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  vertical-align: middle;
+}
+
+/* Gentle waving effect on hover */
+.crm-flag:hover {
+  animation: flag-wave 0.7s ease-in-out 1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+@keyframes flag-wave {
+  0%   { transform: perspective(200px) rotateY(0deg) scaleX(1);  }
+  20%  { transform: perspective(200px) rotateY(12deg) scaleX(0.96); }
+  45%  { transform: perspective(200px) rotateY(-8deg) scaleX(0.98); }
+  70%  { transform: perspective(200px) rotateY(5deg)  scaleX(0.99); }
+  100% { transform: perspective(200px) rotateY(0deg)  scaleX(1);  }
+}
+
+/* Emoji fallback */
+.crm-flag-emoji {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: middle;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.15));
+}
+
+/* Inside tables — tighter alignment */
+td .crm-flag,
+td .crm-flag-emoji {
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}

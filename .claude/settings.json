@@ -1,0 +1,62 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npx supabase *)",
+      "Bash(node server.js)",
+      "Bash(curl -s http://localhost:5000/api/health)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173)",
+      "Bash(npx vite *)",
+      "Read(//c/Users/Admin/Downloads/**)",
+      "Bash(Get-Content \"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Admin-Desktop-ccentrik-crm\\\\f164a9e7-d964-4b05-8d7f-dffc91f490f9\\\\tasks\\\\bdi0yo0ih.output\" -Wait)",
+      "Bash(Select-String -Pattern \"Local:|Error|EADDRINUSE|ready\")",
+      "Bash(Start-Sleep -Seconds 5)",
+      "Bash(Get-Content \"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Admin-Desktop-ccentrik-crm\\\\f164a9e7-d964-4b05-8d7f-dffc91f490f9\\\\tasks\\\\bdi0yo0ih.output\")",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:5000/api/health\" -UseBasicParsing -TimeoutSec 3; $r.Content } catch { \"Backend not running: $_\" })",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:5000/api/health\" -UseBasicParsing -TimeoutSec 3; $r.Content } catch { \"Error: $_\" })",
+      "Bash(firebase projects:list)",
+      "Bash(firebase deploy *)",
+      "Bash(curl -s -X POST \"https://uljlkctbyglaixbhdfft.supabase.co/rest/v1/rpc/exec_sql\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsamxrY3RieWdsYWl4YmhkZmZ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzI4NjAyNywiZXhwIjoyMDkyODYyMDI3fQ.ZkDN2mRjEmCnzwmYpSho3DB3MEhKgM65KA7nLwuA_WM\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsamxrY3RieWdsYWl4YmhkZmZ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzI4NjAyNywiZXhwIjoyMDkyODYyMDI3fQ.ZkDN2mRjEmCnzwmYpSho3DB3MEhKgM65KA7nLwuA_WM\" -H \"Content-Type: application/json\" -d \"{\\\\\"query\\\\\": \\\\\"UPDATE profiles SET role = 'owner' WHERE email = 'sarthak.tyagi@ccentrik.com';\\\\\"}\")",
+      "Bash(curl -s -X PATCH \"https://uljlkctbyglaixbhdfft.supabase.co/rest/v1/profiles?email=eq.sarthak.tyagi%40ccentrik.com\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsamxrY3RieWdsYWl4YmhkZmZ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzI4NjAyNywiZXhwIjoyMDkyODYyMDI3fQ.ZkDN2mRjEmCnzwmYpSho3DB3MEhKgM65KA7nLwuA_WM\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsamxrY3RieWdsYWl4YmhkZmZ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzI4NjAyNywiZXhwIjoyMDkyODYyMDI3fQ.ZkDN2mRjEmCnzwmYpSho3DB3MEhKgM65KA7nLwuA_WM\" -H \"Content-Type: application/json\" -H \"Prefer: return=representation\" -d \"{\\\\\"role\\\\\": \\\\\"owner\\\\\"}\")",
+      "Bash(railway --version)",
+      "Bash(render --version)",
+      "Bash(heroku --version)",
+      "Bash(railway login *)",
+      "Bash(vercel --version)",
+      "Bash(node -e \"const fs=require\\('fs'\\); const key=fs.readFileSync\\('serviceAccountKey.json','utf8'\\); console.log\\(Buffer.from\\(key\\).toString\\('base64'\\)\\);\")",
+      "Bash(npx kill-port *)",
+      "Bash(Get-Content \"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Admin-Desktop-ccentrik-crm\\\\f164a9e7-d964-4b05-8d7f-dffc91f490f9\\\\tasks\\\\bhu3pu7k5.output\")",
+      "Bash(node -e ' *)",
+      "Bash(curl -s \"https://uljlkctbyglaixbhdfft.supabase.co/rest/v1/chat_channels?limit=1\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsamxrY3RieWdsYWl4YmhkZmZ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzI4NjAyNywiZXhwIjoyMDkyODYyMDI3fQ.ZkDN2mRjEmCnzwmYpSho3DB3MEhKgM65KA7nLwuA_WM\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsamxrY3RieWdsYWl4YmhkZmZ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzI4NjAyNywiZXhwIjoyMDkyODYyMDI3fQ.ZkDN2mRjEmCnzwmYpSho3DB3MEhKgM65KA7nLwuA_WM\")",
+      "Bash(curl -s \"https://uljlkctbyglaixbhdfft.supabase.co/rest/v1/chat_messages?limit=1\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsamxrY3RieWdsYWl4YmhkZmZ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzI4NjAyNywiZXhwIjoyMDkyODYyMDI3fQ.ZkDN2mRjEmCnzwmYpSho3DB3MEhKgM65KA7nLwuA_WM\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsamxrY3RieWdsYWl4YmhkZmZ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzI4NjAyNywiZXhwIjoyMDkyODYyMDI3fQ.ZkDN2mRjEmCnzwmYpSho3DB3MEhKgM65KA7nLwuA_WM\")",
+      "Bash(curl -s \"https://uljlkctbyglaixbhdfft.supabase.co/rest/v1/channel_members?limit=1\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsamxrY3RieWdsYWl4YmhkZmZ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzI4NjAyNywiZXhwIjoyMDkyODYyMDI3fQ.ZkDN2mRjEmCnzwmYpSho3DB3MEhKgM65KA7nLwuA_WM\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsamxrY3RieWdsYWl4YmhkZmZ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzI4NjAyNywiZXhwIjoyMDkyODYyMDI3fQ.ZkDN2mRjEmCnzwmYpSho3DB3MEhKgM65KA7nLwuA_WM\")",
+      "Bash(curl -s \"https://uljlkctbyglaixbhdfft.supabase.co/rest/v1/chat_channels\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsamxrY3RieWdsYWl4YmhkZmZ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzI4NjAyNywiZXhwIjoyMDkyODYyMDI3fQ.ZkDN2mRjEmCnzwmYpSho3DB3MEhKgM65KA7nLwuA_WM\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsamxrY3RieWdsYWl4YmhkZmZ0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzI4NjAyNywiZXhwIjoyMDkyODYyMDI3fQ.ZkDN2mRjEmCnzwmYpSho3DB3MEhKgM65KA7nLwuA_WM\" -X POST -H \"Content-Type: application/json\" -H \"Prefer: return=representation\" -d '{\"name\":\"general\",\"type\":\"channel\",\"description\":\"General discussion\",\"is_private\":false}')",
+      "PowerShell($env:PATH = \"$env:LOCALAPPDATA\\\\Programs\\\\nodejs;$env:PATH\"; cd \"c:\\\\Users\\\\Admin\\\\Downloads\\\\Ccentrik-CRM-main\\\\frontend\"; npm run build 2>&1)",
+      "PowerShell($env:PATH = \"$env:LOCALAPPDATA\\\\Programs\\\\nodejs;$env:PATH\"; cd \"c:\\\\Users\\\\Admin\\\\Downloads\\\\Ccentrik-CRM-main\\\\frontend\"; npx firebase deploy --only hosting 2>&1)",
+      "Read(//c/Users/Admin/AppData/Local/**)",
+      "PowerShell(winget list git 2>&1)",
+      "PowerShell(winget install --id Git.Git -e --source winget 2>&1)",
+      "PowerShell($env:PATH = $env:PATH + \";C:\\\\Program Files\\\\Git\\\\cmd\"; Set-Location \"c:\\\\Users\\\\Admin\\\\Downloads\\\\Ccentrik-CRM-main\"; & git config user.email \"sarthak.tyagi@ccentrik.com\"; & git config user.name \"Sarthak Tyagi\")",
+      "PowerShell($env:PATH = $env:PATH + \";C:\\\\Program Files\\\\Git\\\\cmd\"; Set-Location \"c:\\\\Users\\\\Admin\\\\Downloads\\\\Ccentrik-CRM-main\"; & git add -A; & git status --short | Select-Object -First 30)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\Admin\\Downloads"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& 'c:\\Users\\Admin\\Downloads\\Ccentrik-CRM-main\\.claude\\ensure-servers.ps1'",
+            "shell": "powershell",
+            "async": true,
+            "statusMessage": "Ensuring dev servers are running..."
+          }
+        ]
+      }
+    ]
+  }
+}
