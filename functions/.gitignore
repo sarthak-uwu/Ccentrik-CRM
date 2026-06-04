@@ -1,0 +1,10 @@
+node_modules/
+
+# These files are synced from backend/ by deploy.ps1 — do not commit them here
+server.js
+config/
+controllers/
+middleware/
+models/
+routes/
+utils/

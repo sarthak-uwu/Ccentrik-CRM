@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: ccentrik-backend
+    env: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_URL
+        value: https://ccentrik-crm.web.app
+      - key: SUPABASE_URL
+        value: https://uljlkctbyglaixbhdfft.supabase.co
+      - key: SUPABASE_KEY
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
+      - key: FIREBASE_WEB_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: GMAIL_USER
+        sync: false
+      - key: GMAIL_PASS
+        sync: false

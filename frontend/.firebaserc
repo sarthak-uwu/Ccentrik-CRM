@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "ccentrik-crm"
+  },
+  "targets": {
+    "ccentrik-crm": {
+      "hosting": {
+        "ccentrik-crm": [
+          "ccentrik-crm"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
