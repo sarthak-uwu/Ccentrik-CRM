@@ -67,24 +67,38 @@ router.put("/:id", authenticate, authorize("owner", "sales_head"), async (req, r
   res.json(data);
 });
 
-// DELETE /api/users/:id — remove from Firebase + Supabase
+// DELETE /api/users/:id — soft-delete: revoke all access, disable Firebase, preserve audit trail
 router.delete("/:id", authenticate, authorize("owner", "sales_head"), async (req, res) => {
   const { data: target } = await supabase
     .from("profiles")
-    .select("role, firebase_uid")
+    .select("role, firebase_uid, status")
     .eq("id", req.params.id)
     .single();
 
   if (!target) return res.status(404).json({ error: "User not found" });
   if (target.role === "owner") return res.status(403).json({ error: "Cannot delete an owner account" });
   if (req.profile.id === req.params.id) return res.status(403).json({ error: "Cannot delete your own account" });
+  if (target.status === "deleted") return res.status(409).json({ error: "User is already deleted" });
 
-  // Remove from Firebase Auth
+  // Disable Firebase Auth user and revoke all refresh tokens.
+  // This blocks email/password login, Google OAuth, and invalidates all active sessions.
   if (target.firebase_uid) {
-    try { await admin.auth().deleteUser(target.firebase_uid); } catch { /* user may already be deleted */ }
+    try {
+      await admin.auth().updateUser(target.firebase_uid, { disabled: true });
+      await admin.auth().revokeRefreshTokens(target.firebase_uid);
+    } catch { /* Firebase user may not exist — Supabase status is the authoritative gate */ }
   }
 
-  const { error } = await supabase.from("profiles").delete().eq("id", req.params.id);
+  // Soft-delete: mark as deleted but keep the record for audit trail and historical ownership
+  const { error } = await supabase
+    .from("profiles")
+    .update({
+      status:     "deleted",
+      deleted_at: new Date().toISOString(),
+      deleted_by: req.profile.id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", req.params.id);
   if (error) return res.status(400).json({ error: error.message });
   res.json({ success: true });
 });

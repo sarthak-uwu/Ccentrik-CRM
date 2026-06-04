@@ -139,6 +139,12 @@ export function AuthProvider({ children }) {
           .single();
         if (!insertErr) return newProfile;
       } else if (!error && data) {
+        // Block deleted accounts — covers Google OAuth, email/password, and any cached session
+        if (data.status === "deleted") {
+          await signOut(auth);
+          toast.error("Your account has been removed from this organization. Please contact your administrator.", { duration: 6000 });
+          return null;
+        }
         // Block suspended accounts immediately
         if (data.status === "inactive") {
           await signOut(auth);

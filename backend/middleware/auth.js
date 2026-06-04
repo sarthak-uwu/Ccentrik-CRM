@@ -52,6 +52,9 @@ const authenticate = async (req, res, next) => {
       .eq("firebase_uid", uid)
       .single();
     if (error || !profile) return res.status(401).json({ error: "Profile not found" });
+    if (profile.status === "deleted") {
+      return res.status(403).json({ error: "Your account has been removed from this organization. Please contact your administrator." });
+    }
     if (profile.status === "inactive") return res.status(403).json({ error: "Account is inactive" });
     req.profile = profile;
     next();

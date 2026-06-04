@@ -39,20 +39,23 @@ router.post("/add-member", authenticate, authorize("owner", "sales_head"), async
       if (err.code === "auth/email-already-exists") {
         firebaseUser = await admin.auth().getUserByEmail(email);
         isExisting = true;
-        // Reset password so the invite email has a valid temp password
-        await admin.auth().updateUser(firebaseUser.uid, { password: tempPassword });
+        // Reset password and re-enable if previously disabled (e.g. deleted user being re-invited)
+        await admin.auth().updateUser(firebaseUser.uid, { password: tempPassword, disabled: false });
       } else {
         throw err;
       }
     }
 
-    // 2. Upsert profile in Supabase (conflict on firebase_uid)
+    // 2. Upsert profile in Supabase (conflict on firebase_uid).
+    // Clears soft-delete fields so re-invited users regain access.
     const { error: profileErr } = await supabase.from("profiles").upsert({
       firebase_uid: firebaseUser.uid,
       email: email.toLowerCase(),
       full_name: name,
       role,
-      status: "active",
+      status:     "active",
+      deleted_at: null,
+      deleted_by: null,
       updated_at: new Date().toISOString(),
     }, { onConflict: "firebase_uid" });
     if (profileErr) throw profileErr;

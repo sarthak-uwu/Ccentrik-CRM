@@ -9,6 +9,7 @@ export const teamService = {
     let query = supabase
       .from("profiles")
       .select("*", { count: "exact" })
+      .neq("status", "deleted")
       .order("created_at", { ascending: false });
 
     if (search) {
@@ -70,8 +71,12 @@ export const teamService = {
   },
 
   async removeMember(id) {
-    const { error } = await supabase.from("profiles").delete().eq("id", id);
-    if (error) throw error;
+    const token = await auth.currentUser?.getIdToken();
+    const res = await axios.delete(
+      `${API}/api/users/${id}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return res.data;
   },
 
   async deactivate(id) {
