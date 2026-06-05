@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight,
   LayoutDashboard, Workflow, UserSearch, Handshake,
   Target, CalendarDays, Activity, ClipboardList,
-  MessageCircle, PieChart, TrendingUp, Users2, ShieldCheck,
+  MessageCircle, PieChart, TrendingUp, Users2, ShieldCheck, Brain,
 } from "lucide-react";
 import logoWhite from "../../assets/logo-white.png";
 import logoBlue from "../../assets/Logo-blue.png";
@@ -40,6 +40,12 @@ const NAV = [
       { to: "/analytics",     icon: TrendingUp,  label: "Analytics" },
       { to: "/team",          icon: Users2,      label: "Team" },
       { to: "/security-logs", icon: ShieldCheck, label: "Security Logs", ownerOnly: true },
+    ],
+  },
+  {
+    section: "INTELLIGENCE",
+    items: [
+      { to: "/ai-assistant", icon: Brain, label: "AI Command", highlight: true },
     ],
   },
 ];

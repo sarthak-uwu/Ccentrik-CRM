@@ -1,40 +1,80 @@
 const XAI_BASE  = "https://api.x.ai/v1";
 const XAI_MODEL = "grok-3-mini"; // grok-3 for max quality, grok-3-mini for speed+cost
 
-function buildSystemPrompt(context, language) {
-  return `You are an AI Sales Sidekick for Ccentrik CRM — an enterprise sales platform used by the Indian sales team.
+function buildSystemPrompt(context, language, userName, userRole) {
+  const hour       = new Date().getHours();
+  const timeOfDay  = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
+  const firstName  = userName?.split(" ")[0] || "there";
+  const dateStr    = new Date().toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
-ROLE:
-- Analyze CRM data (leads, deals, tasks) and give actionable sales advice
-- Be concise, direct, and practical — sales reps are busy
-- Respond in ${language} when user writes in ${language}; if user mixes Hindi/English (Hinglish), respond in Hinglish too
-- Use Indian number format (₹, Lakh, Crore) for currency
-- When listing items, use bullet points. Bold company names and key numbers.
+  return `You are ARIA — the AI Executive Assistant embedded in Ccentrik CRM, an enterprise sales platform used by the Indian sales team.
 
-CURRENT CRM DATA:
+IDENTITY:
+- Full name: ARIA (AI Revenue Intelligence Assistant)
+- You are a highly trained executive assistant and sales strategist, not a chatbot
+- Personality: Professional, warm, intelligent, direct, action-oriented — like a trusted senior business partner
+- You speak naturally. Never sound robotic or generic.
+
+USER CONTEXT:
+- Good ${timeOfDay}, ${firstName}.
+- Name: ${userName || "Team Member"}
+- Role: ${userRole || "Sales Representative"}
+- Date: ${dateStr}
+
+CURRENT CRM SNAPSHOT:
 ${context}
 
-PERSONALITY:
-- Confident, like a senior sales manager
-- Warm but efficient — no fluff
-- Occasionally use simple Hindi phrases like "bilkul", "theek hai", "aage badhte hain" when in Hinglish mode
-- Always end with a clear next action or recommendation
+HOW TO COMMUNICATE:
+- Address user as "${firstName}" naturally — not every message, but enough to feel personal
+- Be concise and direct. Sales professionals are busy.
+- Use bullet points for lists. **Bold** company names and key numbers.
+- Always close with a clear recommended next action
+- Indian number format: ₹, Lakh, Crore
+- If user writes in Hindi or Hinglish, respond in the same language naturally
+- Use conversational openers like "Looking at your pipeline...", "Let me check that...", "Great question —" to feel human
+- Occasionally use simple Hindi affirmations in Hinglish mode: "bilkul", "theek hai", "aage badhte hain"
 
-Do NOT make up data. Only reference what's in the CRM context above.`;
+WHEN PROPOSING CRM ACTIONS:
+If the user asks you to CREATE a task, log an activity, or add a lead — propose it clearly, then include an action block:
+
+For creating a task:
+<action>{"type":"create_task","data":{"title":"Follow up with Acme Corp","priority":"high","due_date":"2026-06-15"},"description":"Create a high-priority follow-up task for Acme Corp, due June 15"}</action>
+
+For adding a lead:
+<action>{"type":"create_lead","data":{"company_name":"Acme Corp","contact_name":"John Doe","source":"referral"},"description":"Add Acme Corp as a new warm lead from referral"}</action>
+
+For logging an activity:
+<action>{"type":"create_activity","data":{"type":"call","title":"Called Acme Corp — no answer"},"description":"Log an outbound call attempt to Acme Corp"}</action>
+
+After including the action block, always say something like "Shall I go ahead?" — actions require user approval before executing.
+
+WHAT YOU CAN DO:
+- Analyze leads, deals, pipeline health and team performance
+- Identify at-risk deals and suggest recovery strategies
+- Build prioritized daily action plans
+- Draft email scripts, call scripts, and follow-up messages
+- Generate forecasts, weekly summaries, and executive reports
+- Recommend follow-up strategies for stale prospects
+- Create follow-up tasks and log activities (with approval)
+
+CRITICAL RULES:
+- NEVER make up CRM data. Only reference the snapshot above.
+- If you don't have data for something, say so honestly — don't guess.
+- Be proactive: if you spot a risk or opportunity in the data, mention it even if not asked.
+- Sound like you genuinely care about the user's success. You're their competitive advantage.`;
 }
 
 /**
  * Stream a Grok response. Calls onToken for each streamed token.
- * Returns the full reply string when done.
  */
-export async function streamGrokResponse({ messages, context, language = "English", onToken, onDone, onError }) {
+export async function streamGrokResponse({ messages, context, language = "English", userName, userRole, onToken, onDone, onError }) {
   const apiKey = import.meta.env.VITE_XAI_API_KEY;
   if (!apiKey || apiKey === "your_xai_api_key_here") {
     onError?.(new Error("XAI_KEY_MISSING"));
     return;
   }
 
-  const systemPrompt = buildSystemPrompt(context, language);
+  const systemPrompt = buildSystemPrompt(context, language, userName, userRole);
 
   const body = JSON.stringify({
     model: XAI_MODEL,
@@ -43,8 +83,8 @@ export async function streamGrokResponse({ messages, context, language = "Englis
       ...messages,
     ],
     stream: true,
-    temperature: 0.7,
-    max_tokens: 1200,
+    temperature: 0.75,
+    max_tokens: 1500,
   });
 
   try {
@@ -62,9 +102,9 @@ export async function streamGrokResponse({ messages, context, language = "Englis
       throw new Error(err?.error?.message || `xAI API error ${res.status}`);
     }
 
-    const reader = res.body.getReader();
+    const reader  = res.body.getReader();
     const decoder = new TextDecoder();
-    let fullText = "";
+    let fullText  = "";
 
     while (true) {
       const { done, value } = await reader.read();
@@ -78,11 +118,8 @@ export async function streamGrokResponse({ messages, context, language = "Englis
         if (data === "[DONE]") { onDone?.(fullText); return fullText; }
         try {
           const parsed = JSON.parse(data);
-          const token = parsed.choices?.[0]?.delta?.content || "";
-          if (token) {
-            fullText += token;
-            onToken?.(token, fullText);
-          }
+          const token  = parsed.choices?.[0]?.delta?.content || "";
+          if (token) { fullText += token; onToken?.(token, fullText); }
         } catch { /* skip malformed SSE chunks */ }
       }
     }

@@ -1904,6 +1904,39 @@ main > * { animation: slideUp 0.24s var(--ease-smooth) both; }
 }
 
 /* ═══════════════════════════════════════════════════════
+   AI COMMAND CENTER — NEURAL ANIMATIONS
+═══════════════════════════════════════════════════════ */
+@keyframes neural-breathe {
+  0%, 100% {
+    filter: drop-shadow(0 0 3px rgba(167,139,250,0.5));
+    transform: scale(1);
+  }
+  50% {
+    filter: drop-shadow(0 0 10px rgba(167,139,250,0.95)) drop-shadow(0 0 20px rgba(139,92,246,0.45));
+    transform: scale(1.1);
+  }
+}
+@keyframes ai-nav-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(139,92,246,0.45); }
+  50%       { box-shadow: 0 0 0 5px rgba(139,92,246,0); }
+}
+@keyframes neural-ring-expand {
+  0%   { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+
+/* Brain icon in sidebar pulses gently */
+a[href="/ai-assistant"] .lucide-brain {
+  animation: neural-breathe 3s ease-in-out infinite;
+}
+/* Active state — stronger glow */
+a[href="/ai-assistant"].active .lucide-brain,
+a[href="/ai-assistant"][aria-current="page"] .lucide-brain {
+  animation: neural-breathe 1.8s ease-in-out infinite;
+  filter: drop-shadow(0 0 8px rgba(255,255,255,0.8));
+}
+
+/* ═══════════════════════════════════════════════════════
    PAGE HEADER ENTERPRISE
 ═══════════════════════════════════════════════════════ */
 .page-header-ent {
