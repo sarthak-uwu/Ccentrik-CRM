@@ -977,9 +977,53 @@ function validateRow(row) {
   return errs;
 }
 
+function normalizeSource(raw) {
+  if (!raw || !raw.trim()) return null;
+  const lower = raw.trim().toLowerCase();
+  const slug  = lower.replace(/[\s\-/]+/g, "_");
+  const byKey = LEAD_SOURCES.find((x) => x.key === lower || x.key === slug);
+  if (byKey) return byKey.key;
+  const byLabel = LEAD_SOURCES.find((x) => x.label.toLowerCase() === lower);
+  if (byLabel) return byLabel.key;
+  const aliases = {
+    "cold_calling":"cold_call","cold calling":"cold_call","cold-call":"cold_call","cold-calling":"cold_call",
+    "email campaigns":"email_campaign","email_campaigns":"email_campaign",
+    "social":"social_media","social media":"social_media","social_media_ads":"social_media",
+    "ad":"ads","advertisement":"ads","paid ads":"ads","google":"ads","google ads":"ads",
+    "walk-in":"walk_in","walk in":"walk_in",
+    "partner network":"partner","partners":"partner",
+    "event / conference":"event","events":"event","conference":"event","exhibition":"event","trade show":"event",
+    "ref":"referral","referred":"referral","word of mouth":"referral",
+    "web":"website","organic":"website",
+    "call":"cold_call","phone call":"cold_call",
+    "email":"email_campaign","newsletter":"email_campaign",
+  };
+  return aliases[lower] ?? null;
+}
+
+function normalizePipelineStage(raw) {
+  if (!raw || !raw.trim()) return "new_prospect";
+  const lower = raw.trim().toLowerCase();
+  const slug  = lower.replace(/[\s\-]+/g, "_");
+  const byKey = PIPELINE_STAGES.find((x) => x.key === lower || x.key === slug);
+  if (byKey) return byKey.key;
+  const byLabel = PIPELINE_STAGES.find((x) => x.label.toLowerCase() === lower);
+  if (byLabel) return byLabel.key;
+  const aliases = {
+    "new":"new_prospect","prospect":"new_prospect","new prospect":"new_prospect","fresh":"new_prospect",
+    "attempted":"attempted_contact","attempt":"attempted_contact","attempted contact":"attempted_contact",
+    "contacted":"attempted_contact","in progress":"attempted_contact",
+    "engage":"engaged","in contact":"engaged","active":"engaged",
+    "qualify":"qualified","interested":"qualified",
+    "not interested":"not_interested","not_interested":"not_interested",
+    "disqualified":"not_interested","closed_lost":"not_interested","dead":"not_interested",
+  };
+  return aliases[lower] ?? "new_prospect";
+}
+
 const ROLE_BADGE = { owner: "Super Admin", sales_head: "Sales Head", sales_manager: "Sales Manager", employee: "Sales Executive", inside_sales: "Inside Sales" };
 
-function BulkImportModal({ onClose, onImport, loading, isAdminUser, teamMembers = [] }) {
+function BulkImportModal({ onClose, onImport, loading, isAdminUser, teamMembers = [], importResult, onResultDone }) {
   const [preview,    setPreview]    = useState(null);
   const [error,      setError]      = useState("");
   const [assignToId, setAssignToId] = useState(""); // "" = unassigned (admin default)
@@ -1069,7 +1113,36 @@ function BulkImportModal({ onClose, onImport, loading, isAdminUser, teamMembers 
 
           {error && <div style={{ padding: "10px 14px", borderRadius: 9, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)", color: "#EF4444", fontSize: 13, marginBottom: 14 }}>{error}</div>}
 
-          {preview && (() => {
+          {importResult && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 99, background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.25)", color: "#10B981", fontSize: 12.5, fontWeight: 700 }}>
+                  ✓ {importResult.imported} Imported Successfully
+                </span>
+                {importResult.failed.length > 0 && (
+                  <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 99, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)", color: "#EF4444", fontSize: 12.5, fontWeight: 700 }}>
+                    ✕ {importResult.failed.length} Failed
+                  </span>
+                )}
+              </div>
+              {importResult.failed.length > 0 && (
+                <div style={{ borderRadius: 10, border: "1px solid rgba(239,68,68,0.2)", overflow: "hidden" }}>
+                  <div style={{ background: "rgba(239,68,68,0.06)", padding: "8px 14px", fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#EF4444", borderBottom: "1px solid rgba(239,68,68,0.15)" }}>
+                    Failed Rows — Review &amp; Fix
+                  </div>
+                  {importResult.failed.map(({ rowNum, company, reason }) => (
+                    <div key={rowNum} style={{ display: "grid", gridTemplateColumns: "60px 1fr 1fr", gap: 10, padding: "8px 14px", borderBottom: "1px solid rgba(239,68,68,0.08)", fontSize: 12.5, alignItems: "center" }}>
+                      <span style={{ fontFamily: "monospace", fontWeight: 800, color: "#6366F1", background: "rgba(99,102,241,0.08)", padding: "2px 6px", borderRadius: 4, textAlign: "center" }}>Row {rowNum}</span>
+                      <span style={{ color: "var(--text)", fontWeight: 600 }}>{company}</span>
+                      <span style={{ color: "#EF4444", fontSize: 11.5 }}>{reason}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!importResult && preview && (() => {
             const errCount = preview.filter((r) => validateRow(r).length > 0).length;
             return (
               <div>
@@ -1110,9 +1183,10 @@ function BulkImportModal({ onClose, onImport, loading, isAdminUser, teamMembers 
                             <td style={{ padding: "7px 12px", color: "var(--text-2)" }}>{row.contact_name || "—"}</td>
                             <td style={{ padding: "7px 12px", color: "var(--text-2)" }}>{row.pipeline_stage || "new_prospect"}</td>
                             <td style={{ padding: "7px 12px", color: "var(--text-2)" }}>
-                              {row.country ? (() => {
-                                const match = COUNTRIES.find((c) => c.code.toLowerCase() === row.country.toLowerCase() || c.name.toLowerCase() === row.country.toLowerCase());
-                                return match ? match.name : row.country;
+                              {(row.headquarters_country || row.country) ? (() => {
+                                const raw = (row.headquarters_country || row.country).trim();
+                                const match = COUNTRIES.find((c) => c.code.toLowerCase() === raw.toLowerCase() || c.name.toLowerCase() === raw.toLowerCase());
+                                return match ? match.name : raw;
                               })() : "—"}
                             </td>
                             <td style={{ padding: "7px 12px", color: "var(--text-2)" }}>{row.industry || "—"}</td>
@@ -1140,13 +1214,21 @@ function BulkImportModal({ onClose, onImport, loading, isAdminUser, teamMembers 
 
         {/* footer */}
         <div style={{ padding: "14px 22px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end", gap: 10 }}>
-          <button onClick={onClose} style={{ padding: "8px 18px", borderRadius: 9, background: "var(--surface-2)", border: "1px solid var(--border)", fontSize: 13, color: "var(--text-2)", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-          <button
-            disabled={!preview || loading}
-            onClick={() => onImport(preview, assignToId)}
-            style={{ padding: "8px 20px", borderRadius: 9, background: preview ? "var(--accent)" : "var(--surface-2)", color: preview ? "#fff" : "var(--text-muted)", border: "none", fontSize: 13, fontWeight: 700, cursor: preview ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
-            {loading ? "Importing…" : `Import ${preview?.length || 0} Prospect${(preview?.length || 0) !== 1 ? "s" : ""}`}
-          </button>
+          {importResult ? (
+            <button onClick={onResultDone} style={{ padding: "8px 24px", borderRadius: 9, background: "var(--accent)", color: "#fff", border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              Done
+            </button>
+          ) : (
+            <>
+              <button onClick={onClose} style={{ padding: "8px 18px", borderRadius: 9, background: "var(--surface-2)", border: "1px solid var(--border)", fontSize: 13, color: "var(--text-2)", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              <button
+                disabled={!preview || loading}
+                onClick={() => onImport(preview, assignToId)}
+                style={{ padding: "8px 20px", borderRadius: 9, background: preview ? "var(--accent)" : "var(--surface-2)", color: preview ? "#fff" : "var(--text-muted)", border: "none", fontSize: 13, fontWeight: 700, cursor: preview ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+                {loading ? "Importing…" : `Import ${preview?.length || 0} Prospect${(preview?.length || 0) !== 1 ? "s" : ""}`}
+              </button>
+            </>
+          )}
         </div>
       </motion.div>
     </div>
@@ -1414,6 +1496,7 @@ export default function Pipeline() {
   const [sortBy,          setSortBy]          = useState("lead_code");
   const [sortDir,         setSortDir]         = useState("asc");
   const [showImport,      setShowImport]      = useState(false);
+  const [importResult,    setImportResult]    = useState(null);
 
   useEffect(() => {
     if (searchParams.get("create") === "1") {
@@ -1549,44 +1632,56 @@ export default function Pipeline() {
   const bulkImportMutation = useMutation({
     mutationFn: async ({ rows, assignedTo }) => {
       const { supabase: sb } = await import("../supabaseClient");
-      // lead_code is assigned automatically by the database trigger (fn_set_lead_code) on INSERT
-      const records = rows.map((r) => ({
-        stage:          "pipeline",
-        company_name:   r.company_name,
-        contact_name:   r.contact_name   || "",
-        designation:    r.designation    || null,
-        pipeline_stage: r.pipeline_stage || "new_prospect",
-        source:         r.source         || null,
-        assigned_to:    assignedTo       || profile?.id,
-        created_by:     profile?.id,
-        is_locked:      false,
-        other_notes: JSON.stringify({
-          email:      r.email    || "",
-          phone:      r.phone    || "",
-          website:    r.website  || "",
-          industry:   r.industry || "",
-          country:    (() => {
-            const raw = (r.headquarters_country || r.country || "").trim();
-            if (!raw) return "";
-            const byCode = COUNTRIES.find((c) => c.code.toLowerCase() === raw.toLowerCase());
-            if (byCode) return byCode.code;
-            const byName = COUNTRIES.find((c) => c.name.toLowerCase() === raw.toLowerCase());
-            return byName ? byName.code : raw;
-          })(),
-          state:                r.headquarters_state || r.state || "",
-          city:                 r.headquarters_city  || r.city  || "",
-          contact_linkedin_url: r.contact_linkedin_url || "",
-          notes:      r.notes    || "",
-        }),
-      }));
-      const { error } = await sb.from("leads").insert(records);
-      if (error) throw error;
-      return records.length;
+      let imported = 0;
+      const failed = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const record = {
+          stage:          "pipeline",
+          company_name:   r.company_name,
+          contact_name:   r.contact_name   || "",
+          designation:    r.designation    || null,
+          pipeline_stage: normalizePipelineStage(r.pipeline_stage),
+          source:         normalizeSource(r.source),
+          assigned_to:    assignedTo       || profile?.id,
+          created_by:     profile?.id,
+          is_locked:      false,
+          other_notes: JSON.stringify({
+            email:                r.email    || "",
+            phone:                r.phone    || "",
+            website:              r.website  || "",
+            industry:             r.industry || "",
+            country: (() => {
+              const raw = (r.headquarters_country || r.country || "").trim();
+              if (!raw) return "";
+              const byCode = COUNTRIES.find((c) => c.code.toLowerCase() === raw.toLowerCase());
+              if (byCode) return byCode.code;
+              const byName = COUNTRIES.find((c) => c.name.toLowerCase() === raw.toLowerCase());
+              return byName ? byName.code : raw;
+            })(),
+            state:                r.headquarters_state || r.state || "",
+            city:                 r.headquarters_city  || r.city  || "",
+            contact_linkedin_url: r.contact_linkedin_url || "",
+            notes:                r.notes    || "",
+          }),
+        };
+        const { error } = await sb.from("leads").insert([record]);
+        if (error) {
+          failed.push({ rowNum: i + 2, company: r.company_name || `Row ${i + 2}`, reason: error.message });
+        } else {
+          imported++;
+        }
+      }
+      return { imported, failed };
     },
-    onSuccess: (count) => {
+    onSuccess: ({ imported, failed }) => {
       qc.invalidateQueries({ queryKey: ["pipeline"] });
-      toast.success(`${count} prospects imported!`);
-      setShowImport(false);
+      setImportResult({ imported, failed });
+      if (failed.length === 0) {
+        toast.success(`${imported} prospect${imported !== 1 ? "s" : ""} imported!`);
+        setShowImport(false);
+        setImportResult(null);
+      }
     },
     onError: (e) => toast.error(e.message),
   });
@@ -2169,7 +2264,7 @@ export default function Pipeline() {
         {showImport && (
           <BulkImportModal
             key="import"
-            onClose={() => setShowImport(false)}
+            onClose={() => { setShowImport(false); setImportResult(null); }}
             onImport={(rows, adminPickedId) => {
               // Non-admins: always assign to self. Admins: use their selection (may be empty = unassigned).
               const assignedTo = (isOwner || isSalesHead) ? (adminPickedId || null) : (profile?.id || null);
@@ -2178,6 +2273,8 @@ export default function Pipeline() {
             loading={bulkImportMutation.isPending}
             isAdminUser={isOwner || isSalesHead}
             teamMembers={teamMembers}
+            importResult={importResult}
+            onResultDone={() => { setShowImport(false); setImportResult(null); }}
           />
         )}
       </AnimatePresence>
