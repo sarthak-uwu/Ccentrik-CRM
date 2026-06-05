@@ -1584,13 +1584,13 @@ export default function Pipeline() {
 
   const lockMutation = useMutation({
     mutationFn: (id) => leadsService.lockRecord(id),
-    onSuccess:  () => { qc.invalidateQueries({ queryKey: ["pipeline"] }); toast.success("Record locked"); },
+    onSuccess:  () => { qc.invalidateQueries({ queryKey: ["pipeline"] }); qc.invalidateQueries({ queryKey: ["leads"] }); toast.success("Record locked"); },
     onError:    (e) => toast.error(e.message),
   });
 
   const unlockMutation = useMutation({
     mutationFn: (id) => leadsService.unlockRecord(id),
-    onSuccess:  () => { qc.invalidateQueries({ queryKey: ["pipeline"] }); toast.success("Record unlocked"); },
+    onSuccess:  () => { qc.invalidateQueries({ queryKey: ["pipeline"] }); qc.invalidateQueries({ queryKey: ["leads"] }); toast.success("Record unlocked"); },
     onError:    (e) => toast.error(e.message),
   });
 

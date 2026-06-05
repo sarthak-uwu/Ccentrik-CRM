@@ -1371,13 +1371,13 @@ export default function Deals() {
 
   const lockDealMutation = useMutation({
     mutationFn: (id) => dealsService.lockRecord(id),
-    onSuccess:  () => { qc.invalidateQueries({ queryKey: ["deals"] }); toast.success("Deal locked"); },
+    onSuccess:  () => { qc.invalidateQueries({ queryKey: ["deals"] }); qc.invalidateQueries({ queryKey: ["deals-all"] }); qc.invalidateQueries({ queryKey: ["my-deals"] }); toast.success("Deal locked"); },
     onError:    (e) => toast.error(e.message),
   });
 
   const unlockDealMutation = useMutation({
     mutationFn: (id) => dealsService.unlockRecord(id),
-    onSuccess:  () => { qc.invalidateQueries({ queryKey: ["deals"] }); toast.success("Deal unlocked — editing is now enabled"); },
+    onSuccess:  () => { qc.invalidateQueries({ queryKey: ["deals"] }); qc.invalidateQueries({ queryKey: ["deals-all"] }); qc.invalidateQueries({ queryKey: ["my-deals"] }); toast.success("Deal unlocked — editing is now enabled"); },
     onError:    (e) => toast.error(e.message),
   });
 

@@ -622,7 +622,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
       await leadsService.update(lead.id, { other_notes: JSON.stringify({ ...cur, contact_locked: false }) });
       await changeHistoryService.logContactUnlock({ entityType: "lead", entityId: lead.id, adminName: profile?.full_name, userId: profile?.id });
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["leads"] }); qc.invalidateQueries({ queryKey: ["change-history-lead", lead.id] }); toast.success("Form unlocked — you can now edit this record"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["leads"] }); qc.invalidateQueries({ queryKey: ["pipeline"] }); qc.invalidateQueries({ queryKey: ["change-history-lead", lead.id] }); toast.success("Form unlocked — you can now edit this record"); },
     onError: (e) => toast.error(e.message || "Failed"),
   });
 
