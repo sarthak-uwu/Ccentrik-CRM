@@ -359,6 +359,7 @@ function PipelineFormModal({ entry, onClose, onSave, teamMembers = [], canAssign
       designation: entry?.designation || "",
       email: extra.email || "",
       phone: extra.phone || "",
+      linkedin_url: extra.contact_linkedin_url || "",
       is_primary: true,
     }];
   });
@@ -370,7 +371,7 @@ function PipelineFormModal({ entry, onClose, onSave, teamMembers = [], canAssign
 
   const addPerson = () => {
     const id = nanoid();
-    setPersons((prev) => [...prev, { id, name: "", designation: "", email: "", phone: "", is_primary: false }]);
+    setPersons((prev) => [...prev, { id, name: "", designation: "", email: "", phone: "", linkedin_url: "", is_primary: false }]);
   };
   const removePerson = (id) => {
     setPersons((prev) => prev.filter((p) => p.id !== id));
@@ -431,21 +432,22 @@ function PipelineFormModal({ entry, onClose, onSave, teamMembers = [], canAssign
       phone:          activePoc.phone || null,
       contacts,
       other_notes: toJSON({
-        email:            activePoc.email || "",
-        phone:            activePoc.phone || "",
-        people_contacts:  personsWithFlag,
-        country:          selectedCountry,
-        city:             formData.city || "",
-        state:            formData.state || "",
-        company_number:   formData.company_number || "",
-        website:          formData.website || "",
-        company_linkedin: formData.company_linkedin || "",
-        linkedin_url:     linkedInContact?.value || "",
-        industry:         formData.industry || "",
-        custom_source:    formData.source === "other" ? formData.custom_source : "",
-        services:         selectedServices,
-        contact_locked:   true,
-        supervisor_id:    supervisorId || null,
+        email:                activePoc.email || "",
+        phone:                activePoc.phone || "",
+        people_contacts:      personsWithFlag,
+        country:              selectedCountry,
+        city:                 formData.city || "",
+        state:                formData.state || "",
+        company_number:       formData.company_number || "",
+        website:              formData.website || "",
+        company_linkedin:     formData.company_linkedin || "",
+        linkedin_url:         linkedInContact?.value || "",
+        contact_linkedin_url: activePoc.linkedin_url || "",
+        industry:             formData.industry || "",
+        custom_source:        formData.source === "other" ? formData.custom_source : "",
+        services:             selectedServices,
+        contact_locked:       true,
+        supervisor_id:        supervisorId || null,
       }),
     });
   };
@@ -543,6 +545,10 @@ function PipelineFormModal({ entry, onClose, onSave, teamMembers = [], canAssign
                         </select>
                         <input className="crm-input" value={p.phone} onChange={(e) => updatePerson(p.id, "phone", e.target.value)} placeholder="9876543210" />
                       </div>
+                    </div>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <label className="crm-label">Contact LinkedIn URL</label>
+                      <input className="crm-input" type="url" value={p.linkedin_url || ""} onChange={(e) => updatePerson(p.id, "linkedin_url", e.target.value)} placeholder="https://linkedin.com/in/username" />
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
@@ -897,8 +903,8 @@ function ToolbarPagination({ currentPage, totalPages, onChange }) {
 
 // ─── Main Pipeline Page ────────────────────────────────────────────────────────
 // ── CSV helpers ───────────────────────────────────────────────────────────────
-const CSV_TEMPLATE_HEADERS = ["Company Name","Contact Name","Designation","Pipeline Stage","Source","Industry","Country","Email","Phone","Website","Notes"];
-const CSV_TEMPLATE_ROW     = ["Acme Corp","Jane Doe","Director","new_prospect","linkedin","Technology","India","jane@acme.com","+91 9876543210","https://acme.com","Interested in SAP"];
+const CSV_TEMPLATE_HEADERS = ["Company Name","Contact Name","Designation","Pipeline Stage","Source","Industry","Headquarters Country","Headquarters State","Headquarters City","Contact LinkedIn URL","Email","Phone","Website","Notes"];
+const CSV_TEMPLATE_ROW     = ["Acme Corp","Jane Doe","Director","new_prospect","linkedin","Technology","India","Maharashtra","Mumbai","https://linkedin.com/in/janedoe","jane@acme.com","+91 9876543210","https://acme.com","Interested in SAP"];
 
 function downloadCSVTemplate() {
   const rows = [CSV_TEMPLATE_HEADERS, CSV_TEMPLATE_ROW];
@@ -1560,13 +1566,16 @@ export default function Pipeline() {
           website:    r.website  || "",
           industry:   r.industry || "",
           country:    (() => {
-            const raw = (r.country || "").trim();
+            const raw = (r.headquarters_country || r.country || "").trim();
             if (!raw) return "";
             const byCode = COUNTRIES.find((c) => c.code.toLowerCase() === raw.toLowerCase());
             if (byCode) return byCode.code;
             const byName = COUNTRIES.find((c) => c.name.toLowerCase() === raw.toLowerCase());
             return byName ? byName.code : raw;
           })(),
+          state:                r.headquarters_state || r.state || "",
+          city:                 r.headquarters_city  || r.city  || "",
+          contact_linkedin_url: r.contact_linkedin_url || "",
           notes:      r.notes    || "",
         }),
       }));
