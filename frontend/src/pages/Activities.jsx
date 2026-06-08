@@ -10,6 +10,7 @@ import { teamService } from "../services/teamService";
 import { leadsService } from "../services/leadsService";
 import { dealsService } from "../services/dealsService";
 import Targets from "./Targets";
+import EmailActivityLog from "../components/EmailActivityLog";
 import toast from "react-hot-toast";
 import {
   Plus, Search, Pencil, Trash2, X, Phone, Mail, FileText, Bell,
@@ -1844,7 +1845,7 @@ export default function Activities() {
   const qc          = useQueryClient();
 
   const [activeModule,     setActiveModule]     = useState("tasks"); // "tasks" | "email" | "targets"
-  const [emailSubView,     setEmailSubView]     = useState("contacts"); // "contacts" | "synclog"
+  const [emailSubView,     setEmailSubView]     = useState("synclog"); // "synclog" | "contacts"
   const [view,             setView]             = useState("timeline");
   const [search,           setSearch]           = useState("");
   const [typeFilter,       setTypeFilter]       = useState("");
@@ -2091,26 +2092,26 @@ export default function Activities() {
       {/* ── Email Activities Module ── */}
       {activeModule === "email" && (
         <div style={{ flex: 1, overflowY: "auto" }}>
-          <div style={{ marginBottom: 14, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+          <div style={{ marginBottom: 16, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
             <div>
-              <h1 style={{ margin: 0, fontSize: 21, fontWeight: 800, color: "#111827", letterSpacing: "-0.03em" }}>Email Activities</h1>
-              <p style={{ margin: "3px 0 0", fontSize: 13, color: "#6B7280" }}>Track email outreach contacts and Gmail auto-sync log</p>
+              <h1 style={{ margin: 0, fontSize: 21, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.03em" }}>Email Activities</h1>
+              <p style={{ margin: "3px 0 0", fontSize: 13, color: "var(--text-muted)" }}>Auto-tracked sent emails with CRM mapping, filtering and activity logging</p>
             </div>
-            {/* Sub-tab switcher */}
-            <div style={{ display: "flex", gap: 3, background: "#F3F4F6", padding: 3, borderRadius: 9 }}>
+            {/* Sub-tab — Email Log (primary) + Email Contacts (legacy) */}
+            <div style={{ display: "flex", gap: 3, background: "var(--surface-2)", padding: 3, borderRadius: 9, border: "1px solid var(--border)" }}>
               {[
+                { key: "synclog",  label: "Email Log"      },
                 { key: "contacts", label: "Email Contacts" },
-                { key: "synclog", label: "Gmail Sync Log" },
               ].map(({ key, label }) => (
                 <button key={key} onClick={() => setEmailSubView(key)}
-                  style={{ padding: "6px 14px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: emailSubView === key ? 700 : 500, background: emailSubView === key ? "#FFFFFF" : "transparent", color: emailSubView === key ? "#111827" : "#6B7280", boxShadow: emailSubView === key ? "0 1px 4px rgba(0,0,0,0.1)" : "none", transition: "all 0.15s" }}>
+                  style={{ padding: "6px 14px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: emailSubView === key ? 700 : 500, background: emailSubView === key ? "#FFFFFF" : "transparent", color: emailSubView === key ? "var(--text)" : "var(--text-muted)", boxShadow: emailSubView === key ? "0 1px 4px rgba(0,0,0,0.1)" : "none", transition: "all 0.15s" }}>
                   {label}
                 </button>
               ))}
             </div>
           </div>
-          {emailSubView === "contacts" && <EmailActivities profile={profile} />}
-          {emailSubView === "synclog"  && <GmailSyncLog   profile={profile} />}
+          {emailSubView === "synclog"  && <EmailActivityLog profile={profile} />}
+          {emailSubView === "contacts" && <EmailActivities  profile={profile} />}
         </div>
       )}
 

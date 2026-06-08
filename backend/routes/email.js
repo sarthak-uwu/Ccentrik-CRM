@@ -473,4 +473,38 @@ router.get("/stats", authenticate, async (req, res) => {
   res.json({ total: rows.length, byUser, byRecord });
 });
 
+// ── PATCH /api/email/log/:id ─ update remarks / follow-up (any authenticated user on own records)
+router.patch("/log/:id", authenticate, async (req, res) => {
+  const { reason, follow_up_date, follow_up_status } = req.body;
+  const role = req.profile.role;
+  const isAdmin = ["owner", "sales_head", "sales_manager"].includes(role);
+
+  // Build update payload — only allow the fields the user sent
+  const update = {};
+  if (reason           !== undefined) update.reason           = reason;
+  if (follow_up_date   !== undefined) update.follow_up_date   = follow_up_date || null;
+  if (follow_up_status !== undefined) update.follow_up_status = follow_up_status;
+
+  if (!Object.keys(update).length) return res.status(400).json({ error: "Nothing to update" });
+
+  // Employees can only edit their own records; admins can edit anyone's
+  let query = supabase.from("email_sync_log").update(update).eq("id", req.params.id);
+  if (!isAdmin) query = query.eq("user_id", req.profile.id);
+
+  const { error } = await query;
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// ── DELETE /api/email/log/:id ─ restricted to owner / sales_head / super admin
+router.delete("/log/:id", authenticate, async (req, res) => {
+  const role = req.profile.role;
+  if (!["owner", "sales_head"].includes(role)) {
+    return res.status(403).json({ error: "Only Sales Head or Owner can delete email activity records." });
+  }
+  const { error } = await supabase.from("email_sync_log").delete().eq("id", req.params.id);
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true });
+});
+
 module.exports = router;

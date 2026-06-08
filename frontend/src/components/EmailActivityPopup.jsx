@@ -149,16 +149,28 @@ export default function EmailActivityPopup() {
 
         {/* Email info */}
         <div style={{ padding: "10px 15px", borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
-          <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text)", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text)", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {current.subject || "(No Subject)"}
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            To: {(current.to_emails || []).join(", ") || "—"}
+          <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 2 }}>
+            <span style={{ fontWeight: 600 }}>From:</span> {current.from_email || "—"}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 2 }}>
+            <span style={{ fontWeight: 600 }}>To:</span> {(current.to_emails || []).join(", ") || "—"}
+          </div>
+          {(current.cc_emails || []).length > 0 && (
+            <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 2 }}>
+              <span style={{ fontWeight: 600 }}>CC:</span> {current.cc_emails.join(", ")}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>
+            <span style={{ fontWeight: 600 }}>Sent:</span> {current.sent_at ? new Date(current.sent_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—"}
+            {current.attachment_count > 0 && <span style={{ marginLeft: 8 }}>📎 {current.attachment_count} attachment{current.attachment_count > 1 ? "s" : ""}</span>}
           </div>
           {(current.lead_id || current.customer_id || current.pipeline_id) && (
-            <div style={{ fontSize: 11, color: "#10B981", marginTop: 3, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+            <div style={{ fontSize: 11, color: "#10B981", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
               <Check size={10} strokeWidth={3} />
-              Matched to {current.crm_record_name || "a CRM record"} ({current.crm_module || "CRM"})
+              Matched to <strong>{current.crm_record_name || "a CRM record"}</strong> ({current.crm_module || "CRM"})
             </div>
           )}
         </div>
