@@ -390,14 +390,344 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
   const dayMonthStr    = new Date(startTime).toLocaleString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "Asia/Kolkata" });
   const hostInitials   = (hostName || "CC").split(" ").map(w => w[0] || "").join("").slice(0, 2).toUpperCase();
 
-  const html = `<!DOCTYPE html>
-<html lang="en">
+  // ── Meeting-type flags ────────────────────────────────────────────────────────
+  const isGoogleMeet  = meetingType === "google_meet";
+  const isTeams       = meetingType === "teams";
+  const isZoom        = meetingType === "jitsi" || meetingType === "zoom";
+  const isInPerson    = !isOnline;
+
+  // ── RSVP action URLs (public backend endpoint) ────────────────────────────────
+  const BACKEND_BASE  = process.env.BACKEND_URL || process.env.API_URL || "https://ccentrik-crm-api.onrender.com";
+  const acceptUrl     = meetingId ? `${BACKEND_BASE}/api/meetings/rsvp?id=${meetingId}&action=accept`     : "#";
+  const declineUrl    = meetingId ? `${BACKEND_BASE}/api/meetings/rsvp?id=${meetingId}&action=decline`    : "#";
+  const rescheduleUrl = meetingId ? `${APP_URL}/meetings`                                                 : "#";
+
+  // ── Response deadline: 24 h before meeting ────────────────────────────────────
+  const responseDeadlineStr = (() => {
+    if (!startTime) return dateStr;
+    const dl = new Date(new Date(startTime).getTime() - 24 * 3600000);
+    return dl > new Date()
+      ? dl.toLocaleDateString("en-IN", { weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "Asia/Kolkata" })
+      : dateStr;
+  })();
+
+  // ── Outlook calendar URL ──────────────────────────────────────────────────────
+  const outlookCalUrl = (() => {
+    const fmt = (d) => new Date(d).toISOString();
+    const p = new URLSearchParams({
+      path: "/calendar/action/compose", rru: "addevent",
+      subject: title || "Meeting",
+      startdt: fmt(startTime),
+      enddt:   fmt(endTime || new Date(new Date(startTime).getTime() + 3600000)),
+      body:    [description, meetingLink ? `Join: ${meetingLink}` : ""].filter(Boolean).join("\n"),
+      location: location || meetingLink || "",
+    });
+    return `https://outlook.live.com/calendar/0/deeplink/compose?${p.toString()}`;
+  })();
+
+  // ── Participants ──────────────────────────────────────────────────────────────
+  const allParticipants  = (Array.isArray(allAttendees) ? allAttendees : []).filter(a => a && a.email);
+  const participantCount = allParticipants.length;
+  const participantsHtml = allParticipants.map(a =>
+    `<span style="display:inline-block;background:#e8eaf6;color:#1a2570;padding:4px 12px;border-radius:20px;font-size:13px;margin:3px 3px 3px 0;font-family:Arial,Helvetica,sans-serif;">${a.name || a.email}</span>`
+  ).join("");
+
+  // ── Misc ──────────────────────────────────────────────────────────────────────
+  const mapsUrl    = location ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}` : "#";
+  const supportUrl = `mailto:${hostEmail || FROM_ADDR}`;
+
+  // ── Pre-computed conditional HTML blocks (avoids nested template literal confusion) ──
+  const locationSection = (isInPerson && location) ? `
+        <tr>
+          <td style="padding:16px 24px;border-bottom:1px solid #eef2f8;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="top">
+              <td width="42%" style="font-weight:700;font-size:14px;color:#1a2540;font-family:Arial,Helvetica,sans-serif;padding-right:12px;">&#128205; Location</td>
+              <td style="font-size:14px;color:#444;font-family:Arial,Helvetica,sans-serif;">${location}<br/><br/><a href="${mapsUrl}" target="_blank" style="color:#0a52ff;text-decoration:none;font-weight:600;">&#128205; View on Google Maps</a></td>
+            </tr></table>
+          </td>
+        </tr>` : "";
+
+  const meetingLinkSection = meetingLink ? `
+        <tr>
+          <td style="padding:16px 24px;border-bottom:1px solid #eef2f8;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+              <td width="42%" style="font-weight:700;font-size:14px;color:#1a2540;font-family:Arial,Helvetica,sans-serif;padding-right:12px;">${isTeams ? "&#128188; Teams Meeting" : isZoom ? "&#128249; Zoom Meeting" : "&#127909; Meeting Link"}</td>
+              <td><a href="${meetingLink}" target="_blank" style="display:inline-block;background:${isTeams ? "#6264a7" : isZoom ? "#2D8CFF" : "#0a52ff"};color:#ffffff;padding:10px 22px;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;font-family:Arial,Helvetica,sans-serif;">${isGoogleMeet ? "Join Google Meet" : isTeams ? "Join Microsoft Teams" : isZoom ? "Join Zoom Meeting" : "Join Meeting"}</a></td>
+            </tr></table>
+          </td>
+        </tr>` : "";
+
+  const descriptionSection = description ? `
+        <tr>
+          <td style="padding:16px 24px;border-bottom:1px solid #eef2f8;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="top">
+              <td width="42%" style="font-weight:700;font-size:14px;color:#1a2540;font-family:Arial,Helvetica,sans-serif;padding-right:12px;">&#128196; Reason for Meeting</td>
+              <td style="font-size:14px;color:#444;line-height:1.6;font-family:Arial,Helvetica,sans-serif;">${description.replace(/\n/g, "<br/>")}</td>
+            </tr></table>
+          </td>
+        </tr>` : "";
+
+  const participantsSection = participantCount > 0 ? `
+        <tr>
+          <td style="padding:16px 24px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="top">
+              <td width="42%" style="font-weight:700;font-size:14px;color:#1a2540;font-family:Arial,Helvetica,sans-serif;padding-right:12px;">&#128101; Additional Participants</td>
+              <td style="font-size:14px;color:#444;font-family:Arial,Helvetica,sans-serif;"><strong>${participantCount} Member${participantCount !== 1 ? "s" : ""}</strong><br/><br/>${participantsHtml}</td>
+            </tr></table>
+          </td>
+        </tr>` : "";
+
+  const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>Meeting Invitation – ${title}</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-<style>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Meeting Invitation – ${title || "Meeting"}</title>
+<!--[if !mso]><!-->
+<style type="text/css">
+  @media screen and (max-width:620px){
+    .hide-sm{display:none!important;}
+    .btn-col{display:block!important;width:100%!important;padding:0 0 10px 0!important;}
+  }
+</style>
+<!--<![endif]-->
+</head>
+<body style="margin:0;padding:0;background:#f4f6fb;font-family:Arial,Helvetica,sans-serif;">
+
+<!-- Outer wrapper -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f4f6fb" style="background:#f4f6fb;">
+<tr><td align="center" style="padding:20px 10px;">
+
+<!-- Email wrapper -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:680px;width:100%;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+  <!-- ═══ 1. HEADER ═══ -->
+  <tr>
+    <td style="background:#ffffff;padding:20px 32px;border-bottom:1px solid #eef0f6;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr valign="middle">
+          <td><span style="font-size:26px;font-weight:700;color:#0a52ff;font-family:Arial,Helvetica,sans-serif;letter-spacing:-0.5px;">CENTRIK</span></td>
+          <td align="right"><span style="font-size:14px;font-weight:600;color:#26335d;font-family:Arial,Helvetica,sans-serif;">&#128197; Meeting Invitation</span></td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ═══ 2. HERO BANNER ═══ -->
+  <tr>
+    <td style="padding:16px 20px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#0036c7" style="background:linear-gradient(135deg,#001f75,#005cff);border-radius:16px;background-color:#0036c7;">
+        <tr>
+          <td style="padding:40px 36px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <!-- Hero text -->
+                <td valign="top" style="color:#ffffff;max-width:350px;padding-right:20px;">
+                  <div style="font-size:40px;font-weight:700;color:#ffffff;line-height:1.1;font-family:Arial,Helvetica,sans-serif;margin:0 0 16px 0;">You're Invited<br/>to a Meeting</div>
+                  <p style="font-size:15px;color:rgba(255,255,255,0.9);line-height:1.7;margin:0;font-family:Arial,Helvetica,sans-serif;">Centrik CRM has scheduled a meeting with you. Please review the details below and respond.</p>
+                </td>
+                <!-- Calendar widget -->
+                <td class="hide-sm" align="right" valign="middle">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="background:#ffffff;border-radius:16px;width:150px;overflow:hidden;margin-left:auto;">
+                    <tr><td bgcolor="#0052ff" style="background:#0052ff;padding:7px;text-align:center;font-size:10px;font-weight:700;color:#ffffff;font-family:Arial,Helvetica,sans-serif;letter-spacing:1px;text-transform:uppercase;">${monthYearLabel}</td></tr>
+                    <tr><td style="padding:14px 10px 12px;text-align:center;">
+                      <div style="font-size:44px;font-weight:700;color:#0f172a;line-height:1;font-family:Arial,Helvetica,sans-serif;">${dayNum}</div>
+                      <div style="font-size:10px;color:#64748b;font-weight:500;text-transform:uppercase;letter-spacing:1px;margin-top:4px;font-family:Arial,Helvetica,sans-serif;">${dayNameStr}</div>
+                      <div style="border-top:1px solid #f1f5f9;margin-top:8px;padding-top:7px;font-size:10px;color:#0052ff;font-weight:700;font-family:Arial,Helvetica,sans-serif;">${timeStr}${endTimeStr ? " – " + endTimeStr : ""} IST</div>
+                      ${durationStr ? `<div style="font-size:9px;color:#94a3b8;margin-top:2px;font-family:Arial,Helvetica,sans-serif;">${durationStr}</div>` : ""}
+                    </td></tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ═══ 3. GREETING ═══ -->
+  <tr>
+    <td style="padding:28px 36px 12px;">
+      <h2 style="font-size:24px;font-weight:700;color:#1a2540;margin:0 0 10px 0;font-family:Arial,Helvetica,sans-serif;">Hello, ${customerName || "there"} &#128075;</h2>
+      <p style="font-size:15px;color:#58627d;line-height:1.7;margin:0;font-family:Arial,Helvetica,sans-serif;">You have been invited to the following meeting. Please review the details and let us know if you'll be able to attend.</p>
+    </td>
+  </tr>
+
+  <!-- ═══ 4. ACTION BUTTONS ═══ -->
+  <tr>
+    <td style="padding:16px 36px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td class="btn-col" valign="top" style="padding-right:10px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr><td align="center" style="border:2px solid #18b56f;border-radius:12px;padding:18px 12px;">
+                <a href="${acceptUrl}" target="_blank" style="text-decoration:none;display:block;font-family:Arial,Helvetica,sans-serif;">
+                  <div style="font-size:22px;margin-bottom:6px;">&#10004;</div>
+                  <div style="font-size:14px;font-weight:700;color:#18b56f;">Accept Meeting</div>
+                  <div style="font-size:11px;color:#5cb98a;margin-top:3px;">I'll be there</div>
+                </a>
+              </td></tr>
+            </table>
+          </td>
+          <td class="btn-col" valign="top" style="padding:0 5px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr><td align="center" style="border:2px solid #ff4d4d;border-radius:12px;padding:18px 12px;">
+                <a href="${declineUrl}" target="_blank" style="text-decoration:none;display:block;font-family:Arial,Helvetica,sans-serif;">
+                  <div style="font-size:22px;margin-bottom:6px;">&#10006;</div>
+                  <div style="font-size:14px;font-weight:700;color:#ff4d4d;">Decline Meeting</div>
+                  <div style="font-size:11px;color:#e88080;margin-top:3px;">I won't be able to attend</div>
+                </a>
+              </td></tr>
+            </table>
+          </td>
+          <td class="btn-col" valign="top" style="padding-left:10px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr><td align="center" style="border:2px solid #ff9800;border-radius:12px;padding:18px 12px;">
+                <a href="${rescheduleUrl}" target="_blank" style="text-decoration:none;display:block;font-family:Arial,Helvetica,sans-serif;">
+                  <div style="font-size:22px;margin-bottom:6px;">&#128197;</div>
+                  <div style="font-size:14px;font-weight:700;color:#ff9800;">Reschedule</div>
+                  <div style="font-size:11px;color:#d4900a;margin-top:3px;">Suggest another time</div>
+                </a>
+              </td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ═══ 5. RESPONSE DEADLINE ═══ -->
+  <tr>
+    <td align="center" style="padding:10px 36px 20px;font-size:14px;font-family:Arial,Helvetica,sans-serif;">
+      <span style="color:#667089;">Please respond by </span><span style="color:#0a52ff;font-weight:700;">${responseDeadlineStr}</span>
+    </td>
+  </tr>
+
+  <!-- ═══ 6. MEETING DETAILS CARD ═══ -->
+  <tr>
+    <td style="padding:0 20px 20px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e5ebf7;border-radius:16px;overflow:hidden;background:#ffffff;">
+
+        <!-- Card heading -->
+        <tr><td style="padding:20px 24px;font-size:20px;font-weight:700;color:#1a2540;border-bottom:1px solid #eef2f8;font-family:Arial,Helvetica,sans-serif;">Meeting Details</td></tr>
+
+        <!-- Meeting Title -->
+        <tr><td style="padding:15px 24px;border-bottom:1px solid #eef2f8;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="top">
+            <td width="40%" style="font-weight:700;font-size:13px;color:#1a2540;font-family:Arial,Helvetica,sans-serif;padding-right:12px;">&#128197; Meeting Title</td>
+            <td style="font-size:13px;color:#444;font-family:Arial,Helvetica,sans-serif;">${title || "—"}</td>
+          </tr></table>
+        </td></tr>
+
+        <!-- Date & Time -->
+        <tr><td style="padding:15px 24px;border-bottom:1px solid #eef2f8;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="top">
+            <td width="40%" style="font-weight:700;font-size:13px;color:#1a2540;font-family:Arial,Helvetica,sans-serif;padding-right:12px;">&#128336; Date &amp; Time</td>
+            <td style="font-size:13px;color:#444;font-family:Arial,Helvetica,sans-serif;">${dateStr}<br/><br/>${timeStr}${endTimeStr ? " – " + endTimeStr : ""} IST${durationStr ? ` (${durationStr})` : ""}</td>
+          </tr></table>
+        </td></tr>
+
+        ${locationSection}
+        ${meetingLinkSection}
+        ${descriptionSection}
+
+        <!-- Invited By -->
+        <tr><td style="padding:15px 24px;${participantCount > 0 ? "border-bottom:1px solid #eef2f8;" : ""}">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="top">
+            <td width="40%" style="font-weight:700;font-size:13px;color:#1a2540;font-family:Arial,Helvetica,sans-serif;padding-right:12px;">&#128100; Invited By</td>
+            <td style="font-size:13px;color:#444;font-family:Arial,Helvetica,sans-serif;"><strong>${hostName || "Ccentrik Team"}</strong><br/><br/>${hostEmail ? `<a href="mailto:${hostEmail}" style="color:#0a52ff;text-decoration:none;">${hostEmail}</a>` : ""}</td>
+          </tr></table>
+        </td></tr>
+
+        ${participantsSection}
+
+      </table>
+    </td>
+  </tr>
+
+  <!-- ═══ 7. ADD TO CALENDAR ═══ -->
+  <tr>
+    <td style="padding:0 20px 20px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e5ebf7;border-radius:16px;overflow:hidden;">
+        <tr><td style="padding:22px 24px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+            <td>
+              <div style="font-size:17px;font-weight:700;color:#0a52ff;margin:0 0 4px 0;font-family:Arial,Helvetica,sans-serif;">Add to your calendar</div>
+              <div style="color:#667089;font-size:12px;font-family:Arial,Helvetica,sans-serif;">Stay updated and never miss a meeting.</div>
+            </td>
+            <td align="right" style="white-space:nowrap;padding-left:12px;">
+              <a href="${gcalUrl}" target="_blank" style="display:inline-block;background:#ffffff;border:1px solid #d9e2f2;padding:9px 14px;text-decoration:none;border-radius:8px;color:#222;font-size:12px;font-weight:600;font-family:Arial,Helvetica,sans-serif;margin-right:6px;">&#128197; Google Calendar</a>
+              <a href="${outlookCalUrl}" target="_blank" style="display:inline-block;background:#ffffff;border:1px solid #d9e2f2;padding:9px 14px;text-decoration:none;border-radius:8px;color:#222;font-size:12px;font-weight:600;font-family:Arial,Helvetica,sans-serif;">&#128197; Outlook</a>
+            </td>
+          </tr></table>
+        </td></tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ═══ 8. SUPPORT SECTION ═══ -->
+  <tr>
+    <td style="padding:0 20px 24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f5f8ff" style="background:#f5f8ff;border-radius:16px;">
+        <tr><td style="padding:22px 24px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+            <td>
+              <div style="font-size:16px;font-weight:700;color:#0a52ff;margin:0 0 4px 0;font-family:Arial,Helvetica,sans-serif;">Need help or have questions?</div>
+              <div style="color:#667089;font-size:12px;font-family:Arial,Helvetica,sans-serif;">Our team is here to help you.</div>
+            </td>
+            <td align="right" style="padding-left:12px;">
+              <a href="${supportUrl}" style="display:inline-block;background:#0a52ff;color:#ffffff;padding:11px 22px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;font-family:Arial,Helvetica,sans-serif;">Contact Support &#8594;</a>
+            </td>
+          </tr></table>
+        </td></tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ═══ 9. FOOTER ═══ -->
+  <tr>
+    <td bgcolor="#0036c7" style="background:linear-gradient(135deg,#0036c7,#005cff);padding:28px 36px;background-color:#0036c7;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+        <td>
+          <div style="font-size:26px;font-weight:700;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">CENTRIK</div>
+          <div style="margin-top:5px;color:rgba(255,255,255,0.8);font-size:12px;font-family:Arial,Helvetica,sans-serif;">Driving Connections. Building Success.</div>
+        </td>
+        <td align="right">
+          <div style="color:rgba(255,255,255,0.9);font-size:12px;font-family:Arial,Helvetica,sans-serif;">&#128231; ${hostEmail || FROM_ADDR}</div>
+          <div style="color:rgba(255,255,255,0.9);font-size:12px;margin-top:4px;font-family:Arial,Helvetica,sans-serif;">&#127758; ccentrik.com</div>
+        </td>
+      </tr></table>
+    </td>
+  </tr>
+
+  <!-- Social links -->
+  <tr>
+    <td bgcolor="#002fa7" style="background:#002fa7;padding:12px 36px;text-align:center;border-top:1px solid rgba(255,255,255,0.12);">
+      <a href="https://linkedin.com"  style="margin:0 8px;color:#ffffff;text-decoration:none;font-size:12px;font-family:Arial,Helvetica,sans-serif;">LinkedIn</a>
+      <a href="https://twitter.com"   style="margin:0 8px;color:#ffffff;text-decoration:none;font-size:12px;font-family:Arial,Helvetica,sans-serif;">Twitter</a>
+      <a href="https://facebook.com"  style="margin:0 8px;color:#ffffff;text-decoration:none;font-size:12px;font-family:Arial,Helvetica,sans-serif;">Facebook</a>
+      <a href="https://instagram.com" style="margin:0 8px;color:#ffffff;text-decoration:none;font-size:12px;font-family:Arial,Helvetica,sans-serif;">Instagram</a>
+    </td>
+  </tr>
+
+  <!-- Copyright -->
+  <tr>
+    <td style="text-align:center;padding:18px 36px;color:#8b95b3;font-size:11px;font-family:Arial,Helvetica,sans-serif;background:#ffffff;">
+      &copy; ${new Date().getFullYear()} Centrik CRM. All rights reserved.<br/><br/>
+      You are receiving this email because you have been invited to a meeting.
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
+
+</body>
+</html>`;
+
+  // ── deleted old html template ─────────────────────────────────────────────────
+  void `<style>
   body{margin:0;padding:0;background-color:#f8fafc;font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;}
   table{border-spacing:0;border-collapse:collapse;}
   td{padding:0;}
