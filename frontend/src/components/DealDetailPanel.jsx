@@ -8,6 +8,7 @@ import { changeHistoryService } from "../services/changeHistoryService";
 import { supabase } from "../supabaseClient";
 import { auth } from "../firebase";
 import toast from "react-hot-toast";
+import EmailComposerModal from "./EmailComposerModal";
 
 const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
 import {
@@ -76,7 +77,7 @@ function downloadICS({ title, description, scheduledAt, uid }) {
   a.click(); URL.revokeObjectURL(a.href);
 }
 
-function InfoRow({ icon: Icon, label, value, isLink, isEmail, isPhone }) {
+function InfoRow({ icon: Icon, label, value, isLink, isEmail, isPhone, onComposeEmail }) {
   if (!value) return null;
   return (
     <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "9px 0", borderBottom: "1px solid var(--border)" }}>
@@ -91,7 +92,17 @@ function InfoRow({ icon: Icon, label, value, isLink, isEmail, isPhone }) {
             View <ChevronRight size={11} strokeWidth={2} />
           </a>
         ) : isEmail ? (
-          <a href={`mailto:${value}`} style={{ fontSize: 13, color: "#3B82F6", textDecoration: "none", fontWeight: 500 }}>{value}</a>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13, color: "#3B82F6", fontWeight: 500 }}>{value}</span>
+            {onComposeEmail && (
+              <button
+                onClick={() => onComposeEmail(value)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 9px", borderRadius: 6, background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", color: "#6366F1", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                <Mail size={10} strokeWidth={2} /> Send Email
+              </button>
+            )}
+          </div>
         ) : isPhone ? (
           <a href={`tel:${value}`} style={{ fontSize: 13, color: "#3B82F6", textDecoration: "none", fontWeight: 500 }}>{value}</a>
         ) : (
@@ -434,6 +445,9 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
   const { profile, isSalesHead } = useAuth();
   const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState("details");
+  const [emailComposer, setEmailComposer] = useState(null);
+  const openComposer  = (to, toName = "") => setEmailComposer({ to, toName });
+  const closeComposer = () => setEmailComposer(null);
   const [calcOpen,   setCalcOpen]   = useState(false);
   const [calcAmount, setCalcAmount] = useState("");
   const [calcFrom,   setCalcFrom]   = useState("INR");
@@ -483,6 +497,19 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
   const probability = FUNNEL_STATUSES.find((s) => s.key === deal.stage)?.probability ?? null;
 
   return (
+    <>
+    {emailComposer && (
+      <EmailComposerModal
+        to={emailComposer.to}
+        toName={emailComposer.toName}
+        dealId={deal?.id}
+        leadId={linkedLead?.id}
+        assignedTo={deal?.assigned_to || linkedLead?.assigned_to}
+        recordName={deal?.contact_name || deal?.title || deal?.company_name || ""}
+        onClose={closeComposer}
+        onSent={() => qc.invalidateQueries({ queryKey: ["unified-timeline-deal", deal?.id] })}
+      />
+    )}
     <AnimatePresence>
       <motion.div key="deal-panel-backdrop"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -754,7 +781,7 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
               {linkedLead && (linkedLead.email || linkedLead.phone) && (
                 <>
                   <SectionHead label="Lead Contact" />
-                  <InfoRow icon={Mail}  label="Lead Email" value={linkedLead.email} isEmail />
+                  <InfoRow icon={Mail} label="Lead Email" value={linkedLead.email} isEmail onComposeEmail={openComposer} />
                   <InfoRow icon={Phone} label="Lead Phone" value={linkedLead.phone} isPhone />
                 </>
               )}
@@ -845,10 +872,18 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
                         </div>
                         <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 46 }}>
                           {c.email && (
-                            <a href={`mailto:${c.email}`} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, color: "#3B82F6", textDecoration: "none", fontWeight: 500 }}>
-                              <Mail size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
-                              {c.email}
-                            </a>
+                            <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#3B82F6", fontWeight: 500 }}>
+                                <Mail size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
+                                {c.email}
+                              </span>
+                              <button
+                                onClick={() => openComposer(c.email, c.name)}
+                                style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 5, background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", color: "#6366F1", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                              >
+                                Send Email
+                              </button>
+                            </div>
                           )}
                           {c.phone && (
                             <a href={`tel:${c.phone}`} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, color: "#10B981", textDecoration: "none", fontWeight: 500 }}>
@@ -968,5 +1003,6 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
         </div>
       </motion.aside>
     </AnimatePresence>
+    </>
   );
 }

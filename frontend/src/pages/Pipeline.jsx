@@ -2155,18 +2155,22 @@ export default function Pipeline() {
                             const cfg = SOURCE_CONFIG[src];
                             const srcColor = cfg?.color || "#6366F1";
                             const SrcIcon = cfg?.icon;
+                            const srcLabel = src ? (LEAD_SOURCES.find(s => s.key === src)?.label || src) : "— Source —";
                             return (
                               <td onClick={(ev) => ev.stopPropagation()}>
                                 <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 99, background: src ? `${srcColor}12` : "var(--surface-2)", border: src ? `1px solid ${srcColor}28` : "1px solid var(--border)", width: "fit-content" }}>
                                   {SrcIcon && <span style={{ display: "inline-flex", color: srcColor, flexShrink: 0 }}><SrcIcon size={13} /></span>}
-                                  <select
-                                    value={src}
-                                    onChange={(ev) => handleInlineUpdate(e.id, "source", ev.target.value || null)}
-                                    style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", fontSize: 11, fontWeight: 700, border: "none", padding: 0, background: "transparent", color: src ? srcColor : "var(--text-muted)", cursor: "pointer", fontFamily: "inherit", outline: "none" }}
-                                  >
-                                    <option value="">— Source —</option>
-                                    {LEAD_SOURCES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-                                  </select>
+                                  <span style={{ display: "inline-grid" }}>
+                                    <span style={{ gridArea: "1/1", fontSize: 11, fontWeight: 700, visibility: "hidden", whiteSpace: "nowrap", pointerEvents: "none", userSelect: "none", paddingRight: 2 }}>{srcLabel}</span>
+                                    <select
+                                      value={src}
+                                      onChange={(ev) => handleInlineUpdate(e.id, "source", ev.target.value || null)}
+                                      style={{ gridArea: "1/1", width: "100%", appearance: "none", WebkitAppearance: "none", MozAppearance: "none", fontSize: 11, fontWeight: 700, border: "none", padding: 0, background: "transparent", color: src ? srcColor : "var(--text-muted)", cursor: "pointer", fontFamily: "inherit", outline: "none" }}
+                                    >
+                                      <option value="">— Source —</option>
+                                      {LEAD_SOURCES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+                                    </select>
+                                  </span>
                                 </div>
                               </td>
                             );

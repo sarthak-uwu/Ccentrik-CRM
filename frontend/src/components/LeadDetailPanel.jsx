@@ -9,6 +9,7 @@ import { supabase } from "../supabaseClient";
 import { auth } from "../firebase";
 import toast from "react-hot-toast";
 import { SourceBadge, LinkedinIcon } from "./SourceBadge";
+import EmailComposerModal from "./EmailComposerModal";
 
 const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
 import {
@@ -67,7 +68,7 @@ function downloadICS({ title, description, scheduledAt, uid }) {
   a.click(); URL.revokeObjectURL(a.href);
 }
 
-function InfoRow({ icon: Icon, label, value, isLink, isEmail }) {
+function InfoRow({ icon: Icon, label, value, isLink, isEmail, onComposeEmail }) {
   if (!value) return null;
   return (
     <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "9px 0", borderBottom: "1px solid var(--border)" }}>
@@ -82,7 +83,17 @@ function InfoRow({ icon: Icon, label, value, isLink, isEmail }) {
             View <ChevronRight size={11} strokeWidth={2} />
           </a>
         ) : isEmail ? (
-          <a href={`mailto:${value}`} style={{ fontSize: 13, color: "#3B82F6", textDecoration: "none", fontWeight: 500 }}>{value}</a>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13, color: "#3B82F6", fontWeight: 500 }}>{value}</span>
+            {onComposeEmail && (
+              <button
+                onClick={() => onComposeEmail(value)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 9px", borderRadius: 6, background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", color: "#6366F1", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                <Mail size={10} strokeWidth={2} /> Send Email
+              </button>
+            )}
+          </div>
         ) : (
           <div style={{ fontSize: 13, color: "var(--text-2)", fontWeight: 500, lineHeight: 1.5 }}>{value}</div>
         )}
@@ -356,7 +367,7 @@ function ActivitySkeleton() {
 }
 
 /* ─── People Contact Components ─────────────────────────────────────────────── */
-function LeadPeopleContactCard({ contact, onSetPrimary, onDelete, isPending, canEdit }) {
+function LeadPeopleContactCard({ contact, onSetPrimary, onDelete, isPending, canEdit, onComposeEmail }) {
   return (
     <div style={{ padding: "14px 16px", borderRadius: 12, background: "var(--surface-2)", border: `1.5px solid ${contact.is_primary ? "rgba(139,92,246,0.35)" : "var(--border)"}`, marginBottom: 10, position: "relative" }}>
       {contact.is_primary && (
@@ -368,9 +379,17 @@ function LeadPeopleContactCard({ contact, onSetPrimary, onDelete, isPending, can
       {contact.designation && <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 6 }}>{contact.designation}</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
         {contact.email && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--text-2)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--text-2)", flexWrap: "wrap" }}>
             <Mail size={11} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-            <a href={`mailto:${contact.email}`} style={{ color: "var(--accent)", textDecoration: "none" }}>{contact.email}</a>
+            <span style={{ color: "var(--accent)" }}>{contact.email}</span>
+            {onComposeEmail && (
+              <button
+                onClick={() => onComposeEmail(contact.email, contact.name)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 5, background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", color: "#6366F1", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                Send Email
+              </button>
+            )}
           </div>
         )}
         {contact.phone && (
@@ -582,6 +601,10 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
   const { profile, isSalesHead } = useAuth();
   const qc          = useQueryClient();
   const [activeTab, setActiveTab] = useState("details");
+  const [emailComposer, setEmailComposer] = useState(null);
+
+  const openComposer  = (to, toName = "") => setEmailComposer({ to, toName });
+  const closeComposer = () => setEmailComposer(null);
 
   const extra          = parseJSON(lead?.other_notes);
   const contactLocked  = !!extra.contact_locked;
@@ -684,6 +707,18 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
   if (!lead) return null;
 
   return (
+    <>
+    {emailComposer && (
+      <EmailComposerModal
+        to={emailComposer.to}
+        toName={emailComposer.toName}
+        leadId={lead?.id}
+        assignedTo={lead?.assigned_to}
+        recordName={[lead?.contact_name, lead?.company_name].filter(Boolean).join(" / ")}
+        onClose={closeComposer}
+        onSent={() => qc.invalidateQueries({ queryKey: ["lead-timeline", lead?.id] })}
+      />
+    )}
     <AnimatePresence>
       <motion.div key="panel-backdrop"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -846,8 +881,8 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
               <SectionHead label="Contact Information" />
               <InfoRow icon={User}      label="Full Name"       value={lead.contact_name} />
               <InfoRow icon={Briefcase} label="Designation"     value={lead.designation} />
-              <InfoRow icon={Mail}      label="Email"           value={extra.email || lead.email} isEmail />
-              <InfoRow icon={Mail}      label="Alternate Email" value={extra.alternate_email} isEmail />
+              <InfoRow icon={Mail} label="Email"           value={extra.email || lead.email} isEmail onComposeEmail={openComposer} />
+              <InfoRow icon={Mail} label="Alternate Email" value={extra.alternate_email}       isEmail onComposeEmail={openComposer} />
               <InfoRow icon={Phone}     label="Phone"           value={extra.phone || lead.phone} />
               <InfoRow icon={Phone}     label="Alternate Phone" value={extra.alternate_phone || extra.alternate_contact} />
 
@@ -1012,6 +1047,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                         onSetPrimary={(c) => setPocMutation.mutate({ contactId: c.id, contactName: c.name })}
                         onDelete={(id) => deleteContactMutation.mutate(id)}
                         isPending={setPocMutation.isPending}
+                        onComposeEmail={(email, name) => openComposer(email, name)}
                       />
                     ))}
                 </div>
@@ -1150,5 +1186,6 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
         </div>
       </motion.aside>
     </AnimatePresence>
+    </>
   );
 }

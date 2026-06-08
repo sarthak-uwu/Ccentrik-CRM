@@ -127,7 +127,7 @@ router.get("/auth-url/gmail", authenticate, (req, res) => {
     client_id:     GMAIL_CLIENT_ID,
     redirect_uri:  GMAIL_REDIRECT_URI,
     response_type: "code",
-    scope:         "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email",
+    scope:         "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email",
     access_type:   "offline",
     prompt:        "consent",
     state:         req.profile.id,
@@ -144,7 +144,7 @@ router.get("/connect/gmail", authenticate, (req, res) => {
     client_id:     GMAIL_CLIENT_ID,
     redirect_uri:  GMAIL_REDIRECT_URI,
     response_type: "code",
-    scope:         "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email",
+    scope:         "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email",
     access_type:   "offline",
     prompt:        "consent",
     state:         req.profile.id,
@@ -505,6 +505,230 @@ router.delete("/log/:id", authenticate, async (req, res) => {
   const { error } = await supabase.from("email_sync_log").delete().eq("id", req.params.id);
   if (error) return res.status(400).json({ error: error.message });
   res.json({ success: true });
+});
+
+// ── POST /api/email/send ─ compose and send email via Gmail ───────────────────
+router.post("/send", authenticate, async (req, res) => {
+  const { to, subject, body, lead_id, deal_id, customer_id, pipeline_id } = req.body;
+
+  // Validation
+  if (!to?.trim())      return res.status(400).json({ error: "Recipient email is required" });
+  if (!subject?.trim()) return res.status(400).json({ error: "Subject is required" });
+  if (!body?.trim())    return res.status(400).json({ error: "Message body is required" });
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRe.test(to.trim())) return res.status(400).json({ error: "Invalid recipient email address" });
+  if (!lead_id && !deal_id && !customer_id && !pipeline_id) {
+    return res.status(400).json({ error: "A CRM record must be linked to send email" });
+  }
+
+  // Assignment check — owners / sales_head / sales_manager bypass; others must be assigned
+  const role = req.profile.role;
+  const canBypass = ["owner", "sales_head", "sales_manager"].includes(role);
+  if (!canBypass) {
+    let assignedTo = null;
+    try {
+      if (pipeline_id) {
+        const { data } = await supabase.from("pipeline").select("assigned_to").eq("id", pipeline_id).single();
+        assignedTo = data?.assigned_to;
+      } else if (lead_id) {
+        const { data } = await supabase.from("leads").select("assigned_to").eq("id", lead_id).single();
+        assignedTo = data?.assigned_to;
+      } else if (deal_id) {
+        const { data } = await supabase.from("deals").select("assigned_to").eq("id", deal_id).single();
+        assignedTo = data?.assigned_to;
+      } else if (customer_id) {
+        const { data } = await supabase.from("customers").select("assigned_to").eq("id", customer_id).single();
+        assignedTo = data?.assigned_to;
+      }
+    } catch { /* non-fatal — treat as unassigned */ }
+    if (assignedTo && assignedTo !== req.profile.id) {
+      return res.status(403).json({ error: "You are not assigned to this record." });
+    }
+  }
+
+  // Get connected Gmail account
+  const { data: accounts } = await supabase.from("email_accounts")
+    .select("*")
+    .eq("user_id", req.profile.id)
+    .eq("is_active", true)
+    .eq("provider", "gmail")
+    .limit(1);
+  if (!accounts?.length) {
+    return res.status(400).json({ error: "No connected email account. Please connect Gmail in Settings." });
+  }
+
+  const account = accounts[0];
+  let token;
+  try {
+    token = await getValidToken(account);
+  } catch {
+    return res.status(400).json({ error: "Email account token expired. Please reconnect Gmail in Settings." });
+  }
+
+  // Get sender details
+  const { data: senderProfile } = await supabase.from("profiles")
+    .select("full_name").eq("id", req.profile.id).maybeSingle();
+  const senderName  = senderProfile?.full_name || "";
+  const fromAddress = account.email;
+
+  // Build MIME email with HTML content
+  const htmlBody   = body.includes("<") ? body : body.replace(/\n/g, "<br>");
+  const subjectB64 = `=?UTF-8?B?${Buffer.from(subject.trim()).toString("base64")}?=`;
+  const mimeMsg    = [
+    `From: ${senderName ? `"${senderName}" <${fromAddress}>` : fromAddress}`,
+    `To: ${to.trim()}`,
+    `Subject: ${subjectB64}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: text/html; charset=UTF-8`,
+    ``,
+    htmlBody,
+  ].join("\r\n");
+  const raw = Buffer.from(mimeMsg).toString("base64url");
+
+  // Send via Gmail API
+  const sendResp = await fetch(`${GMAIL_API}/messages/send`, {
+    method:  "POST",
+    headers: {
+      Authorization:  `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ raw }),
+  });
+
+  if (!sendResp.ok) {
+    const errData = await sendResp.json().catch(() => ({}));
+    const errMsg  = errData.error?.message || "Failed to send email";
+    if (
+      sendResp.status === 403 ||
+      errMsg.toLowerCase().includes("insufficient") ||
+      errMsg.toLowerCase().includes("scope")
+    ) {
+      return res.status(403).json({
+        error: "Email sending requires additional permissions. Please reconnect your Gmail account in Settings.",
+        code:  "insufficient_scope",
+      });
+    }
+    return res.status(400).json({ error: errMsg });
+  }
+
+  const sentData = await sendResp.json();
+  const now      = new Date().toISOString();
+
+  // Resolve CRM record name
+  const crm_module = pipeline_id ? "pipeline" : lead_id ? "lead" : customer_id ? "customer" : deal_id ? "deal" : null;
+  let   crm_record_name = "";
+  try {
+    if (pipeline_id) {
+      const { data: p } = await supabase.from("pipeline").select("contact_name,company_name").eq("id", pipeline_id).maybeSingle();
+      crm_record_name = [p?.contact_name, p?.company_name].filter(Boolean).join(" / ");
+    } else if (lead_id) {
+      const { data: l } = await supabase.from("leads").select("contact_name,company_name").eq("id", lead_id).maybeSingle();
+      crm_record_name = [l?.contact_name, l?.company_name].filter(Boolean).join(" / ");
+    } else if (customer_id) {
+      const { data: c } = await supabase.from("customers").select("contact_name,company_name").eq("id", customer_id).maybeSingle();
+      crm_record_name = [c?.contact_name, c?.company_name].filter(Boolean).join(" / ");
+    } else if (deal_id) {
+      const { data: d } = await supabase.from("deals").select("contact_name,title").eq("id", deal_id).maybeSingle();
+      crm_record_name = d?.contact_name || d?.title || "";
+    }
+  } catch { /* non-fatal */ }
+
+  // Log to email_sync_log (pre-classified — no manual classification needed)
+  const { data: logEntry } = await supabase.from("email_sync_log").insert({
+    email_account_id: account.id,
+    user_id:          req.profile.id,
+    sender_name:      senderName,
+    message_id:       sentData.id || `crm-${Date.now()}`,
+    thread_id:        sentData.threadId || null,
+    subject:          subject.trim(),
+    from_email:       fromAddress,
+    to_emails:        [to.trim()],
+    sent_at:          now,
+    attachment_count: 0,
+    snippet:          body.replace(/<[^>]*>/g, "").slice(0, 300),
+    direction:        "outbound",
+    status:           "classified",
+    activity_type:    "email_sent",
+    reason:           "Sent via CRM Composer",
+    lead_id:          lead_id     || null,
+    deal_id:          deal_id     || null,
+    customer_id:      customer_id || null,
+    pipeline_id:      pipeline_id || null,
+    crm_module,
+    crm_record_name,
+  }).select().single();
+
+  // Create activity record
+  const title = `📧 Email Sent: ${subject.trim()}`;
+  const desc  = [
+    `To: ${to.trim()}`,
+    `Subject: ${subject.trim()}`,
+    ``,
+    body.replace(/<[^>]*>/g, "").slice(0, 500),
+  ].join("\n");
+
+  const related_type = pipeline_id ? "pipeline" : lead_id ? "lead" : customer_id ? "customer" : null;
+  const related_id   = pipeline_id || lead_id || customer_id || null;
+
+  const { data: activity } = await supabase.from("activities").insert({
+    type:         "email_sent",
+    title,
+    description:  desc,
+    status:       "done",
+    created_by:   req.profile.id,
+    user_id:      req.profile.id,
+    lead_id:      lead_id     || null,
+    deal_id:      deal_id     || null,
+    customer_id:  customer_id || null,
+    related_type,
+    related_id,
+    metadata: {
+      message_id:      sentData.id,
+      thread_id:       sentData.threadId,
+      subject:         subject.trim(),
+      to_emails:       [to.trim()],
+      from_email:      fromAddress,
+      sender_name:     senderName,
+      sent_at:         now,
+      crm_module,
+      crm_record_name,
+      source:          "crm_composer",
+    },
+  }).select().single();
+
+  if (activity && logEntry) {
+    await supabase.from("email_sync_log").update({ activity_id: activity.id }).eq("id", logEntry.id);
+  }
+
+  res.json({ success: true, message_id: sentData.id, activity_id: activity?.id });
+});
+
+// ── GET /api/email/history ─ email history for a specific CRM record ──────────
+router.get("/history", authenticate, async (req, res) => {
+  const { lead_id, deal_id, customer_id, pipeline_id } = req.query;
+  if (!lead_id && !deal_id && !customer_id && !pipeline_id) {
+    return res.status(400).json({ error: "At least one CRM record ID is required" });
+  }
+
+  let query = supabase.from("email_sync_log")
+    .select("id, subject, from_email, to_emails, sent_at, status, activity_type, sender_name, snippet, direction, crm_record_name, attachment_count, created_at")
+    .order("sent_at", { ascending: false })
+    .limit(50);
+
+  if (pipeline_id)      query = query.eq("pipeline_id", pipeline_id);
+  else if (lead_id)     query = query.eq("lead_id", lead_id);
+  else if (customer_id) query = query.eq("customer_id", customer_id);
+  else if (deal_id)     query = query.eq("deal_id", deal_id);
+
+  // Employees only see their own emails
+  const role = req.profile.role;
+  if (role === "employee" || role === "inside_sales") {
+    query = query.eq("user_id", req.profile.id);
+  }
+
+  const { data, error } = await query;
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data || []);
 });
 
 module.exports = router;

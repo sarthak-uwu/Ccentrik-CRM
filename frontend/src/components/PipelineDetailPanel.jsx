@@ -8,6 +8,7 @@ import { supabase } from "../supabaseClient";
 import { auth } from "../firebase";
 import toast from "react-hot-toast";
 import { SourceBadge } from "./SourceBadge";
+import EmailComposerModal from "./EmailComposerModal";
 
 const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
 import {
@@ -191,7 +192,7 @@ function SectionHead({ label }) {
   );
 }
 
-function InfoRow({ icon: Icon, label, value, isLink, isEmail, isPhone }) {
+function InfoRow({ icon: Icon, label, value, isLink, isEmail, isPhone, onComposeEmail }) {
   if (!value) return null;
   return (
     <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "9px 0", borderBottom: "1px solid var(--border)" }}>
@@ -206,7 +207,17 @@ function InfoRow({ icon: Icon, label, value, isLink, isEmail, isPhone }) {
             View <ChevronRight size={11} strokeWidth={2} />
           </a>
         ) : isEmail ? (
-          <a href={`mailto:${value}`} style={{ fontSize: 13, color: "#3B82F6", textDecoration: "none", fontWeight: 500 }}>{value}</a>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13, color: "#3B82F6", fontWeight: 500 }}>{value}</span>
+            {onComposeEmail && (
+              <button
+                onClick={() => onComposeEmail(value)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 9px", borderRadius: 6, background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", color: "#6366F1", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                <Mail size={10} strokeWidth={2} /> Send Email
+              </button>
+            )}
+          </div>
         ) : isPhone ? (
           <a href={`tel:${value}`} style={{ fontSize: 13, color: "#3B82F6", textDecoration: "none", fontWeight: 500 }}>{value}</a>
         ) : (
@@ -445,7 +456,7 @@ function HistoryItem({ record, isLast }) {
 // ── Contact Management Components ─────────────────────────────────────────────
 const CONTACT_LABEL_STYLE = { fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 5 };
 
-function PeopleContactCard({ contact, onSetPrimary, onDelete, isPending, canEdit }) {
+function PeopleContactCard({ contact, onSetPrimary, onDelete, isPending, canEdit, onComposeEmail }) {
   return (
     <div style={{ padding: "14px 16px", borderRadius: 12, background: "var(--surface-2)", border: `1.5px solid ${contact.is_primary ? "rgba(139,92,246,0.35)" : "var(--border)"}`, marginBottom: 10, position: "relative" }}>
       {contact.is_primary && (
@@ -462,9 +473,19 @@ function PeopleContactCard({ contact, onSetPrimary, onDelete, isPending, canEdit
           {contact.designation && <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 6 }}>{contact.designation}</div>}
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
             {contact.email && (
-              <a href={`mailto:${contact.email}`} style={{ fontSize: 12, color: "#3B82F6", textDecoration: "none", display: "flex", alignItems: "center", gap: 5 }}>
-                <Mail size={11} strokeWidth={1.8} />{contact.email}
-              </a>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, color: "#3B82F6", display: "flex", alignItems: "center", gap: 4 }}>
+                  <Mail size={11} strokeWidth={1.8} />{contact.email}
+                </span>
+                {onComposeEmail && (
+                  <button
+                    onClick={() => onComposeEmail(contact.email, contact.name)}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 5, background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", color: "#6366F1", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                  >
+                    Send Email
+                  </button>
+                )}
+              </div>
             )}
             {contact.phone && (
               <a href={`tel:${contact.dial || ""}${contact.phone}`} style={{ fontSize: 12, color: "#10B981", textDecoration: "none", display: "flex", alignItems: "center", gap: 5 }}>
@@ -570,6 +591,10 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
   const infoMasked    = pipelineLocked && !isOwnerOrHead;
   const qc          = useQueryClient();
   const [activeTab, setActiveTab] = useState("details");
+  const [emailComposer, setEmailComposer] = useState(null); // { to, toName }
+
+  const openComposer = (to, toName = "") => setEmailComposer({ to, toName });
+  const closeComposer = () => setEmailComposer(null);
 
   const extra          = parseJSON(entry?.other_notes);
   const contactLocked  = !!extra.contact_locked;
@@ -672,6 +697,18 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
     people.some((p) => p?.email?.trim() || p?.phone?.trim());
 
   return (
+    <>
+    {emailComposer && (
+      <EmailComposerModal
+        to={emailComposer.to}
+        toName={emailComposer.toName}
+        pipelineId={entry?.id}
+        assignedTo={entry?.assigned_to}
+        recordName={[entry?.contact_name, entry?.company_name].filter(Boolean).join(" / ")}
+        onClose={closeComposer}
+        onSent={() => qc.invalidateQueries({ queryKey: ["unified-timeline-pipeline", entry?.id] })}
+      />
+    )}
     <AnimatePresence>
       <motion.div key="pipe-backdrop"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -786,7 +823,7 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
               <SectionHead label="Active POC" />
               <InfoRow icon={User}      label="Contact Name"  value={entry.contact_name} />
               <InfoRow icon={Briefcase} label="Designation"   value={entry.designation} />
-              {!infoMasked && extra.email && <InfoRow icon={Mail}  label="Email" value={extra.email} />}
+              {!infoMasked && extra.email && <InfoRow icon={Mail} label="Email" value={extra.email} isEmail onComposeEmail={openComposer} />}
               {!infoMasked && extra.phone && <InfoRow icon={Phone} label="Phone" value={extra.phone} isPhone />}
               {extra.contact_linkedin_url && (
                 <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "9px 0", borderBottom: "1px solid var(--border)" }}>
@@ -838,7 +875,10 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
                                   {c.value}
                                 </a>
                               ) : isEmail ? (
-                                <a href={`mailto:${c.value}`} style={{ fontSize: 12.5, color: ct.color, textDecoration: "none", fontWeight: 500 }}>{c.value}</a>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                  <span style={{ fontSize: 12.5, color: ct.color, fontWeight: 500 }}>{c.value}</span>
+                                  {!infoMasked && <button onClick={() => openComposer(c.value)} style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 5, background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", color: "#6366F1", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Send Email</button>}
+                                </div>
                               ) : isPhone ? (
                                 <a href={`tel:${c.value}`} style={{ fontSize: 12.5, color: ct.color, textDecoration: "none", fontWeight: 500 }}>{c.value}</a>
                               ) : (
@@ -982,6 +1022,7 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
                         onSetPrimary={(c) => setPocMutation.mutate({ contactId: c.id, contactName: c.name })}
                         onDelete={(id) => deleteContactMutation.mutate(id)}
                         isPending={setPocMutation.isPending}
+                        onComposeEmail={(email, name) => openComposer(email, name)}
                       />
                     ))}
                 </div>
@@ -1110,5 +1151,6 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
         </div>
       </motion.aside>
     </AnimatePresence>
+    </>
   );
 }
