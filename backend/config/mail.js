@@ -926,7 +926,12 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
         <tr><td style="padding:16px;">
           <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">${isOnline ? "&#128249;" : "&#128205;"} Meeting Mode</div>
           <div style="font-size:13px;font-weight:600;color:#0f172a;">${typeLabel}</div>
-          ${meetingLink ? `<div style="font-size:12px;color:#64748b;line-height:1.5;margin-top:6px;">Virtual meeting link is available. Click <strong>Join Meeting</strong> to enter.</div>` : (location ? `<div style="font-size:12px;color:#64748b;line-height:1.5;margin-top:6px;">${location}</div>` : "")}
+          ${meetingLink ? `
+          <div style="margin-top:8px;">
+            <div style="font-size:11px;color:#64748b;font-weight:500;margin-bottom:4px;font-family:Arial,Helvetica,sans-serif;">Join Meeting:</div>
+            <div style="font-size:12px;color:#0052ff;word-break:break-all;margin-bottom:10px;font-family:Arial,Helvetica,sans-serif;">${meetingLink}</div>
+            <a href="${meetingLink}" target="_blank" style="display:inline-block;background:${isTeams ? "#6264A7" : isZoom ? "#2D8CFF" : "#0052ff"};color:#ffffff;padding:10px 18px;text-decoration:none;border-radius:8px;font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;">${isGoogleMeet ? "Join Google Meet" : isTeams ? "Join Teams Meeting" : isZoom ? "Join Zoom Meeting" : "Join Meeting"}</a>
+          </div>` : (location ? `<div style="font-size:12px;color:#64748b;line-height:1.5;margin-top:6px;font-family:Arial,Helvetica,sans-serif;">${location}</div>` : "")}
         </td></tr>
       </table>
 
