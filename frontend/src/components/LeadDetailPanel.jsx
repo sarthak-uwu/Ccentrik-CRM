@@ -8,7 +8,7 @@ import { changeHistoryService } from "../services/changeHistoryService";
 import { supabase } from "../supabaseClient";
 import { auth } from "../firebase";
 import toast from "react-hot-toast";
-import { SourceBadge } from "./SourceBadge";
+import { SourceBadge, LinkedinIcon } from "./SourceBadge";
 
 const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
 import {
@@ -854,7 +854,20 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
               <InfoRow icon={Building2} label="Company Name"     value={lead.company_name} />
               <InfoRow icon={Globe}     label="Website"          value={extra.website} isLink={!!(extra.website)} />
               <InfoRow icon={Link2}     label="Company LinkedIn" value={extra.company_linkedin} isLink={!!(extra.company_linkedin)} />
-              <InfoRow icon={Link2}     label="Contact LinkedIn" value={extra.linkedin_url} isLink={!!(extra.linkedin_url)} />
+              {extra.linkedin_url && (
+                <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "9px 0", borderBottom: "1px solid var(--border)" }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(10,102,194,0.1)", border: "1px solid rgba(10,102,194,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <LinkedinIcon size={14} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0, paddingTop: 1 }}>
+                    <div style={{ fontSize: 10.5, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>Contact LinkedIn</div>
+                    <a href={extra.linkedin_url.startsWith("http") ? extra.linkedin_url : `https://${extra.linkedin_url}`} target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize: 13, color: "#0A66C2", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 500 }}>
+                      <LinkedinIcon size={12} /> View Profile <ChevronRight size={11} strokeWidth={2} />
+                    </a>
+                  </div>
+                </div>
+              )}
               {extra.country && <InfoRow icon={Globe} label="Country" value={countryName(extra.country) || extra.country} />}
 
               {(extra.services?.length > 0 || extra.custom_service) && (

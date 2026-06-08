@@ -92,6 +92,14 @@ const ROLE_DISPLAY = {
 };
 const ROLE_ORDER = ["owner", "sales_head", "sales_manager", "inside_sales", "employee"];
 
+function normalizeLinkedInUrl(raw) {
+  if (!raw || !raw.trim()) return "";
+  const v = raw.trim().replace(/\/+$/, "");
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^(www\.)?linkedin\.com/i.test(v)) return `https://${v}`;
+  return `https://linkedin.com/in/${v.replace(/^@/, "").replace(/^\//, "")}`;
+}
+
 // Groups an array of team member objects by role, returning [{role, label, members}]
 function groupByRole(members) {
   const map = {};
@@ -587,7 +595,7 @@ export function LeadModal({ lead, onClose, onSave, teamMembers, canEditContactIn
   };
   const updatePerson = (id, field, val) => setPersons((prev) => prev.map((p) => p.id === id ? { ...p, [field]: val } : p));
 
-  const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm({
+  const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm({
     defaultValues: {
       company_name:      lead?.company_name || "",
       industry:          extra.industry || "",
@@ -945,7 +953,7 @@ export function LeadModal({ lead, onClose, onSave, teamMembers, canEditContactIn
             <SectionDivider label="Social & Assignment" />
             <div>
               <label className="crm-label">Contact LinkedIn URL</label>
-              <input className="crm-input" {...register("linkedin_url")} placeholder="https://linkedin.com/in/..." />
+              <input className="crm-input" {...register("linkedin_url")} onBlur={(e) => { const n = normalizeLinkedInUrl(e.target.value); if (n !== e.target.value) setValue("linkedin_url", n, { shouldDirty: true }); }} placeholder="https://linkedin.com/in/..." />
             </div>
             {teamMembers?.length > 0 && (
               <div>

@@ -547,7 +547,7 @@ function PipelineFormModal({ entry, onClose, onSave, teamMembers = [], canAssign
                     </div>
                     <div style={{ gridColumn: "1 / -1" }}>
                       <label className="crm-label">Contact LinkedIn URL</label>
-                      <input className="crm-input" type="url" value={p.linkedin_url || ""} onChange={(e) => updatePerson(p.id, "linkedin_url", e.target.value)} placeholder="https://linkedin.com/in/username" />
+                      <input className="crm-input" type="url" value={p.linkedin_url || ""} onChange={(e) => updatePerson(p.id, "linkedin_url", e.target.value)} onBlur={(e) => { const n = normalizeLinkedInUrl(e.target.value); if (n !== (p.linkedin_url || "")) updatePerson(p.id, "linkedin_url", n); }} placeholder="https://linkedin.com/in/username" />
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
@@ -1018,6 +1018,15 @@ function normalizePipelineStage(raw) {
     "disqualified":"not_interested","closed_lost":"not_interested","dead":"not_interested",
   };
   return aliases[lower] ?? "new_prospect";
+}
+
+function normalizeLinkedInUrl(raw) {
+  if (!raw || !raw.trim()) return "";
+  const v = raw.trim().replace(/\/+$/, "");
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^(www\.)?linkedin\.com/i.test(v)) return `https://${v}`;
+  const slug = v.replace(/^@/, "").replace(/^\//, "");
+  return `https://linkedin.com/in/${slug}`;
 }
 
 const ROLE_BADGE = { owner: "Super Admin", sales_head: "Sales Head", sales_manager: "Sales Manager", employee: "Sales Executive", inside_sales: "Inside Sales" };
