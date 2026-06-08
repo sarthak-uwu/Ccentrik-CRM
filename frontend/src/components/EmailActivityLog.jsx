@@ -127,7 +127,7 @@ export default function EmailActivityLog({ profile }) {
 
   useEffect(() => {
     if (!canFilter) return;
-    teamService.getTeamMembers().then((m) => setTeamMembers(m || [])).catch(() => {});
+    teamService.getAll().then((m) => setTeamMembers(m || [])).catch(() => {});
   }, [canFilter]);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
