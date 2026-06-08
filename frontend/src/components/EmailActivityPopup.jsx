@@ -26,10 +26,11 @@ const SYNC_INTERVAL = 60000; // 60 seconds
 
 export default function EmailActivityPopup() {
   const { profile } = useAuth();
-  const [pending,   setPending]   = useState([]);
-  const [current,   setCurrent]   = useState(null);
-  const [selected,  setSelected]  = useState(() => localStorage.getItem(LAST_TYPE_KEY) || "Follow-up Email");
-  const [loading,   setLoading]   = useState(false);
+  const [pending,  setPending]  = useState([]);
+  const [current,  setCurrent]  = useState(null);
+  const [selected, setSelected] = useState(() => localStorage.getItem(LAST_TYPE_KEY) || "Follow-up Email");
+  const [reason,   setReason]   = useState("");
+  const [loading,  setLoading]  = useState(false);
   const syncRef = useRef(false);
 
   const apiFetch = useCallback(async (path, opts = {}) => {
@@ -77,15 +78,16 @@ export default function EmailActivityPopup() {
     const rest = pending.filter((p) => p.id !== excludeId);
     setPending(rest);
     setCurrent(rest[0] || null);
+    setReason("");
   };
 
   const handleClassify = async () => {
-    if (!current || !selected || loading) return;
+    if (!current || !selected || !reason.trim() || loading) return;
     setLoading(true);
     try {
       const r = await apiFetch("/api/email/classify", {
         method: "POST",
-        body: JSON.stringify({ id: current.id, activity_type: selected }),
+        body: JSON.stringify({ id: current.id, activity_type: selected, reason: reason.trim() }),
       });
       if (!r.ok) throw new Error("Failed");
       localStorage.setItem(LAST_TYPE_KEY, selected);
@@ -109,6 +111,8 @@ export default function EmailActivityPopup() {
 
   if (!current) return null;
 
+  const canLog = selected && reason.trim().length > 0;
+
   return (
     <AnimatePresence>
       <motion.div
@@ -119,7 +123,7 @@ export default function EmailActivityPopup() {
         transition={{ type: "spring", damping: 22, stiffness: 300 }}
         style={{
           position: "fixed", bottom: 24, right: 24, zIndex: 9999,
-          width: 370, background: "var(--surface)",
+          width: 380, background: "var(--surface)",
           border: "1px solid var(--border)", borderRadius: 16,
           boxShadow: "0 24px 64px rgba(0,0,0,0.2)", fontFamily: "inherit",
         }}
@@ -151,20 +155,20 @@ export default function EmailActivityPopup() {
           <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             To: {(current.to_emails || []).join(", ") || "—"}
           </div>
-          {(current.lead_id || current.deal_id) && (
+          {(current.lead_id || current.customer_id || current.pipeline_id) && (
             <div style={{ fontSize: 11, color: "#10B981", marginTop: 3, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
               <Check size={10} strokeWidth={3} />
-              Matched to a {current.lead_id ? "Lead" : "Deal"} in CRM
+              Matched to {current.crm_record_name || "a CRM record"} ({current.crm_module || "CRM"})
             </div>
           )}
         </div>
 
         {/* Type selector */}
-        <div style={{ padding: "10px 15px 4px" }}>
+        <div style={{ padding: "10px 15px 6px" }}>
           <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 7 }}>
             Activity Type
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 3, maxHeight: 210, overflowY: "auto" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3, maxHeight: 180, overflowY: "auto" }}>
             {EMAIL_TYPES.map((type) => (
               <button
                 key={type}
@@ -187,6 +191,29 @@ export default function EmailActivityPopup() {
           </div>
         </div>
 
+        {/* Reason / Comment (required) */}
+        <div style={{ padding: "8px 15px 4px" }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 5 }}>
+            Reason / Comment <span style={{ color: "#EF4444" }}>*</span>
+          </div>
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Why are you sending this email? (required)"
+            rows={2}
+            style={{
+              width: "100%", boxSizing: "border-box",
+              padding: "8px 10px", borderRadius: 8, resize: "none",
+              border: `1.5px solid ${reason.trim() ? "var(--border)" : "rgba(239,68,68,0.3)"}`,
+              background: "var(--surface-2)", color: "var(--text)",
+              fontSize: 12.5, fontFamily: "inherit", outline: "none",
+              transition: "border-color 0.15s",
+            }}
+            onFocus={(e) => { e.target.style.borderColor = "#6366F1"; }}
+            onBlur={(e)  => { e.target.style.borderColor = reason.trim() ? "var(--border)" : "rgba(239,68,68,0.3)"; }}
+          />
+        </div>
+
         {/* Footer */}
         <div style={{ padding: "10px 15px 14px", display: "flex", gap: 8 }}>
           <button
@@ -197,8 +224,17 @@ export default function EmailActivityPopup() {
           </button>
           <button
             onClick={handleClassify}
-            disabled={loading || !selected}
-            style={{ flex: 2, padding: "8px 0", borderRadius: 9, background: "#6366F1", color: "#fff", border: "none", fontSize: 12.5, fontWeight: 700, cursor: loading ? "wait" : "pointer", fontFamily: "inherit", opacity: loading ? 0.7 : 1 }}
+            disabled={loading || !canLog}
+            title={!reason.trim() ? "Please enter a reason before logging" : ""}
+            style={{
+              flex: 2, padding: "8px 0", borderRadius: 9,
+              background: canLog ? "#6366F1" : "var(--border)",
+              color: canLog ? "#fff" : "var(--text-muted)",
+              border: "none", fontSize: 12.5, fontWeight: 700,
+              cursor: loading ? "wait" : canLog ? "pointer" : "not-allowed",
+              fontFamily: "inherit", opacity: loading ? 0.7 : 1,
+              transition: "background 0.15s, color 0.15s",
+            }}
           >
             {loading ? "Saving…" : "Log Activity"}
           </button>

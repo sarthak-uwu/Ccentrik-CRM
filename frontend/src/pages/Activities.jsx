@@ -1431,6 +1431,182 @@ function ActivityModal({ activity, defaultType = "task", onClose, onSave, teamMe
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+// ─── Gmail Sync Log Component ────────────────────────────────────────────────
+const GMAIL_API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
+const CRM_MODULE_LABELS = { lead: "Lead", customer: "Customer", pipeline: "Pipeline" };
+const STATUS_LABELS     = { classified: "Logged", pending: "Pending", dismissed: "Skipped" };
+const STATUS_COLORS     = { classified: "#10B981", pending: "#F59E0B", dismissed: "#9CA3AF" };
+
+function GmailSyncLog({ profile }) {
+  const [logs,         setLogs]         = useState([]);
+  const [stats,        setStats]        = useState(null);
+  const [loading,      setLoading]      = useState(true);
+  const [filterUser,   setFilterUser]   = useState("");
+  const [filterFrom,   setFilterFrom]   = useState("");
+  const [filterTo,     setFilterTo]     = useState("");
+  const [filterRecord, setFilterRecord] = useState("");
+  const [filterEmail,  setFilterEmail]  = useState("");
+  const [filterModule, setFilterModule] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [teamMembers,  setTeamMembers]  = useState([]);
+
+  const isAdmin = ["owner", "sales_head"].includes(profile?.role);
+
+  const apiFetch = useCallback(async (path, opts = {}) => {
+    const token = await auth.currentUser?.getIdToken();
+    return fetch(`${GMAIL_API}${path}`, {
+      ...opts,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(opts.headers || {}) },
+    });
+  }, []);
+
+  const fetchLogs = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (filterUser)   params.set("user_id",     filterUser);
+      if (filterFrom)   params.set("from",         filterFrom);
+      if (filterTo)     params.set("to",           filterTo);
+      if (filterRecord) params.set("record_name",  filterRecord);
+      if (filterEmail)  params.set("email",        filterEmail);
+      if (filterModule) params.set("module",       filterModule);
+      if (filterStatus) params.set("status",       filterStatus);
+      const r = await apiFetch(`/api/email/log?${params.toString()}`);
+      if (r.ok) setLogs(await r.json());
+
+      const rs = await apiFetch("/api/email/stats");
+      if (rs.ok) setStats(await rs.json());
+    } catch {} finally {
+      setLoading(false);
+    }
+  }, [apiFetch, filterUser, filterFrom, filterTo, filterRecord, filterEmail, filterModule, filterStatus]);
+
+  useEffect(() => { fetchLogs(); }, [fetchLogs]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    teamService.getTeamMembers().then((m) => setTeamMembers(m || [])).catch(() => {});
+  }, [isAdmin]);
+
+  const inputSt = { padding: "6px 10px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 12, fontFamily: "inherit", outline: "none" };
+
+  return (
+    <div>
+      {/* Stats strip */}
+      {stats && (
+        <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+          {[
+            { label: "Total Emails Logged", value: stats.total },
+            { label: "CRM Records Reached",  value: Object.keys(stats.byRecord || {}).length },
+            { label: "Active Senders",        value: Object.keys(stats.byUser   || {}).length },
+          ].map((s) => (
+            <div key={s.label} style={{ padding: "10px 16px", borderRadius: 10, background: "var(--surface-2)", border: "1px solid var(--border)", flex: 1, minWidth: 140 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: "var(--text)" }}>{s.value}</div>
+              <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 2 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Filters */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        {isAdmin && (
+          <select value={filterUser} onChange={(e) => setFilterUser(e.target.value)} style={inputSt}>
+            <option value="">All Users</option>
+            {teamMembers.map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+          </select>
+        )}
+        <input type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} style={inputSt} title="From date" />
+        <input type="date" value={filterTo}   onChange={(e) => setFilterTo(e.target.value)}   style={inputSt} title="To date" />
+        <input placeholder="Record name…" value={filterRecord} onChange={(e) => setFilterRecord(e.target.value)} style={{ ...inputSt, minWidth: 130 }} />
+        <input placeholder="Email address…" value={filterEmail} onChange={(e) => setFilterEmail(e.target.value)} style={{ ...inputSt, minWidth: 140 }} />
+        <select value={filterModule} onChange={(e) => setFilterModule(e.target.value)} style={inputSt}>
+          <option value="">All Modules</option>
+          <option value="lead">Lead</option>
+          <option value="customer">Customer</option>
+          <option value="pipeline">Pipeline</option>
+        </select>
+        <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={inputSt}>
+          <option value="">All Statuses</option>
+          <option value="classified">Logged</option>
+          <option value="pending">Pending</option>
+          <option value="dismissed">Skipped</option>
+        </select>
+        <button onClick={fetchLogs} style={{ ...inputSt, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}>
+          <RefreshCw size={12} /> Refresh
+        </button>
+        {(filterUser || filterFrom || filterTo || filterRecord || filterEmail || filterModule || filterStatus) && (
+          <button onClick={() => { setFilterUser(""); setFilterFrom(""); setFilterTo(""); setFilterRecord(""); setFilterEmail(""); setFilterModule(""); setFilterStatus(""); }}
+            style={{ ...inputSt, cursor: "pointer", color: "#EF4444", borderColor: "#EF444433" }}>
+            Clear
+          </button>
+        )}
+      </div>
+
+      {/* Table */}
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 48, color: "var(--text-muted)", fontSize: 13 }}>Loading email log…</div>
+      ) : logs.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 48, color: "var(--text-muted)", fontSize: 13 }}>
+          No email activities found.{" "}
+          {!profile?.id ? "" : "Connect your Gmail in Settings → Email to start tracking."}
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto", borderRadius: 10, border: "1px solid var(--border)" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
+                {["Date & Time", "Sender", "Sender Email", "Recipient", "CRM Record", "Module", "Activity Type", "Reason", "Status"].map((h) => (
+                  <th key={h} style={{ padding: "9px 12px", textAlign: "left", fontWeight: 700, color: "var(--text-muted)", whiteSpace: "nowrap", fontSize: 11.5 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((row, i) => (
+                <tr key={row.id} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "var(--surface-2)" }}>
+                  <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: "var(--text-muted)" }}>
+                    {row.sent_at ? new Date(row.sent_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" }) : "—"}
+                  </td>
+                  <td style={{ padding: "8px 12px", fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap" }}>
+                    {row.sender_name || "—"}
+                  </td>
+                  <td style={{ padding: "8px 12px", color: "var(--text-2)", whiteSpace: "nowrap" }}>
+                    {row.from_email || "—"}
+                  </td>
+                  <td style={{ padding: "8px 12px", color: "var(--text-2)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {(row.to_emails || [])[0] || "—"}
+                  </td>
+                  <td style={{ padding: "8px 12px", fontWeight: 600, color: "var(--text)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {row.crm_record_name || "—"}
+                  </td>
+                  <td style={{ padding: "8px 12px" }}>
+                    {row.crm_module ? (
+                      <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)" }}>
+                        {CRM_MODULE_LABELS[row.crm_module] || row.crm_module}
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: "var(--text-2)" }}>
+                    {row.activity_type || "—"}
+                  </td>
+                  <td style={{ padding: "8px 12px", color: "var(--text-2)", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <span title={row.reason || ""}>{row.reason || "—"}</span>
+                  </td>
+                  <td style={{ padding: "8px 12px" }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: `${STATUS_COLORS[row.status]}18`, color: STATUS_COLORS[row.status], border: `1px solid ${STATUS_COLORS[row.status]}33` }}>
+                      {STATUS_LABELS[row.status] || row.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Email Activities Component ───────────────────────────────────────────────
 
 function EmailActivities({ profile }) {
@@ -1668,6 +1844,7 @@ export default function Activities() {
   const qc          = useQueryClient();
 
   const [activeModule,     setActiveModule]     = useState("tasks"); // "tasks" | "email" | "targets"
+  const [emailSubView,     setEmailSubView]     = useState("contacts"); // "contacts" | "synclog"
   const [view,             setView]             = useState("timeline");
   const [search,           setSearch]           = useState("");
   const [typeFilter,       setTypeFilter]       = useState("");
@@ -1914,11 +2091,26 @@ export default function Activities() {
       {/* ── Email Activities Module ── */}
       {activeModule === "email" && (
         <div style={{ flex: 1, overflowY: "auto" }}>
-          <div style={{ marginBottom: 16 }}>
-            <h1 style={{ margin: 0, fontSize: 21, fontWeight: 800, color: "#111827", letterSpacing: "-0.03em" }}>Email Activities</h1>
-            <p style={{ margin: "3px 0 0", fontSize: 13, color: "#6B7280" }}>Track email outreach contacts and campaigns</p>
+          <div style={{ marginBottom: 14, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+            <div>
+              <h1 style={{ margin: 0, fontSize: 21, fontWeight: 800, color: "#111827", letterSpacing: "-0.03em" }}>Email Activities</h1>
+              <p style={{ margin: "3px 0 0", fontSize: 13, color: "#6B7280" }}>Track email outreach contacts and Gmail auto-sync log</p>
+            </div>
+            {/* Sub-tab switcher */}
+            <div style={{ display: "flex", gap: 3, background: "#F3F4F6", padding: 3, borderRadius: 9 }}>
+              {[
+                { key: "contacts", label: "Email Contacts" },
+                { key: "synclog", label: "Gmail Sync Log" },
+              ].map(({ key, label }) => (
+                <button key={key} onClick={() => setEmailSubView(key)}
+                  style={{ padding: "6px 14px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: emailSubView === key ? 700 : 500, background: emailSubView === key ? "#FFFFFF" : "transparent", color: emailSubView === key ? "#111827" : "#6B7280", boxShadow: emailSubView === key ? "0 1px 4px rgba(0,0,0,0.1)" : "none", transition: "all 0.15s" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
-          <EmailActivities profile={profile} />
+          {emailSubView === "contacts" && <EmailActivities profile={profile} />}
+          {emailSubView === "synclog"  && <GmailSyncLog   profile={profile} />}
         </div>
       )}
 

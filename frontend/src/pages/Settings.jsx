@@ -825,6 +825,9 @@ function EmailTab({ profile }) {
       <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
         Only <strong>sent</strong> emails are fetched. Your email content is never stored — only subject, recipient, date, and thread ID.
       </p>
+      <div style={{ marginTop: 10, padding: "9px 13px", borderRadius: 8, background: "#FEF3C7", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", lineHeight: 1.6 }}>
+        <strong>Domain restriction:</strong> Only <strong>@ccentrik.com</strong> accounts can be connected. Personal Gmail, Outlook, or other domains will be rejected.
+      </div>
 
       <div style={{ height: 1, background: "var(--border)", margin: "24px 0" }} />
 
@@ -890,7 +893,12 @@ export default function Settings() {
       window.history.replaceState({}, "", window.location.pathname);
     } else if (params.has("email_sync_error")) {
       setActiveTab("email");
-      toast.error("Failed to connect Gmail account. Please try again.");
+      const reason = params.get("email_sync_error");
+      if (reason === "domain_restricted") {
+        toast.error("Only @ccentrik.com email accounts are allowed for Gmail sync.");
+      } else {
+        toast.error("Failed to connect Gmail account. Please try again.");
+      }
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
