@@ -115,6 +115,7 @@ const ACT_TYPE_MAP = {
   phone_call:      { label: "Phone Call",         icon: PhoneCall,    color: "#3B82F6" },
   email:           { label: "Email",              icon: Mail,         color: "#EC4899" },
   email_contact:   { label: "Email Contact",      icon: Mail,         color: "#EC4899" },
+  email_sent:      { label: "📧 Email Sent",       icon: Mail,         color: "#6366F1" },
   note:            { label: "Note",               icon: FileText,     color: "#10B981" },
   task:            { label: "Task",               icon: CheckCircle2, color: "#06B6D4" },
   reminder:        { label: "Reminder",           icon: Bell,         color: "#EF4444" },

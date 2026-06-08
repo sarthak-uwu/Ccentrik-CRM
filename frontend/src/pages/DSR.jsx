@@ -31,6 +31,7 @@ const CORE_TYPES = {
   follow_up_email: { label: "Follow-up Email",   short: "FU Email",  icon: RefreshCw, color: "#06B6D4", bg: "rgba(6,182,212,0.1)"   },
   call:            { label: "Call",              short: "Call",      icon: Phone,     color: "#3B82F6", bg: "rgba(59,130,246,0.1)"  },
   email:           { label: "Email",             short: "Email",     icon: Mail,      color: "#EC4899", bg: "rgba(236,72,153,0.1)"  },
+  email_sent:      { label: "Email Sent",        short: "Sent",      icon: Mail,      color: "#EC4899", bg: "rgba(236,72,153,0.1)"  },
   note:            { label: "Note",              short: "Note",      icon: FileText,  color: "#10B981", bg: "rgba(16,185,129,0.1)"  },
   meeting_person:  { label: "In-Person Meeting", short: "In-Person", icon: Users,     color: "#8B5CF6", bg: "rgba(139,92,246,0.1)"  },
   meeting_virtual: { label: "Virtual Meeting",   short: "Virtual",   icon: Video,     color: "#6366F1", bg: "rgba(99,102,241,0.1)"  },
@@ -44,7 +45,7 @@ function resolveType(t) {
   if (s === "meeting_person" || s === "in_person" || s === "visit") return "meeting_person";
   if (s === "meeting_virtual" || s === "virtual_meeting" || s === "meeting") return "meeting_virtual";
   if (["call","phone_call","cold_call","demo","introductory","verification","other"].includes(s)) return "call";
-  if (s === "email") return "email";
+  if (s === "email" || s === "email_sent") return "email_sent";
   return "note";
 }
 

@@ -230,7 +230,7 @@ function computeProgress(target, progressData) {
   if (target.metric === "emails") {
     return activities.filter(a =>
       a.created_by === target.assigned_to &&
-      ["email", "follow_up_email"].includes(a.type) &&
+      ["email", "follow_up_email", "email_sent"].includes(a.type) &&
       inRange(a.created_at)
     ).length;
   }
