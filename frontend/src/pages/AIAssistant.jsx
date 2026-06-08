@@ -591,10 +591,16 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
           speakText(cleanText);
         },
         onError: (err) => {
-          const isKeyMissing = err.message === "XAI_KEY_MISSING";
+          const message = err?.message || "Unknown xAI error";
+          const isKeyMissing = message === "XAI_KEY_MISSING";
+          const isBillingIssue = /credits|licenses|permission to execute|billing/i.test(message);
+
           const fallback = isKeyMissing
             ? "**AI key not configured.** Add `VITE_XAI_API_KEY=xai-...` to your `.env` file and restart.\n\nGet your key at **console.x.ai**"
-            : `**Error:** ${err.message}`;
+            : isBillingIssue
+              ? "**xAI billing is not active for this team.** Add credits or a license in **console.x.ai**, then retry.\n\nIf the key was recently created, wait a few minutes and try again."
+              : `**Error:** ${message}`;
+
           setMessages((prev) => prev.map((m) => m.id === streamId ? { ...m, content: fallback, streaming: false } : m));
         },
       });
@@ -635,7 +641,7 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
               <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 400 }}>AI Executive Assistant</span>
               <span className="badge badge-purple" style={{ fontSize: 9.5 }}>BETA</span>
               <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "#10B981", fontWeight: 600 }}>
-                <span className="live-indicator" /> Grok-3
+                <span className="live-indicator" /> Grok 4.3
               </span>
             </div>
             <motion.div
@@ -784,7 +790,7 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
             <Activity size={10} style={{ color: "var(--text-muted)" }} />
             <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-              Powered by <strong style={{ color: "var(--accent)" }}>Grok-3</strong> (xAI) · Enter to send · Shift+Enter for new line · Actions require approval
+              Powered by <strong style={{ color: "var(--accent)" }}>Grok 4.3</strong> (xAI) · Enter to send · Shift+Enter for new line · Actions require approval
             </span>
           </div>
         </div>

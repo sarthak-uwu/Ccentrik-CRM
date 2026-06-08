@@ -1,5 +1,5 @@
 const XAI_BASE  = "https://api.x.ai/v1";
-const XAI_MODEL = "grok-3-mini"; // grok-3 for max quality, grok-3-mini for speed+cost
+const XAI_MODEL = "grok-4.3";
 
 function buildSystemPrompt(context, language, userName, userRole) {
   const hour       = new Date().getHours();
