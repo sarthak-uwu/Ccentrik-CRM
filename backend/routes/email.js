@@ -703,6 +703,81 @@ router.post("/send", authenticate, async (req, res) => {
   res.json({ success: true, message_id: sentData.id, activity_id: activity?.id });
 });
 
+// ── GET /api/email/conversations ─ grouped CRM record summaries for the communication center
+router.get("/conversations", authenticate, async (req, res) => {
+  try {
+    const role = req.profile.role;
+
+    let query = supabase
+      .from("email_sync_log")
+      .select("crm_record_name, crm_module, lead_id, customer_id, pipeline_id, deal_id, to_emails, sent_at, activity_type, subject, sender_name, user_id, follow_up_status, follow_up_date")
+      .or("lead_id.not.is.null,customer_id.not.is.null,pipeline_id.not.is.null,deal_id.not.is.null")
+      .order("sent_at", { ascending: false })
+      .limit(500);
+
+    if (role === "employee" || role === "inside_sales" || role === "sales_manager") {
+      query = query.eq("user_id", req.profile.id);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const groupMap = new Map();
+    for (const row of data || []) {
+      const recordId = row.lead_id || row.customer_id || row.pipeline_id || row.deal_id;
+      const key = `${row.crm_module}::${recordId}`;
+
+      if (!groupMap.has(key)) {
+        groupMap.set(key, {
+          crm_record_name: row.crm_record_name || "—",
+          crm_module:      row.crm_module,
+          lead_id:         row.lead_id,
+          customer_id:     row.customer_id,
+          pipeline_id:     row.pipeline_id,
+          deal_id:         row.deal_id,
+          primary_email:   row.to_emails?.[0] || "",
+          email_count:     0,
+          last_email_at:   null,
+          first_email_at:  null,
+          last_subject:    "",
+          email_types:     [],
+          has_followup:    false,
+        });
+      }
+
+      const g = groupMap.get(key);
+      g.email_count++;
+
+      const rowDate = row.sent_at ? new Date(row.sent_at) : null;
+      if (rowDate) {
+        if (!g.last_email_at || rowDate > new Date(g.last_email_at)) {
+          g.last_email_at = row.sent_at;
+          g.last_subject  = row.subject || "";
+        }
+        if (!g.first_email_at || rowDate < new Date(g.first_email_at)) {
+          g.first_email_at = row.sent_at;
+        }
+      }
+
+      if (row.activity_type && !g.email_types.includes(row.activity_type)) {
+        g.email_types.push(row.activity_type);
+      }
+      if (row.follow_up_status === "pending") g.has_followup = true;
+    }
+
+    const conversations = Array.from(groupMap.values()).sort((a, b) => {
+      if (!a.last_email_at) return 1;
+      if (!b.last_email_at) return -1;
+      return new Date(b.last_email_at) - new Date(a.last_email_at);
+    });
+
+    res.json({ data: conversations });
+  } catch (err) {
+    console.error("conversations error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /api/email/history ─ email history for a specific CRM record ──────────
 router.get("/history", authenticate, async (req, res) => {
   const { lead_id, deal_id, customer_id, pipeline_id } = req.query;
