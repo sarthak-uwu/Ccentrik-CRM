@@ -146,7 +146,6 @@ const CONTACT_CONTEXTS = ["Cold Outreach", "Inbound", "Referral", "Event", "Camp
 const LEAD_SOURCES = [
   { key: "website",        label: "Website" },
   { key: "linkedin",       label: "LinkedIn" },
-  { key: "google",         label: "Google" },
   { key: "referral",       label: "Referral" },
   { key: "cold_call",      label: "Cold Call" },
   { key: "email_campaign", label: "Email Campaign" },
