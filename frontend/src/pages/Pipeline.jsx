@@ -1244,7 +1244,7 @@ function BulkImportModal({ onClose, onImport, loading, isAdminUser, teamMembers 
 }
 
 // ─── Pipeline Bulk Action Bar ────────────────────────────────────────────────
-function PipelineBulkActionBar({ count, teamMembers = [], isAdmin, onAssign, onStageChange, onDelete, onConvert, onClear }) {
+function PipelineBulkActionBar({ count, teamMembers = [], isAdmin, onAssign, onStageChange, onDelete, onConvert, onLock, onUnlock, onClear }) {
   const [assignOpen, setAssignOpen] = useState(false);
   const [stageOpen,  setStageOpen]  = useState(false);
 
@@ -1349,6 +1349,26 @@ function PipelineBulkActionBar({ count, teamMembers = [], isAdmin, onAssign, onS
         </AnimatePresence>
       </div>
 
+      {/* Lock / Unlock — admin only */}
+      {isAdmin && (
+        <>
+          <button
+            className="btn-secondary"
+            style={{ gap: 5, height: 32, padding: "0 12px", fontSize: 12, color: "#F59E0B", borderColor: "rgba(245,158,11,0.35)", background: "rgba(245,158,11,0.07)", fontWeight: 600 }}
+            onClick={onLock}
+          >
+            <Lock size={12} /> Lock
+          </button>
+          <button
+            className="btn-secondary"
+            style={{ gap: 5, height: 32, padding: "0 12px", fontSize: 12, color: "#10B981", borderColor: "rgba(16,185,129,0.35)", background: "rgba(16,185,129,0.07)", fontWeight: 600 }}
+            onClick={onUnlock}
+          >
+            <LockOpen size={12} /> Unlock
+          </button>
+        </>
+      )}
+
       {/* Convert to Lead */}
       <button
         className="btn-secondary"
@@ -1417,6 +1437,28 @@ export default function Pipeline() {
     if (error) { toast.error("Bulk delete failed"); return; }
     qc.invalidateQueries({ queryKey: ["pipeline"] });
     toast.success(`Deleted ${ids.length} prospects`);
+    setSelectedIds(new Set());
+  };
+
+  const handleBulkLock = async () => {
+    if (!window.confirm(`Lock ${selectedIds.size} prospect(s)? Contact info will be hidden from non-admin users.`)) return;
+    const ids = [...selectedIds];
+    const { error } = await supabase.from("leads").update({ is_locked: true }).in("id", ids);
+    if (error) { toast.error("Bulk lock failed"); return; }
+    qc.invalidateQueries({ queryKey: ["pipeline"] });
+    qc.invalidateQueries({ queryKey: ["leads"] });
+    toast.success(`${ids.length} prospect${ids.length !== 1 ? "s" : ""} locked`);
+    setSelectedIds(new Set());
+  };
+
+  const handleBulkUnlock = async () => {
+    if (!window.confirm(`Unlock ${selectedIds.size} prospect(s)? Contact info will become visible to all users.`)) return;
+    const ids = [...selectedIds];
+    const { error } = await supabase.from("leads").update({ is_locked: false }).in("id", ids);
+    if (error) { toast.error("Bulk unlock failed"); return; }
+    qc.invalidateQueries({ queryKey: ["pipeline"] });
+    qc.invalidateQueries({ queryKey: ["leads"] });
+    toast.success(`${ids.length} prospect${ids.length !== 1 ? "s" : ""} unlocked`);
     setSelectedIds(new Set());
   };
 
@@ -1935,6 +1977,8 @@ export default function Pipeline() {
               onStageChange={handleBulkStage}
               onDelete={handleBulkDelete}
               onConvert={handleBulkConvert}
+              onLock={handleBulkLock}
+              onUnlock={handleBulkUnlock}
               onClear={() => setSelectedIds(new Set())}
             />
           )}
