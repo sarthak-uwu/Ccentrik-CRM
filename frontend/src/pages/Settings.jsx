@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
@@ -7,7 +7,9 @@ import { supabase } from "../supabaseClient";
 import { auth } from "../firebase";
 import { updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "firebase/auth";
 import toast from "react-hot-toast";
-import { User, Lock, Bell, Camera, DollarSign, Palette, Sun, Moon, Monitor, Eye, EyeOff, Check, XCircle, Smile, Mail } from "lucide-react";
+import { User, Lock, Bell, Camera, DollarSign, Palette, Sun, Moon, Monitor, Eye, EyeOff, Check, XCircle, Smile, Mail, Link2, Loader2, Trash2, RefreshCw } from "lucide-react";
+
+const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
 
 const PW_RULES = [
   { id: "len",     label: "Minimum 8 characters",                          test: (p) => p.length >= 8 },
@@ -667,6 +669,65 @@ function AppearanceTab() {
 
 // ─── Email Tab ────────────────────────────────────────────────────────────────
 function EmailTab({ profile }) {
+  // ── Gmail Sync state ───────────────────────────────────────────────────────
+  const [accounts,        setAccounts]        = useState([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(true);
+  const [connecting,      setConnecting]      = useState(false);
+  const [disconnecting,   setDisconnecting]   = useState(null);
+
+  const apiFetch = useCallback(async (path, opts = {}) => {
+    const token = await auth.currentUser?.getIdToken();
+    return fetch(`${API}${path}`, {
+      ...opts,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(opts.headers || {}) },
+    });
+  }, []);
+
+  const fetchAccounts = useCallback(async () => {
+    setLoadingAccounts(true);
+    try {
+      const r = await apiFetch("/api/email/accounts");
+      if (r.ok) setAccounts(await r.json());
+    } catch {} finally {
+      setLoadingAccounts(false);
+    }
+  }, [apiFetch]);
+
+  useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
+
+  const handleConnectGmail = async () => {
+    setConnecting(true);
+    try {
+      const r = await apiFetch("/api/email/auth-url/gmail");
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        toast.error(e.error || "Gmail sync is not configured on this server");
+        return;
+      }
+      const { url } = await r.json();
+      window.location.href = url;
+    } catch {
+      toast.error("Failed to connect Gmail");
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const handleDisconnect = async (id) => {
+    setDisconnecting(id);
+    try {
+      const r = await apiFetch(`/api/email/accounts/${id}`, { method: "DELETE" });
+      if (!r.ok) throw new Error();
+      setAccounts((prev) => prev.filter((a) => a.id !== id));
+      toast.success("Gmail account disconnected");
+    } catch {
+      toast.error("Failed to disconnect account");
+    } finally {
+      setDisconnecting(null);
+    }
+  };
+
+  // ── Meeting email (App Password) state ────────────────────────────────────
   const [appPassword, setAppPassword] = useState("");
   const [showPw, setShowPw]           = useState(false);
   const [saving, setSaving]           = useState(false);
@@ -687,9 +748,88 @@ function EmailTab({ profile }) {
     toast.success("Email password saved — meeting invites will now send from your account");
   };
 
+  const PROVIDER_LABELS = { gmail: "Gmail" };
+  const PROVIDER_COLORS = { gmail: "#EA4335" };
+
   return (
     <div style={{ maxWidth: 520 }}>
-      <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700 }}>Meeting Email Settings</h3>
+
+      {/* ── Section 1: Gmail Auto-Sync ─────────────────────────────────── */}
+      <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700, color: "var(--text)" }}>Email Auto-Sync</h3>
+      <p style={{ margin: "0 0 16px", fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
+        Connect your Gmail account so that every email you send is automatically detected. A popup will appear letting you choose the activity type — no manual entry required.
+      </p>
+
+      {/* Connected accounts list */}
+      {loadingAccounts ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0", color: "var(--text-muted)", fontSize: 13 }}>
+          <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Loading connected accounts…
+        </div>
+      ) : accounts.length > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+          {accounts.map((acc) => (
+            <div
+              key={acc.id}
+              style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)" }}
+            >
+              <div style={{ width: 32, height: 32, borderRadius: 8, background: `${PROVIDER_COLORS[acc.provider] || "#6366F1"}18`, border: `1px solid ${PROVIDER_COLORS[acc.provider] || "#6366F1"}33`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Mail size={14} style={{ color: PROVIDER_COLORS[acc.provider] || "#6366F1" }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{acc.email}</div>
+                <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 1 }}>
+                  {PROVIDER_LABELS[acc.provider] || acc.provider} · Synced {acc.last_sync_at ? new Date(acc.last_sync_at).toLocaleDateString() : "never"}
+                </div>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: "#10B98118", color: "#10B981", border: "1px solid #10B98133", flexShrink: 0 }}>
+                Active
+              </span>
+              <button
+                onClick={() => handleDisconnect(acc.id)}
+                disabled={disconnecting === acc.id}
+                title="Disconnect"
+                style={{ background: "none", border: "1px solid var(--border)", borderRadius: 7, cursor: "pointer", color: "var(--text-muted)", padding: "5px 8px", display: "flex", alignItems: "center", gap: 4, fontSize: 12, flexShrink: 0 }}
+              >
+                {disconnecting === acc.id ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
+                Disconnect
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ padding: "14px 16px", borderRadius: 10, border: "1.5px dashed var(--border)", background: "var(--surface-2)", marginBottom: 16, textAlign: "center" }}>
+          <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 2 }}>No accounts connected yet</div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Connect your Gmail to start auto-tracking sent emails</div>
+        </div>
+      )}
+
+      {/* Connect Gmail button */}
+      <button
+        onClick={handleConnectGmail}
+        disabled={connecting}
+        style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px", borderRadius: 9, background: "var(--surface-2)", border: "1.5px solid var(--border)", cursor: connecting ? "wait" : "pointer", fontSize: 13, fontWeight: 600, color: "var(--text)", fontFamily: "inherit", marginBottom: 8 }}
+      >
+        {connecting ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Link2 size={14} />}
+        {connecting ? "Redirecting to Google…" : "Connect Gmail Account"}
+      </button>
+
+      {accounts.length > 0 && (
+        <button
+          onClick={fetchAccounts}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 9, background: "none", border: "1px solid var(--border)", cursor: "pointer", fontSize: 12, color: "var(--text-muted)", fontFamily: "inherit", marginBottom: 4 }}
+        >
+          <RefreshCw size={12} /> Refresh
+        </button>
+      )}
+
+      <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
+        Only <strong>sent</strong> emails are fetched. Your email content is never stored — only subject, recipient, date, and thread ID.
+      </p>
+
+      <div style={{ height: 1, background: "var(--border)", margin: "24px 0" }} />
+
+      {/* ── Section 2: Meeting Email Password ─────────────────────────── */}
+      <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700, color: "var(--text)" }}>Meeting Email Settings</h3>
       <p style={{ margin: "0 0 24px", fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
         When you schedule a meeting, the invite email is sent <strong>from your own CRM email</strong> ({profile?.email}). Enter your Gmail App Password below to enable this.
       </p>
@@ -740,6 +880,20 @@ function EmailTab({ profile }) {
 export default function Settings() {
   const { profile, refreshProfile } = useAuth();
   const [activeTab, setActiveTab] = useState("profile");
+
+  // Handle OAuth redirect from Gmail — backend redirects to /settings?email_sync_connected=gmail
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("email_sync_connected")) {
+      setActiveTab("email");
+      toast.success("Gmail account connected — email sync is now active");
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (params.has("email_sync_error")) {
+      setActiveTab("email");
+      toast.error("Failed to connect Gmail account. Please try again.");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   return (
     <div style={{ padding: 24, maxWidth: 860 }}>

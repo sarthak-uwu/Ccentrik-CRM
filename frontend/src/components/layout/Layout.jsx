@@ -6,6 +6,7 @@ import WelcomePopup from "../WelcomePopup";
 import CommandPalette from "../CommandPalette";
 import ErrorBoundary from "../ErrorBoundary";
 import SecurityMonitor from "../SecurityMonitor";
+import EmailActivityPopup from "../EmailActivityPopup";
 
 function PageLoader() {
   return (
@@ -76,6 +77,7 @@ export default function Layout() {
       <WelcomePopup />
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
       <SecurityMonitor />
+      <EmailActivityPopup />
     </div>
   );
 }

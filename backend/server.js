@@ -102,6 +102,7 @@ app.use("/api/analytics",  require("./routes/analytics"));
 app.use("/api/ai",         require("./routes/ai"));
 app.use("/api/meetings",   require("./routes/meetings"));
 app.use("/api/targets",    require("./routes/targets"));
+app.use("/api/email",      require("./routes/email"));
 
 // Diagnostic: test SMTP delivery — tries MAIL_USER/MAIL_PASS then GMAIL_USER/GMAIL_PASS
 app.post("/api/test-email", async (req, res) => {
