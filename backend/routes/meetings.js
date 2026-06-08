@@ -1,7 +1,8 @@
 const express = require("express");
 const router  = express.Router();
 const { supabase } = require("../config/db");
-const { sendMeetingInviteEmail, sendMeetingCancellationEmail } = require("../config/mail");
+const crypto = require("crypto");
+const { sendMeetingInviteEmail, sendMeetingCancellationEmail, sendMeetingReminderEmail } = require("../config/mail");
 const { authenticate } = require("../middleware/auth");
 
 async function resolveHostProfile(profileId) {
@@ -162,6 +163,137 @@ router.post("/cancel-invite", authenticate, async (req, res) => {
   }
 
   res.json({ success: true, emailSent, emailError });
+});
+
+// ── GET /api/meetings/ics/:meetingId ─ public ICS download for Apple Calendar ──
+router.get("/ics/:meetingId", async (req, res) => {
+  const { meetingId } = req.params;
+
+  const { data: meeting, error } = await supabase
+    .from("meetings")
+    .select("*, created_profile:profiles!meetings_created_by_fkey(full_name, email)")
+    .eq("id", meetingId)
+    .single();
+
+  if (error || !meeting) return res.status(404).send("Meeting not found");
+
+  const organizer      = meeting.created_profile || {};
+  const organizerEmail = organizer.email || process.env.GMAIL_USER || "noreply@ccentrik.com";
+  const organizerName  = organizer.full_name || "Ccentrik Team";
+  const calUID         = `${meetingId}@ccentrik.com`;
+
+  // RFC 5545 ICS generation (inline — reuses same logic as mail.js generateICS)
+  const fold = (line) => {
+    if (!line || line.length <= 75) return line;
+    let out = "", pos = 0;
+    while (pos < line.length) {
+      const chunk = pos === 0 ? 75 : 74;
+      out += (pos > 0 ? "\r\n " : "") + line.slice(pos, pos + chunk);
+      pos += chunk;
+    }
+    return out;
+  };
+  const esc   = (s) => (s || "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+  const fmtDT = (d) => new Date(d).toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+
+  const safeEnd = meeting.end_time || new Date(new Date(meeting.start_time).getTime() + 3600000).toISOString();
+  const locVal  = meeting.location || meeting.meeting_link || null;
+  const desc    = [meeting.agenda, meeting.meeting_link ? `Join: ${meeting.meeting_link}` : null].filter(Boolean).join("\n");
+
+  const icsLines = [
+    "BEGIN:VCALENDAR", "VERSION:2.0",
+    "PRODID:-//Ccentrik CRM//Meeting//EN", "CALSCALE:GREGORIAN", "METHOD:REQUEST",
+    "BEGIN:VEVENT",
+    fold(`UID:${calUID}`),
+    "SEQUENCE:0",
+    `DTSTAMP:${fmtDT(new Date())}`,
+    `DTSTART:${fmtDT(meeting.start_time)}`,
+    `DTEND:${fmtDT(safeEnd)}`,
+    fold(`SUMMARY:${esc(meeting.title)}`),
+    desc   ? fold(`DESCRIPTION:${esc(desc)}`) : null,
+    locVal ? fold(`LOCATION:${esc(locVal)}`)   : null,
+    meeting.meeting_link ? fold(`URL:${meeting.meeting_link}`) : null,
+    fold(`ORGANIZER;CN="${esc(organizerName)}":MAILTO:${organizerEmail}`),
+    meeting.customer_email ? fold(`ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN="${esc(meeting.customer_name || meeting.customer_email)}":MAILTO:${meeting.customer_email}`) : null,
+    "STATUS:CONFIRMED",
+    "BEGIN:VALARM", "TRIGGER:-PT30M", "ACTION:DISPLAY", fold(`DESCRIPTION:Upcoming: ${esc(meeting.title)}`), "END:VALARM",
+    "BEGIN:VALARM", "TRIGGER:-P1D",   "ACTION:DISPLAY", fold(`DESCRIPTION:Tomorrow: ${esc(meeting.title)}`), "END:VALARM",
+    "END:VEVENT", "END:VCALENDAR",
+  ].filter(Boolean).join("\r\n");
+
+  res.setHeader("Content-Type", "text/calendar; charset=UTF-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${meeting.title.replace(/[^a-z0-9]/gi, "_")}.ics"`);
+  res.send(icsLines);
+});
+
+// ── POST /api/meetings/send-reminders ─ callable from cron / external scheduler
+router.post("/send-reminders", async (req, res) => {
+  // Lightweight auth: accept a shared secret header OR admin token
+  const secret = process.env.REMINDER_SECRET || "ccentrik-reminders";
+  const authHeader = req.headers.authorization || req.headers["x-cron-secret"] || "";
+  if (authHeader !== `Bearer ${secret}` && authHeader !== secret) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const now = new Date();
+
+  // Time windows: fetch meetings starting in [now, now + buffer] that haven't been reminded yet
+  const windows = [
+    { label: "in 15 minutes", minutesBefore: 15, column: "reminder_15m_sent_at" },
+    { label: "in 1 hour",     minutesBefore: 60, column: "reminder_1h_sent_at"  },
+    { label: "in 24 hours",   minutesBefore: 1440, column: "reminder_24h_sent_at" },
+  ];
+
+  let totalSent = 0;
+  const results = [];
+
+  for (const win of windows) {
+    const windowStart = new Date(now.getTime() + (win.minutesBefore - 5) * 60000).toISOString();
+    const windowEnd   = new Date(now.getTime() + (win.minutesBefore + 5) * 60000).toISOString();
+
+    const { data: meetings } = await supabase
+      .from("meetings")
+      .select("*, created_profile:profiles!meetings_created_by_fkey(full_name, email, mail_app_password)")
+      .eq("status", "scheduled")
+      .gte("start_time", windowStart)
+      .lte("start_time", windowEnd)
+      .is(win.column, null)
+      .limit(50);
+
+    if (!meetings?.length) continue;
+
+    for (const meeting of meetings) {
+      try {
+        const host     = meeting.created_profile || {};
+        const to       = meeting.customer_email;
+        if (!to) continue;
+
+        await sendMeetingReminderEmail({
+          to,
+          customerName: meeting.customer_name || "there",
+          title:        meeting.title,
+          startTime:    meeting.start_time,
+          endTime:      meeting.end_time,
+          meetingType:  meeting.meeting_type,
+          meetingLink:  meeting.meeting_link,
+          location:     meeting.location,
+          hostName:     host.full_name || "Ccentrik Team",
+          hostEmail:    host.email,
+          timeLabel:    win.label,
+          meetingId:    meeting.id,
+        });
+
+        // Mark this reminder as sent
+        await supabase.from("meetings").update({ [win.column]: now.toISOString() }).eq("id", meeting.id);
+        totalSent++;
+        results.push({ meetingId: meeting.id, title: meeting.title, window: win.label });
+      } catch (err) {
+        console.error(`[Reminder] Failed for ${meeting.id}:`, err.message);
+      }
+    }
+  }
+
+  res.json({ success: true, sent: totalSent, results });
 });
 
 module.exports = router;

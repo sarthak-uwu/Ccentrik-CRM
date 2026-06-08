@@ -425,6 +425,24 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
     return `https://outlook.live.com/calendar/0/deeplink/compose?${p.toString()}`;
   })();
 
+  // ── Yahoo Calendar URL ────────────────────────────────────────────────────────
+  const yahooCalUrl = (() => {
+    const fmtY = (d) => new Date(d).toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+    const safeEndY = endTime || new Date(new Date(startTime).getTime() + 3600000).toISOString();
+    const p = new URLSearchParams({
+      v: "60", title: title || "Meeting",
+      st: fmtY(startTime), et: fmtY(safeEndY),
+      desc: [description, meetingLink ? `Join: ${meetingLink}` : ""].filter(Boolean).join("\n"),
+      in_loc: location || meetingLink || "",
+    });
+    return `https://calendar.yahoo.com/?${p.toString()}`;
+  })();
+
+  // ── Apple / ICS download URL (backend endpoint) ───────────────────────────────
+  const appleCalUrl = meetingId
+    ? `${BACKEND_BASE}/api/meetings/ics/${meetingId}`
+    : null;
+
   // ── Participants ──────────────────────────────────────────────────────────────
   const allParticipants  = (Array.isArray(allAttendees) ? allAttendees : []).filter(a => a && a.email);
   const participantCount = allParticipants.length;
@@ -651,16 +669,32 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
     <td style="padding:0 20px 20px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e5ebf7;border-radius:16px;overflow:hidden;">
         <tr><td style="padding:22px 24px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
-            <td>
-              <div style="font-size:17px;font-weight:700;color:#0a52ff;margin:0 0 4px 0;font-family:Arial,Helvetica,sans-serif;">Add to your calendar</div>
-              <div style="color:#667089;font-size:12px;font-family:Arial,Helvetica,sans-serif;">Stay updated and never miss a meeting.</div>
-            </td>
-            <td align="right" style="white-space:nowrap;padding-left:12px;">
-              <a href="${gcalUrl}" target="_blank" style="display:inline-block;background:#ffffff;border:1px solid #d9e2f2;padding:9px 14px;text-decoration:none;border-radius:8px;color:#222;font-size:12px;font-weight:600;font-family:Arial,Helvetica,sans-serif;margin-right:6px;">&#128197; Google Calendar</a>
-              <a href="${outlookCalUrl}" target="_blank" style="display:inline-block;background:#ffffff;border:1px solid #d9e2f2;padding:9px 14px;text-decoration:none;border-radius:8px;color:#222;font-size:12px;font-weight:600;font-family:Arial,Helvetica,sans-serif;">&#128197; Outlook</a>
-            </td>
-          </tr></table>
+          <div style="font-size:17px;font-weight:700;color:#0a52ff;margin:0 0 4px 0;font-family:Arial,Helvetica,sans-serif;">&#128197; Add to your calendar</div>
+          <div style="color:#667089;font-size:12px;margin-bottom:16px;font-family:Arial,Helvetica,sans-serif;">One click to save this meeting — works with all major calendar apps.</div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+              <td style="padding:0 4px 8px 0;" width="25%">
+                <a href="${gcalUrl}" target="_blank" style="display:block;background:#ffffff;border:1px solid #d9e2f2;padding:10px 6px;text-decoration:none;border-radius:10px;color:#222;font-size:11.5px;font-weight:700;font-family:Arial,Helvetica,sans-serif;text-align:center;">
+                  <div style="font-size:20px;margin-bottom:4px;">&#128198;</div>Google Calendar
+                </a>
+              </td>
+              <td style="padding:0 4px 8px;" width="25%">
+                <a href="${outlookCalUrl}" target="_blank" style="display:block;background:#ffffff;border:1px solid #d9e2f2;padding:10px 6px;text-decoration:none;border-radius:10px;color:#222;font-size:11.5px;font-weight:700;font-family:Arial,Helvetica,sans-serif;text-align:center;">
+                  <div style="font-size:20px;margin-bottom:4px;">&#128188;</div>Outlook
+                </a>
+              </td>
+              ${appleCalUrl ? `<td style="padding:0 4px 8px;" width="25%">
+                <a href="${appleCalUrl}" target="_blank" style="display:block;background:#ffffff;border:1px solid #d9e2f2;padding:10px 6px;text-decoration:none;border-radius:10px;color:#222;font-size:11.5px;font-weight:700;font-family:Arial,Helvetica,sans-serif;text-align:center;">
+                  <div style="font-size:20px;margin-bottom:4px;">&#63743;</div>Apple Calendar
+                </a>
+              </td>` : ""}
+              <td style="padding:0 0 8px 4px;" width="25%">
+                <a href="${yahooCalUrl}" target="_blank" style="display:block;background:#ffffff;border:1px solid #d9e2f2;padding:10px 6px;text-decoration:none;border-radius:10px;color:#222;font-size:11.5px;font-weight:700;font-family:Arial,Helvetica,sans-serif;text-align:center;">
+                  <div style="font-size:20px;margin-bottom:4px;">&#128247;</div>Yahoo
+                </a>
+              </td>
+            </tr>
+          </table>
         </td></tr>
       </table>
     </td>
@@ -1165,4 +1199,104 @@ const sendMeetingCancellationEmail = async ({ to, customerName, title, startTime
   return result;
 };
 
-module.exports = { sendMail, sendWelcomeEmail, sendNotificationEmail, sendSensitiveFieldAlert, sendMeetingInviteEmail, sendMeetingCancellationEmail };
+// ─── Meeting Reminder Email ───────────────────────────────────────────────────
+const sendMeetingReminderEmail = async ({ to, customerName, title, startTime, endTime, meetingType, meetingLink, location, hostName, hostEmail, timeLabel, meetingId }) => {
+  const isOnline   = meetingType !== "in_person" && meetingType !== "in-person";
+  const typeLabel  = meetingType === "google_meet" ? "Google Meet"
+    : meetingType === "teams" ? "Microsoft Teams"
+    : meetingType === "zoom"  ? "Zoom"
+    : isOnline                ? "Online Meeting"
+    : "In-Person Meeting";
+
+  const dateStr = new Date(startTime).toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Kolkata" });
+  const timeStr = new Date(startTime).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
+  const endTimeStr = endTime ? new Date(endTime).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : null;
+  const mapsUrl = location ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}` : null;
+  const BACKEND_BASE = process.env.BACKEND_URL || "https://backend-gamma-nine-32.vercel.app";
+  const supportUrl = `mailto:${hostEmail || FROM_ADDR}`;
+
+  const actionBtn = isOnline && meetingLink
+    ? `<a href="${meetingLink}" target="_blank" style="display:inline-block;background:#0a52ff;color:#ffffff;padding:13px 28px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:700;font-family:Arial,Helvetica,sans-serif;">&#9654; Join ${typeLabel}</a>`
+    : mapsUrl
+    ? `<a href="${mapsUrl}" target="_blank" style="display:inline-block;background:#10B981;color:#ffffff;padding:13px 28px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:700;font-family:Arial,Helvetica,sans-serif;">&#128205; Open in Google Maps</a>`
+    : "";
+
+  const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>Meeting Reminder</title></head>
+<body style="margin:0;padding:0;background:#f4f6fb;font-family:Arial,Helvetica,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f4f6fb">
+<tr><td align="center" style="padding:30px 10px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:580px;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.07);">
+
+  <!-- Header -->
+  <tr><td style="background:#ffffff;padding:20px 32px;border-bottom:1px solid #eef0f6;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+      <td><span style="font-size:24px;font-weight:700;color:#0a52ff;font-family:Arial,Helvetica,sans-serif;">CENTRIK</span></td>
+      <td align="right"><span style="font-size:13px;font-weight:600;color:#26335d;font-family:Arial,Helvetica,sans-serif;">&#9200; Meeting Reminder</span></td>
+    </tr></table>
+  </td></tr>
+
+  <!-- Reminder banner -->
+  <tr><td style="padding:20px 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:linear-gradient(135deg,#FF6B35,#FF9500);border-radius:14px;">
+      <tr><td style="padding:24px 28px;text-align:center;">
+        <div style="font-size:36px;font-weight:800;color:#ffffff;font-family:Arial,Helvetica,sans-serif;margin-bottom:6px;">&#9200; ${timeLabel}</div>
+        <div style="font-size:15px;color:rgba(255,255,255,0.9);font-family:Arial,Helvetica,sans-serif;">Your meeting is coming up soon!</div>
+      </td></tr>
+    </table>
+  </td></tr>
+
+  <!-- Meeting details -->
+  <tr><td style="padding:0 24px 20px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e5ebf7;border-radius:14px;overflow:hidden;">
+      <tr><td style="padding:16px 20px;border-bottom:1px solid #eef2f8;">
+        <div style="font-size:11px;color:#667089;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;font-family:Arial,Helvetica,sans-serif;">Meeting</div>
+        <div style="font-size:17px;font-weight:700;color:#1a2540;font-family:Arial,Helvetica,sans-serif;">${title || "Meeting"}</div>
+      </td></tr>
+      <tr><td style="padding:12px 20px;border-bottom:1px solid #eef2f8;">
+        <div style="font-size:11px;color:#667089;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;font-family:Arial,Helvetica,sans-serif;">&#128336; Date &amp; Time</div>
+        <div style="font-size:14px;color:#1a2540;font-family:Arial,Helvetica,sans-serif;">${dateStr}</div>
+        <div style="font-size:15px;font-weight:700;color:#0a52ff;font-family:Arial,Helvetica,sans-serif;">${timeStr}${endTimeStr ? " – " + endTimeStr : ""} IST</div>
+      </td></tr>
+      <tr><td style="padding:12px 20px;">
+        <div style="font-size:11px;color:#667089;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;font-family:Arial,Helvetica,sans-serif;">${isOnline ? "&#127909; Meeting Platform" : "&#128205; Location"}</div>
+        <div style="font-size:14px;color:#1a2540;font-family:Arial,Helvetica,sans-serif;">${isOnline ? typeLabel : (location || "—")}</div>
+        ${isOnline && meetingLink ? `<div style="margin-top:4px;"><a href="${meetingLink}" style="font-size:12px;color:#0a52ff;text-decoration:none;word-break:break-all;">${meetingLink}</a></div>` : ""}
+      </td></tr>
+    </table>
+  </td></tr>
+
+  <!-- CTA -->
+  <tr><td style="padding:0 24px 24px;text-align:center;">
+    ${actionBtn}
+  </td></tr>
+
+  <!-- Footer -->
+  <tr><td style="background:#0036c7;padding:20px 28px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+      <td><div style="font-size:22px;font-weight:700;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">CENTRIK</div></td>
+      <td align="right"><a href="${supportUrl}" style="font-size:12px;color:rgba(255,255,255,0.8);text-decoration:none;">Contact: ${hostEmail || FROM_ADDR}</a></td>
+    </tr></table>
+  </td></tr>
+
+</table>
+</td></tr></table>
+</body></html>`;
+
+  const text = `Meeting Reminder: ${timeLabel}\n\n${title}\nDate: ${dateStr}\nTime: ${timeStr}${endTimeStr ? " – " + endTimeStr : ""} IST\n${isOnline ? `Join: ${meetingLink || typeLabel}` : `Location: ${location || "—"}`}\n\nOrganized by ${hostName || "Ccentrik Team"}\n\n— Ccentrik CRM`;
+
+  // Transport: per-user SMTP if available, else global SMTP, else Resend
+  const subjectLine  = `Reminder ${timeLabel}: ${title}`;
+  const fromDisplay  = `${hostName || FROM_NAME} <${hostEmail || COMPANY_EMAIL}>`;
+
+  if (globalTransport) {
+    return globalTransport.sendMail({ from: fromDisplay, to, subject: subjectLine, html, text });
+  }
+  if (!resend) { console.warn("[sendMeetingReminder] No email transport available"); return { skipped: true }; }
+  const result = await resend.emails.send({ from: FROM, to: Array.isArray(to) ? to : [to], subject: subjectLine, html, text });
+  if (result.error) throw new Error(result.error.message || "Resend send failed");
+  return result;
+};
+
+module.exports = { sendMail, sendWelcomeEmail, sendNotificationEmail, sendSensitiveFieldAlert, sendMeetingInviteEmail, sendMeetingCancellationEmail, sendMeetingReminderEmail };

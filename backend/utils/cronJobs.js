@@ -1,6 +1,6 @@
 const cron = require("node-cron");
 const { supabase } = require("../config/db");
-const { sendNotificationEmail, sendMail } = require("../config/mail");
+const { sendNotificationEmail, sendMail, sendMeetingReminderEmail } = require("../config/mail");
 
 function startCronJobs() {
   // Daily at 9:00 AM UTC — follow-up reminders
@@ -104,7 +104,12 @@ function startCronJobs() {
     }
   });
 
-  console.log("[CRON] Scheduled: follow-up reminders (9 AM UTC), stale leads alert (8 AM UTC), security report (14:30 UTC / 8 PM IST)");
+  // Meeting reminders — runs every 5 minutes to catch 15-min, 1-hour, and 24-hour windows
+  cron.schedule("*/5 * * * *", async () => {
+    try { await sendMeetingReminders(); } catch (err) { console.error("[CRON] Meeting reminders error:", err.message); }
+  });
+
+  console.log("[CRON] Scheduled: follow-up reminders (9 AM UTC), stale leads alert (8 AM UTC), security report (14:30 UTC / 8 PM IST), meeting reminders (every 5 min)");
 }
 
 async function sendDailySecurityReport() {
@@ -281,6 +286,56 @@ async function sendDailySecurityReport() {
   });
 
   console.log(`[CRON] Security report sent to ${REPORT_TO} (${IS_TEST ? "TEST" : "PRODUCTION"} mode). Users: ${users.length}, Warnings: ${multiDeviceUsers.length}`);
+}
+
+// ─── Meeting Reminder Logic ───────────────────────────────────────────────────
+async function sendMeetingReminders() {
+  const now = new Date();
+  const windows = [
+    { label: "in 15 minutes", minutesBefore: 15,   column: "reminder_15m_sent_at" },
+    { label: "in 1 hour",     minutesBefore: 60,   column: "reminder_1h_sent_at"  },
+    { label: "in 24 hours",   minutesBefore: 1440, column: "reminder_24h_sent_at" },
+  ];
+
+  for (const win of windows) {
+    const windowStart = new Date(now.getTime() + (win.minutesBefore - 5) * 60000).toISOString();
+    const windowEnd   = new Date(now.getTime() + (win.minutesBefore + 5) * 60000).toISOString();
+
+    const { data: meetings } = await supabase
+      .from("meetings")
+      .select("*, created_profile:profiles!meetings_created_by_fkey(full_name, email)")
+      .eq("status", "scheduled")
+      .gte("start_time", windowStart)
+      .lte("start_time", windowEnd)
+      .is(win.column, null)
+      .limit(50);
+
+    if (!meetings?.length) continue;
+
+    for (const meeting of meetings) {
+      try {
+        if (!meeting.customer_email) continue;
+        await sendMeetingReminderEmail({
+          to:           meeting.customer_email,
+          customerName: meeting.customer_name || "there",
+          title:        meeting.title,
+          startTime:    meeting.start_time,
+          endTime:      meeting.end_time,
+          meetingType:  meeting.meeting_type,
+          meetingLink:  meeting.meeting_link,
+          location:     meeting.location,
+          hostName:     meeting.created_profile?.full_name || "Ccentrik Team",
+          hostEmail:    meeting.created_profile?.email,
+          timeLabel:    win.label,
+          meetingId:    meeting.id,
+        });
+        await supabase.from("meetings").update({ [win.column]: now.toISOString() }).eq("id", meeting.id);
+        console.log(`[CRON] Reminder (${win.label}) sent for meeting: ${meeting.title}`);
+      } catch (err) {
+        console.error(`[CRON] Reminder failed for ${meeting.id}:`, err.message);
+      }
+    }
+  }
 }
 
 module.exports = { startCronJobs };

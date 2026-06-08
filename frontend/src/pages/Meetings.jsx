@@ -176,10 +176,50 @@ function AvatarStack({ attendees = [] }) {
   );
 }
 
+// ─── Google Maps Places Autocomplete (mounts only when API key is present) ───
+function GoogleMapsAutocomplete({ inputId, apiKey, onPlaceSelected }) {
+  useEffect(() => {
+    if (!apiKey || !inputId) return;
+    let autocomplete;
+    const init = () => {
+      const el = document.getElementById(inputId);
+      if (!el || !window.google?.maps?.places) return;
+      autocomplete = new window.google.maps.places.Autocomplete(el, { types: ["geocode", "establishment"] });
+      autocomplete.addListener("place_changed", () => {
+        const place = autocomplete.getPlace();
+        if (place?.geometry?.location) {
+          onPlaceSelected({
+            formattedAddress: place.formatted_address || el.value,
+            lat: place.geometry.location.lat(),
+            lng: place.geometry.location.lng(),
+          });
+        }
+      });
+    };
+    if (window.google?.maps?.places) { init(); return; }
+    const scriptId = "gm-places-script";
+    if (!document.getElementById(scriptId)) {
+      const s = document.createElement("script");
+      s.id  = scriptId;
+      s.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`;
+      s.async = true;
+      s.onload = init;
+      document.head.appendChild(s);
+    } else {
+      document.getElementById(scriptId).addEventListener("load", init);
+    }
+    return () => { if (autocomplete) window.google?.maps?.event?.clearInstanceListeners(autocomplete); };
+  }, [inputId, apiKey, onPlaceSelected]);
+  return null; // renders nothing — side-effect only
+}
+
 // ─── Meeting Form Modal ───────────────────────────────────────────────────────
 
 function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = [], deals = [], pipeline = [], allMeetings = [], codeMap = {}, reuseFrom = null }) {
   const [mode,           setMode]          = useState(meeting?.mode || "online");
+  const [platform,       setPlatform]      = useState(meeting?.meeting_type || "google_meet");
+  const [locationLat,    setLocationLat]   = useState(meeting?.location_lat  || null);
+  const [locationLng,    setLocationLng]   = useState(meeting?.location_lng  || null);
   const [purpose,        setPurpose]       = useState(meeting?.meeting_purpose || "");
   const [purposeOther,   setPurposeOther]  = useState("");
   const [attendeeIds,    setAttendeeIds]   = useState(() =>
@@ -377,6 +417,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
     setValue("customer_phone", src.customer_phone || "");
     setValue("agenda",         src.agenda         || "");
     setMode(src.mode || "online");
+    setPlatform(src.meeting_type && src.meeting_type !== "in_person" ? src.meeting_type : "google_meet");
     setPurpose(src.meeting_purpose || "");
     // Keep notes blank so user can add fresh notes; embed parent ref
     const parentCode = codeMap[src.id] || "MEET-?";
@@ -445,11 +486,19 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
       start_time:      startISO,
       end_time:        endISO,
       timezone:        data.timezone,
-      meeting_type:    mode === "online" ? "google_meet" : "in_person",
+      meeting_type:     mode === "online" ? platform : "in_person",
+      meeting_platform: mode === "online" ? platform : null,
       mode,
-      meeting_purpose: finalPurpose,
-      meeting_link:    mode === "online" ? (data.meeting_link || null) : null,
-      location:        mode === "offline" ? (data.location || null) : null,
+      meeting_purpose:  finalPurpose,
+      meeting_link:     mode === "online" ? (data.meeting_link || null) : null,
+      location:         mode === "offline" ? (data.location || null) : null,
+      location_lat:     mode === "offline" ? locationLat : null,
+      location_lng:     mode === "offline" ? locationLng : null,
+      location_maps_url: mode === "offline" && locationLat && locationLng
+        ? `https://maps.google.com/?q=${locationLat},${locationLng}`
+        : mode === "offline" && data.location
+        ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(data.location)}`
+        : null,
       agenda:          data.agenda || null,
       internal_notes:  internalNotes || null,
       lead_id:         !isDealLink ? (crmEntity?.id || meeting?.lead_id || null) : null,
@@ -796,12 +845,13 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
             {/* ── § 4: Meeting Mode ── */}
             <SectionHeader icon={Globe} label="Meeting Mode" />
 
+            {/* Mode toggle: Online / In-Person */}
             <div style={{ gridColumn: "1 / -1" }}>
               <div style={{ display: "flex", gap: 0, background: "var(--surface-2)", borderRadius: 9, padding: 3, width: "fit-content", border: "1px solid var(--border)" }}>
-                {[{ key: "online", label: "Google Meet", icon: Video }, { key: "offline", label: "In Person", icon: MapPin }].map((m) => {
+                {[{ key: "online", label: "Online Meeting", icon: Video }, { key: "offline", label: "In-Person Meeting", icon: MapPin }].map((m) => {
                   const Icon = m.icon;
                   return (
-                    <button key={m.key} type="button" onClick={() => setMode(m.key)}
+                    <button key={m.key} type="button" onClick={() => { setMode(m.key); if (m.key === "online" && !["google_meet","teams","zoom","custom"].includes(platform)) setPlatform("google_meet"); }}
                       style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", borderRadius: 7, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, background: mode === m.key ? "var(--accent)" : "transparent", color: mode === m.key ? "#fff" : "var(--text-muted)", transition: "all 0.15s" }}>
                       <Icon size={13} /> {m.label}
                     </button>
@@ -810,19 +860,83 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
               </div>
             </div>
 
-            {mode === "online" ? (
+            {/* Online: platform selector */}
+            {mode === "online" && (
               <div style={{ gridColumn: "1 / -1" }}>
-                <label className="crm-label">Meeting Link <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 400 }}>(optional — Google Calendar generates it automatically)</span></label>
-                <input className="crm-input" {...register("meeting_link")} placeholder="https://meet.google.com/abc-defg-hij" />
-                <p style={{ margin: "5px 0 0", fontSize: 11.5, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
-                  <Video size={11} /> Leave blank — Google Calendar will auto-generate a Meet link when you save the event.
-                </p>
+                <label className="crm-label" style={{ marginBottom: 8, display: "block" }}>Meeting Platform</label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 14 }}>
+                  {[
+                    { key: "google_meet", label: "Google Meet",      emoji: "📹", color: "#EA4335" },
+                    { key: "teams",       label: "Microsoft Teams",  emoji: "🟦", color: "#6264A7" },
+                    { key: "zoom",        label: "Zoom",             emoji: "🎥", color: "#2D8CFF" },
+                    { key: "custom",      label: "Custom Link",      emoji: "🔗", color: "#6366F1" },
+                  ].map((p) => (
+                    <button
+                      key={p.key}
+                      type="button"
+                      onClick={() => setPlatform(p.key)}
+                      style={{ padding: "10px 8px", borderRadius: 9, border: `2px solid ${platform === p.key ? p.color : "var(--border)"}`, background: platform === p.key ? `${p.color}12` : "var(--surface-2)", cursor: "pointer", fontFamily: "inherit", textAlign: "center", transition: "all 0.15s" }}
+                    >
+                      <div style={{ fontSize: 20, marginBottom: 4 }}>{p.emoji}</div>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: platform === p.key ? p.color : "var(--text-2)" }}>{p.label}</div>
+                    </button>
+                  ))}
+                </div>
+                <label className="crm-label">
+                  {platform === "google_meet" ? "Google Meet Link" : platform === "teams" ? "Microsoft Teams URL" : platform === "zoom" ? "Zoom Meeting URL" : "Custom Meeting URL"}
+                  {platform === "google_meet" && <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 400, marginLeft: 6 }}>(optional — Google Calendar generates it automatically)</span>}
+                </label>
+                <input
+                  className="crm-input"
+                  {...register("meeting_link")}
+                  placeholder={
+                    platform === "google_meet" ? "https://meet.google.com/abc-defg-hij" :
+                    platform === "teams"       ? "https://teams.microsoft.com/l/meetup-join/..." :
+                    platform === "zoom"        ? "https://zoom.us/j/123456789" :
+                    "https://..."
+                  }
+                />
+                {platform === "google_meet" && (
+                  <p style={{ margin: "5px 0 0", fontSize: 11.5, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
+                    <Video size={11} /> Leave blank — Google Calendar will auto-generate a Meet link when you save the event.
+                  </p>
+                )}
                 {watchLink && <a href={watchLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11.5, color: "var(--accent)", display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}><ExternalLink size={11} /> Preview link</a>}
               </div>
-            ) : (
+            )}
+
+            {/* In-Person: location with Maps autocomplete */}
+            {mode === "offline" && (
               <div style={{ gridColumn: "1 / -1" }}>
                 <label className="crm-label">Location / Venue</label>
-                <input className="crm-input" {...register("location")} placeholder="Office address, meeting room, building name…" />
+                <input
+                  id="meeting-location-input"
+                  className="crm-input"
+                  {...register("location")}
+                  placeholder="Search address or enter venue name…"
+                  onChange={(e) => { if (!e.target.value) { setLocationLat(null); setLocationLng(null); } }}
+                />
+                {locationLat && locationLng && (
+                  <a
+                    href={`https://maps.google.com/?q=${locationLat},${locationLng}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: 11.5, color: "#10B981", display: "flex", alignItems: "center", gap: 4, marginTop: 5, fontWeight: 600 }}
+                  >
+                    <MapPin size={11} /> Location pinned on Google Maps ↗
+                  </a>
+                )}
+                {import.meta.env.VITE_GOOGLE_MAPS_API_KEY && (
+                  <GoogleMapsAutocomplete
+                    inputId="meeting-location-input"
+                    apiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY}
+                    onPlaceSelected={(place) => {
+                      setValue("location", place.formattedAddress);
+                      setLocationLat(place.lat);
+                      setLocationLng(place.lng);
+                    }}
+                  />
+                )}
               </div>
             )}
 
@@ -1297,7 +1411,7 @@ export default function Meetings() {
   // Strip frontend-only meta fields before sending to DB.
   // meeting_code is generated by the service on create — never overwrite on update.
   const stripMeta = (data) => {
-    const { _extra_emails, _contact_method, _all_day, _lead_code, meeting_code, ...clean } = data;
+    const { _extra_emails, _contact_method, _all_day, _lead_code, _meeting_id, _sequence, meeting_code, ...clean } = data;
     return clean;
   };
 
