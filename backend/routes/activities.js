@@ -15,6 +15,8 @@ const ACTIVITY_TYPES = [
   "followup", "reminder", "task", "proposal",
   // whatsapp
   "whatsapp", "whatsapp_follow_up",
+  // email sync / Gmail auto-tracking
+  "email_sent",
 ];
 
 // Columns that exist on the activities table — prevents injection of unknown fields
