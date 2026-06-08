@@ -42,12 +42,16 @@ app.use(helmet({
   crossOriginResourcePolicy: false, // Allow cross-origin API responses
 }));
 
+// Trust Vercel / reverse-proxy forwarded IPs (required for express-rate-limit on Vercel)
+app.set("trust proxy", 1);
+
 // Rate limits
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,  // 15 minutes
   max: 500,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },  // suppress Vercel proxy header warnings
   message: { error: "Too many requests, please try again later." },
 });
 const authLimiter = rateLimit({
@@ -55,6 +59,7 @@ const authLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { error: "Too many auth requests, please try again later." },
 });
 app.use(globalLimiter);
