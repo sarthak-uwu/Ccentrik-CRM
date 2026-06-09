@@ -761,38 +761,288 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
 </body>
 </html>`;
 
-  const html = `<!DOCTYPE html>
-<html lang="en">
+  const LOGO_URL = "https://ccentrik-crm.web.app/logo-blue.png";
+  const isGoogleMeetInvite = meetingType === "google_meet";
+  const isTeamsInvite      = meetingType === "teams";
+  const isInPersonInvite   = meetingType === "in_person" || meetingType === "in-person";
+
+  const locationRowHtml = isInPersonInvite ? `
+      <tr>
+        <td style="padding:14px 20px;border-bottom:1px solid #e8edf5;vertical-align:top;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="top">
+            <td width="36" style="padding-right:14px;padding-top:2px;">
+              <div style="width:32px;height:32px;background:#1a3569;border-radius:8px;text-align:center;line-height:32px;font-size:16px;color:#ffffff;">&#128205;</div>
+            </td>
+            <td>
+              <div style="font-size:11px;font-weight:700;color:#8896b0;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Location</div>
+              <div style="font-size:14px;color:#1a2540;font-weight:600;">${location || "Venue TBD"}</div>
+              ${location ? `<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}" target="_blank" style="display:inline-block;margin-top:6px;font-size:12px;color:#1a56db;text-decoration:none;">&#128506; View on Google Maps</a>` : ""}
+            </td>
+          </tr></table>
+        </td>
+      </tr>` : meetingLink ? `
+      <tr>
+        <td style="padding:14px 20px;border-bottom:1px solid #e8edf5;vertical-align:top;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="top">
+            <td width="36" style="padding-right:14px;padding-top:2px;">
+              <div style="width:32px;height:32px;background:${isTeamsInvite ? "#6264a7" : "#1a3569"};border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#127909;</div>
+            </td>
+            <td>
+              <div style="font-size:11px;font-weight:700;color:#8896b0;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Meeting Link</div>
+              <div style="font-size:13px;color:#1a2540;margin-bottom:8px;">Online Meeting — ${isGoogleMeetInvite ? "Google Meet" : isTeamsInvite ? "Microsoft Teams" : "Virtual"}</div>
+              <a href="${meetingLink}" target="_blank" style="display:inline-block;background:${isTeamsInvite ? "#6264a7" : isGoogleMeetInvite ? "#1a73e8" : "#1a3569"};color:#ffffff;padding:9px 20px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;">${isGoogleMeetInvite ? "&#127909; Join on Google Meet" : isTeamsInvite ? "&#128188; Join on Microsoft Teams" : "&#9654; Join Meeting"}</a>
+            </td>
+          </tr></table>
+        </td>
+      </tr>` : "";
+
+  const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
 <head>
-<meta charset="UTF-8"/>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>Meeting Invitation</title>
+<title>Meeting Invitation – ${title || "Meeting"}</title>
 </head>
-<body style="margin:0;padding:24px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.7;color:#1a1a1a;">
+<body style="margin:0;padding:0;background:#f0f4f9;font-family:Arial,Helvetica,sans-serif;">
 
-<p style="margin:0 0 16px;">Hello ${customerName || "there"},</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f0f4f9" style="background:#f0f4f9;">
+<tr><td align="center" style="padding:28px 16px;">
 
-<p style="margin:0 0 16px;">You are invited to attend the following meeting.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:620px;width:100%;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.10);">
 
-<p style="margin:0 0 16px;">
-<strong>Meeting Title:</strong> ${title}<br/>
-<strong>Date:</strong> ${dateStr}<br/>
-<strong>Time:</strong> ${timeStr}${endTimeStr ? ` – ${endTimeStr}` : ""} (IST)${durationStr ? ` · ${durationStr}` : ""}${purposeLabel ? `<br/><strong>Purpose:</strong> ${purposeLabel}` : ""}${meetingLink ? `<br/><strong>Meeting Link:</strong> <a href="${meetingLink}" style="color:#1a56db;">${meetingLink}</a>` : (location ? `<br/><strong>Location:</strong> ${location}` : "")}
-</p>
+  <!-- ═══ HEADER ═══ -->
+  <tr>
+    <td style="background:#1a3569;padding:0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="padding:18px 28px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+              <td>
+                <img src="${LOGO_URL}" alt="CCENTRIK" height="30" style="display:block;border:0;filter:brightness(0) invert(1);" />
+              </td>
+              <td align="right" style="font-size:12px;color:rgba(255,255,255,0.80);font-style:italic;white-space:nowrap;padding-left:12px;">
+                Driving Technology. Enabling Growth.
+              </td>
+            </tr></table>
+          </td>
+        </tr>
+        <!-- diagonal accent strip -->
+        <tr>
+          <td style="height:6px;background:linear-gradient(90deg,#2563eb,#1e40af,#1a3569);font-size:0;line-height:0;">&nbsp;</td>
+        </tr>
+      </table>
+    </td>
+  </tr>
 
-${description ? `<p style="margin:0 0 16px;"><strong>Agenda / Notes:</strong><br/>${description.replace(/\n/g, "<br/>")}</p>` : ""}
+  <!-- ═══ HERO ═══ -->
+  <tr>
+    <td style="padding:32px 28px 20px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+        <td style="padding-right:18px;" width="68">
+          <div style="width:64px;height:64px;background:#eaf0fb;border-radius:14px;text-align:center;line-height:64px;font-size:30px;">&#128197;</div>
+        </td>
+        <td>
+          <h1 style="margin:0 0 6px;font-size:22px;font-weight:800;color:#1a2540;font-family:Arial,Helvetica,sans-serif;">You Have Been Invited!</h1>
+          <p style="margin:0;font-size:13.5px;color:#5a6a85;line-height:1.6;">Dear <strong style="color:#1a2540;">${customerName || "there"}</strong>, you have been invited to a meeting with <strong style="color:#1a56db;">Ccentrik</strong>. Please find the meeting details below.</p>
+        </td>
+      </tr></table>
+    </td>
+  </tr>
 
-<p style="margin:0 0 16px;">Please let me know if you have any questions.</p>
+  ${purposeLabel ? `
+  <!-- ═══ PURPOSE BOX ═══ -->
+  <tr>
+    <td style="padding:0 28px 20px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1.5px solid #c7d7f0;border-radius:10px;background:#f5f8ff;">
+        <tr><td style="padding:16px 20px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+            <td width="36" style="padding-right:14px;">
+              <div style="width:32px;height:32px;background:#1a3569;border-radius:8px;text-align:center;line-height:32px;font-size:16px;">&#128100;</div>
+            </td>
+            <td>
+              <div style="font-size:11px;font-weight:700;color:#1a56db;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:3px;">Purpose of the Meeting</div>
+              <div style="font-size:13.5px;color:#374151;line-height:1.6;">${purposeLabel}</div>
+            </td>
+          </tr></table>
+        </td></tr>
+      </table>
+    </td>
+  </tr>` : ""}
 
-<p style="margin:0;">
-Regards,<br/>
-<strong>${hostName || "The Ccentrik Team"}</strong>${companyName ? `<br/>${companyName}` : ""}${hostEmail ? `<br/><a href="mailto:${hostEmail}" style="color:#1a56db;">${hostEmail}</a>` : ""}
-</p>
+  <!-- ═══ MEETING DETAILS ═══ -->
+  <tr>
+    <td style="padding:0 28px 20px;">
+      <div style="font-size:16px;font-weight:700;color:#1a2540;margin-bottom:12px;font-family:Arial,Helvetica,sans-serif;">&#128197; Meeting Details</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1.5px solid #e0e8f5;border-radius:10px;overflow:hidden;">
+
+        <!-- Title -->
+        <tr>
+          <td style="padding:14px 20px;border-bottom:1px solid #e8edf5;background:#f8fafc;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+              <td width="36" style="padding-right:14px;">
+                <div style="width:32px;height:32px;background:#1a3569;border-radius:8px;text-align:center;line-height:32px;font-size:16px;color:#ffffff;">&#128197;</div>
+              </td>
+              <td>
+                <div style="font-size:11px;font-weight:700;color:#8896b0;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Meeting Title</div>
+                <div style="font-size:14px;font-weight:700;color:#1a2540;">${title || "—"}</div>
+              </td>
+            </tr></table>
+          </td>
+        </tr>
+
+        <!-- Date -->
+        <tr>
+          <td style="padding:14px 20px;border-bottom:1px solid #e8edf5;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+              <td width="36" style="padding-right:14px;">
+                <div style="width:32px;height:32px;background:#1a3569;border-radius:8px;text-align:center;line-height:32px;font-size:16px;color:#ffffff;">&#128198;</div>
+              </td>
+              <td>
+                <div style="font-size:11px;font-weight:700;color:#8896b0;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Date</div>
+                <div style="font-size:14px;color:#1a2540;">${dateStr}</div>
+              </td>
+            </tr></table>
+          </td>
+        </tr>
+
+        <!-- Time -->
+        <tr>
+          <td style="padding:14px 20px;border-bottom:1px solid #e8edf5;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+              <td width="36" style="padding-right:14px;">
+                <div style="width:32px;height:32px;background:#1a3569;border-radius:8px;text-align:center;line-height:32px;font-size:16px;color:#ffffff;">&#128336;</div>
+              </td>
+              <td>
+                <div style="font-size:11px;font-weight:700;color:#8896b0;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Time</div>
+                <div style="font-size:14px;color:#1a2540;">${timeStr}${endTimeStr ? ` – ${endTimeStr}` : ""} (IST)${durationStr ? `<span style="color:#6b7a99;font-size:12px;margin-left:6px;">${durationStr}</span>` : ""}</div>
+              </td>
+            </tr></table>
+          </td>
+        </tr>
+
+        <!-- Location / Meeting Link -->
+        ${locationRowHtml}
+
+        ${description ? `
+        <!-- Reason / Agenda -->
+        <tr>
+          <td style="padding:14px 20px;border-bottom:1px solid #e8edf5;vertical-align:top;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="top">
+              <td width="36" style="padding-right:14px;padding-top:2px;">
+                <div style="width:32px;height:32px;background:#1a3569;border-radius:8px;text-align:center;line-height:32px;font-size:16px;color:#ffffff;">&#128196;</div>
+              </td>
+              <td>
+                <div style="font-size:11px;font-weight:700;color:#8896b0;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Reason / Agenda</div>
+                <div style="font-size:13.5px;color:#374151;line-height:1.7;">${description.replace(/\n/g, "<br/>")}</div>
+              </td>
+            </tr></table>
+          </td>
+        </tr>` : ""}
+
+        <!-- Organizer -->
+        <tr>
+          <td style="padding:14px 20px;vertical-align:top;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+              <td width="36" style="padding-right:14px;">
+                <div style="width:32px;height:32px;background:#1a3569;border-radius:8px;text-align:center;line-height:32px;font-size:16px;color:#ffffff;">&#128100;</div>
+              </td>
+              <td>
+                <div style="font-size:11px;font-weight:700;color:#8896b0;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Organizer</div>
+                <div style="font-size:14px;color:#1a2540;font-weight:600;">${hostName || "Ccentrik Team"}${companyName ? `<span style="color:#6b7a99;font-weight:400;font-size:13px;"> | ${companyName}</span>` : ""}</div>
+                ${hostEmail ? `<div style="font-size:12px;margin-top:2px;"><a href="mailto:${hostEmail}" style="color:#1a56db;text-decoration:none;">${hostEmail}</a></div>` : ""}
+              </td>
+            </tr></table>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+
+  <!-- ═══ ADD TO CALENDAR ═══ -->
+  <tr>
+    <td style="padding:0 28px 20px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1.5px solid #e0e8f5;border-radius:10px;overflow:hidden;">
+        <tr><td style="padding:16px 20px;">
+          <div style="font-size:13px;font-weight:700;color:#1a56db;margin-bottom:12px;">&#128197; Add to your calendar</div>
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td style="padding-right:8px;">
+              <a href="${gcalUrl}" target="_blank" style="display:inline-block;background:#ffffff;border:1.5px solid #d0daea;padding:8px 14px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:600;color:#374151;">&#128198; Google Calendar</a>
+            </td>
+            <td style="padding-right:8px;">
+              <a href="${outlookCalUrl}" target="_blank" style="display:inline-block;background:#ffffff;border:1.5px solid #d0daea;padding:8px 14px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:600;color:#374151;">&#128188; Outlook</a>
+            </td>
+            ${appleCalUrl ? `<td><a href="${appleCalUrl}" target="_blank" style="display:inline-block;background:#ffffff;border:1.5px solid #d0daea;padding:8px 14px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:600;color:#374151;">&#63743; Apple Calendar</a></td>` : ""}
+          </tr></table>
+        </td></tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ═══ CTA BANNER ═══ -->
+  <tr>
+    <td style="padding:0 28px 24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#1a3569;border-radius:10px;">
+        <tr><td style="padding:18px 22px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+            <td style="padding-right:14px;" width="36">
+              <div style="font-size:24px;">&#128197;</div>
+            </td>
+            <td>
+              <div style="font-size:14px;font-weight:700;color:#ffffff;margin-bottom:3px;">We look forward to your valuable time and insights.</div>
+              <div style="font-size:12.5px;color:rgba(255,255,255,0.78);">Please confirm your availability at your earliest convenience.</div>
+            </td>
+          </tr></table>
+        </td></tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ═══ SIGNATURE ═══ -->
+  <tr>
+    <td style="padding:0 28px 24px;border-top:1px solid #e8edf5;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="padding-top:20px;"><tr valign="top">
+        <td style="padding-right:16px;">
+          <div style="font-size:13.5px;color:#374151;line-height:1.8;">
+            Best Regards,<br/>
+            <strong style="color:#1a2540;">${hostName || "Ccentrik Team"}</strong><br/>
+            ${companyName ? `<span style="color:#5a6a85;">${companyName}</span><br/>` : ""}
+            ${hostEmail ? `<a href="mailto:${hostEmail}" style="color:#1a56db;text-decoration:none;font-size:13px;">${hostEmail}</a><br/>` : ""}
+            <span style="color:#5a6a85;font-size:12px;">Ccentrik &nbsp;|&nbsp; www.ccentrik.com</span>
+          </div>
+        </td>
+        <td align="right" valign="middle" style="padding-top:4px;">
+          <img src="${LOGO_URL}" alt="Ccentrik" height="28" style="display:block;border:0;" />
+        </td>
+      </tr></table>
+    </td>
+  </tr>
+
+  <!-- ═══ FOOTER ═══ -->
+  <tr>
+    <td style="background:#1a3569;padding:14px 28px;border-radius:0 0 14px 14px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="middle">
+        <td>
+          <a href="https://www.ccentrik.in" style="color:rgba(255,255,255,0.75);font-size:11px;text-decoration:none;margin-right:14px;">&#127760; www.ccentrik.in</a>
+          <a href="mailto:info@ccentrik.in" style="color:rgba(255,255,255,0.75);font-size:11px;text-decoration:none;margin-right:14px;">&#128231; info@ccentrik.in</a>
+          <span style="color:rgba(255,255,255,0.75);font-size:11px;">&#128222; +91 124 479 3900</span>
+        </td>
+        <td align="right">
+          <span style="color:rgba(255,255,255,0.60);font-size:11px;">India | USA | UAE</span>
+        </td>
+      </tr></table>
+    </td>
+  </tr>
+
+</table>
+
+</td></tr>
+</table>
 
 </body>
 </html>`;
 
-  const text = `Hello ${customerName || "there"},\n\nYou are invited to attend the following meeting.\n\nMeeting Title: ${title}\nDate: ${dateStr}\nTime: ${timeStr}${endTimeStr ? " – " + endTimeStr : ""} (IST)${durationStr ? " · " + durationStr : ""}${purposeLabel ? "\nPurpose: " + purposeLabel : ""}${meetingLink ? "\nMeeting Link: " + meetingLink : location ? "\nLocation: " + location : ""}${description ? "\n\nAgenda / Notes:\n" + description : ""}\n\nPlease let me know if you have any questions.\n\nRegards,\n${hostName || "The Ccentrik Team"}${companyName ? "\n" + companyName : ""}${hostEmail ? "\n" + hostEmail : ""}`;
+  const text = `Dear ${customerName || "there"},\n\nYou have been invited to a meeting with Ccentrik. Please find the meeting details below.\n\nMeeting Title: ${title}\nDate: ${dateStr}\nTime: ${timeStr}${endTimeStr ? " – " + endTimeStr : ""} (IST)${durationStr ? " · " + durationStr : ""}${purposeLabel ? "\nPurpose: " + purposeLabel : ""}${meetingLink ? "\nMeeting Link: " + meetingLink : location ? "\nLocation: " + location : ""}${description ? "\n\nReason / Agenda:\n" + description : ""}\n\nWe look forward to your valuable time and insights. Please confirm your availability at your earliest convenience.\n\nBest Regards,\n${hostName || "Ccentrik Team"}${companyName ? "\n" + companyName : ""}${hostEmail ? "\n" + hostEmail : ""}\n\nCcentrik | www.ccentrik.com | info@ccentrik.in | +91 124 479 3900`;
 
   // ── Generate iCalendar (RFC 5545) content ────────────────────────────────────
   const calUID       = meetingId ? `${meetingId}@ccentrik.com` : `${crypto.randomUUID()}@ccentrik.com`;

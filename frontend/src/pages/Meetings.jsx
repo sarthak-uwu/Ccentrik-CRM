@@ -1848,10 +1848,11 @@ export default function Meetings() {
         }),
       });
       const result = await r.json();
-      if (result.emailSent) toast.success(`iCal invite${isUpdate ? " updated" : " sent"} — event will appear in Google Calendar`);
-      else toast(`Email delivery failed — check SMTP settings`, { icon: "⚠️", duration: 6000 });
+      if (!result.emailSent) toast(`Email delivery failed — check SMTP settings`, { icon: "⚠️", duration: 6000 });
+      return result.emailSent ?? false;
     } catch {
       toast("Could not reach email server", { icon: "⚠️" });
+      return false;
     }
   };
 
@@ -1949,14 +1950,18 @@ export default function Meetings() {
     mutationFn: async ({ data, attendeeIds }) => {
       const meeting = await meetingsService.create({ ...stripMeta(data), created_by: profile?.id }, attendeeIds);
       // Pass meeting.id so backend generates a stable UID: meetingId@ccentrik.com
-      await sendMeetingInvite({ ...data, _meeting_id: meeting.id, _sequence: 0 }, false);
+      const emailSent = await sendMeetingInvite({ ...data, _meeting_id: meeting.id, _sequence: 0 }, false);
       logMeetingActivity(data, meeting.id, "scheduled");
       logMeetingHistory(data, "scheduled");
-      return { meeting, data };
+      return { meeting, data, emailSent };
     },
-    onSuccess: () => {
+    onSuccess: ({ emailSent }) => {
       qc.invalidateQueries({ queryKey: ["meetings"] });
-      toast.success("Meeting scheduled — iCal invite sent, event will appear in attendee's calendar automatically");
+      if (emailSent) {
+        toast.success("Meeting scheduled — iCal invite sent, event will appear in attendee's calendar automatically");
+      } else {
+        toast.success("Meeting scheduled successfully");
+      }
       setShowForm(false);
     },
     onError: (e) => toast.error(e.message),
