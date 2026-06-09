@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+﻿import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { motion, AnimatePresence } from "framer-motion";
@@ -11,14 +11,14 @@ import { dealsService } from "../services/dealsService";
 import { changeHistoryService } from "../services/changeHistoryService";
 import { supabase } from "../supabaseClient";
 import toast from "react-hot-toast";
-import { format, isToday, isTomorrow, isPast, formatDistanceToNow, startOfDay, endOfDay, addDays } from "date-fns";
+import { format, isToday, isTomorrow, isPast, formatDistanceToNow, startOfDay, endOfDay, addDays, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, startOfWeek, endOfWeek, addMonths, subMonths } from "date-fns";
 import {
   Plus, X, Pencil, Trash2, Calendar, Clock, MapPin, ExternalLink,
   Users, CheckCircle2, Video, Phone, Building2, Search, Filter,
   CalendarCheck, ChevronDown, FileText, Target, Lock, Globe,
   Link2, AlertCircle, RefreshCw, Trophy, ArrowRight, Briefcase,
   Mail, MessageCircle, UserCheck, Globe2, AtSign, Hash, RotateCcw,
-  GitBranch, Copy, ChevronUp,
+  GitBranch, Copy, ChevronUp, Flag, Download, LayoutList, LayoutGrid, CalendarDays, User,
 } from "lucide-react";
 import SkeletonTable from "../components/SkeletonTable";
 import { ColumnToggle, TemplateMenu } from "../components/TableControls";
@@ -176,6 +176,175 @@ function AvatarStack({ attendees = [] }) {
   );
 }
 
+// ─── Priority ─────────────────────────────────────────────────────────────────
+
+const PRIORITY_META = {
+  high:   { label: "High",   color: "#EF4444", bg: "rgba(239,68,68,0.1)"   },
+  medium: { label: "Medium", color: "#F59E0B", bg: "rgba(245,158,11,0.1)"  },
+  low:    { label: "Low",    color: "#10B981", bg: "rgba(16,185,129,0.1)"  },
+};
+
+function PriorityBadge({ priority }) {
+  const m = PRIORITY_META[priority];
+  if (!m) return null;
+  return (
+    <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: m.bg, color: m.color, display: "inline-flex", alignItems: "center", gap: 3, whiteSpace: "nowrap" }}>
+      <Flag size={8} /> {m.label}
+    </span>
+  );
+}
+
+// ─── Calendar View ────────────────────────────────────────────────────────────
+
+function CalendarView({ meetings, codeMap, onSelectMeeting }) {
+  const [currentMonth, setCurrentMonth] = useState(() => new Date());
+
+  const meetingsByDate = useMemo(() => {
+    const map = {};
+    meetings.forEach((m) => {
+      if (!m.start_time) return;
+      const key = format(new Date(m.start_time), "yyyy-MM-dd");
+      if (!map[key]) map[key] = [];
+      map[key].push(m);
+    });
+    return map;
+  }, [meetings]);
+
+  const monthStart = startOfMonth(currentMonth);
+  const monthEnd   = endOfMonth(currentMonth);
+  const calStart   = startOfWeek(monthStart, { weekStartsOn: 1 });
+  const calEnd     = endOfWeek(monthEnd,   { weekStartsOn: 1 });
+  const days       = eachDayOfInterval({ start: calStart, end: calEnd });
+
+  return (
+    <div className="card" style={{ padding: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <button className="btn-ghost" style={{ padding: "5px 10px", display: "flex", alignItems: "center", gap: 4 }}
+          onClick={() => setCurrentMonth((m) => subMonths(m, 1))}>
+          <ChevronUp size={14} style={{ transform: "rotate(-90deg)" }} /> Prev
+        </button>
+        <span style={{ fontSize: 15, fontWeight: 800, color: "var(--text)" }}>
+          {format(currentMonth, "MMMM yyyy")}
+        </span>
+        <button className="btn-ghost" style={{ padding: "5px 10px", display: "flex", alignItems: "center", gap: 4 }}
+          onClick={() => setCurrentMonth((m) => addMonths(m, 1))}>
+          Next <ChevronDown size={14} style={{ transform: "rotate(-90deg)" }} />
+        </button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 6 }}>
+        {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d) => (
+          <div key={d} style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", padding: "4px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>{d}</div>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+        {days.map((day) => {
+          const key        = format(day, "yyyy-MM-dd");
+          const dayMtgs    = meetingsByDate[key] || [];
+          const inMonth    = isSameMonth(day, currentMonth);
+          const isTodayDay = isToday(day);
+          return (
+            <div key={key}
+              style={{ minHeight: 84, padding: "6px 7px", borderRadius: 10, border: `1.5px solid ${isTodayDay ? "var(--accent)" : "var(--border)"}`, background: isTodayDay ? "rgba(99,102,241,0.04)" : "var(--surface)", opacity: inMonth ? 1 : 0.3 }}
+            >
+              <div style={{ fontSize: 12, fontWeight: isTodayDay ? 800 : 500, color: isTodayDay ? "var(--accent)" : "var(--text-2)", marginBottom: 4, textAlign: "right" }}>
+                {format(day, "d")}
+              </div>
+              {dayMtgs.slice(0, 3).map((m) => {
+                const sm = STATUS_META[m.status] || STATUS_META.scheduled;
+                return (
+                  <div key={m.id} onClick={() => onSelectMeeting(m)} title={m.title}
+                    style={{ fontSize: 10, fontWeight: 600, padding: "2px 5px", borderRadius: 5, marginBottom: 2, background: sm.bg, color: sm.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer" }}
+                  >
+                    {m.start_time ? format(new Date(m.start_time), "HH:mm") : ""} {m.title}
+                  </div>
+                );
+              })}
+              {dayMtgs.length > 3 && (
+                <div style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 600 }}>+{dayMtgs.length - 3} more</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── List View ────────────────────────────────────────────────────────────────
+
+function ListView({ meetings, codeMap, onSelect, onEdit, onComplete, onDelete, onFollowUp, canDelete }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 12 }}>
+      {meetings.map((m) => {
+        const sm = STATUS_META[m.status] || STATUS_META.scheduled;
+        const isOverdue = m.status === "scheduled" && m.start_time && isPast(new Date(m.start_time));
+        return (
+          <div key={m.id} onClick={() => onSelect(m)}
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", borderLeft: `3px solid ${sm.color}`, borderRadius: 12, padding: 16, cursor: "pointer" }}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 8, gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text)", marginBottom: 5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.title}</div>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  <StatusBadge status={m.status} />
+                  {m.meeting_purpose && <PurposeBadge purpose={m.meeting_purpose} />}
+                  {m.priority && m.priority !== "medium" && <PriorityBadge priority={m.priority} />}
+                  {isOverdue && <span style={{ fontSize: 10, fontWeight: 700, color: "#EF4444", background: "rgba(239,68,68,0.08)", padding: "2px 6px", borderRadius: 99 }}>Overdue</span>}
+                </div>
+              </div>
+              <span style={{ fontSize: 10.5, fontWeight: 800, color: "#6366F1", background: "rgba(99,102,241,0.1)", padding: "2px 7px", borderRadius: 6, fontFamily: "monospace", flexShrink: 0 }}>
+                {codeMap[m.id] || "—"}
+              </span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10, paddingLeft: 2 }}>
+              {m.customer_name && (
+                <div style={{ fontSize: 12, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 5 }}>
+                  <User size={11} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                  {m.customer_name}{m.company_name ? ` · ${m.company_name}` : ""}
+                </div>
+              )}
+              {m.start_time && (
+                <div style={{ fontSize: 12, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 5 }}>
+                  <Calendar size={11} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                  {format(new Date(m.start_time), "EEE, MMM d · HH:mm")}{m.end_time ? ` – ${format(new Date(m.end_time), "HH:mm")}` : ""}
+                </div>
+              )}
+              {(m.meeting_link || m.location) && (
+                <div style={{ fontSize: 12, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 5 }}>
+                  {(m.mode === "online" || m.meeting_type !== "in_person")
+                    ? <Video size={11} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                    : <MapPin size={11} style={{ color: "var(--text-muted)", flexShrink: 0 }} />}
+                  {(m.mode === "online" || m.meeting_type !== "in_person") ? "Online Meeting" : (m.location || "In Person")}
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 5, justifyContent: "flex-end" }}>
+              {m.status === "scheduled" && (
+                <motion.button onClick={(e) => { e.stopPropagation(); onComplete(m); }} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                  style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 7, background: "rgba(16,185,129,0.1)", color: "#10B981", border: "1px solid rgba(16,185,129,0.2)", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}>
+                  <CheckCircle2 size={10} /> Done
+                </motion.button>
+              )}
+              <motion.button onClick={(e) => { e.stopPropagation(); onFollowUp(m); }} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 7, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}>
+                <GitBranch size={10} /> Follow-up
+              </motion.button>
+              <motion.button onClick={(e) => { e.stopPropagation(); onEdit(m); }} className="btn-ghost" style={{ padding: "4px 6px" }} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                <Pencil size={12} strokeWidth={1.75} />
+              </motion.button>
+              {canDelete && (
+                <motion.button onClick={(e) => { e.stopPropagation(); if (window.confirm("Delete this meeting?")) onDelete(m.id); }} className="btn-ghost" style={{ padding: "4px 6px", color: "var(--red)" }} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                  <Trash2 size={12} strokeWidth={1.75} />
+                </motion.button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Google Maps Places Autocomplete (mounts only when API key is present) ───
 function GoogleMapsAutocomplete({ inputId, apiKey, onPlaceSelected }) {
   useEffect(() => {
@@ -229,6 +398,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
   const [allDay,         setAllDay]        = useState(false);
   const [externalEmails, setExternalEmails]= useState("");
   const [internalNotes,  setInternalNotes] = useState(meeting?.internal_notes || "");
+  const [priority,       setPriority]      = useState(meeting?.priority || "medium");
   const [teamSearch,     setTeamSearch]    = useState("");
   const [teamDropOpen,   setTeamDropOpen]  = useState(false);
   const teamDropRef = useRef(null);
@@ -504,6 +674,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
       lead_id:         !isDealLink ? (crmEntity?.id || meeting?.lead_id || null) : null,
       deal_id:         isDealLink  ? crmEntity?.id : null,
       status:          data.status,
+      priority:        priority || "medium",
       _extra_emails:   extras,
       _all_day:        allDay,
       _lead_code:      crmEntity?.lead_code || null,
@@ -543,20 +714,69 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
 
   const canSubmit = true; // all fields editable — no gate
 
+  // UI-only computed values
+  const endTimeLabel = (() => {
+    if (!meetingSlot || allDay) return null;
+    const [h, m] = meetingSlot.split(":").map(Number);
+    const totalMins = h * 60 + m + duration;
+    const endH = Math.floor(totalMins / 60) % 24;
+    const endM = totalMins % 60;
+    const ampm = endH >= 12 ? "PM" : "AM";
+    const dispH = endH % 12 || 12;
+    return `${dispH}:${String(endM).padStart(2, "0")} ${ampm}`;
+  })();
+
+  const durationLabel = (() => {
+    const h = Math.floor(duration / 60);
+    const m = duration % 60;
+    return [h && `${h}h`, m && `${m}m`].filter(Boolean).join(" ");
+  })();
+
+  // Conflict detection: meetings that overlap the selected date+time window
+  const conflictMeetings = useMemo(() => {
+    if (!meetingDate || !meetingSlot || allDay) return [];
+    const startMs = new Date(`${meetingDate}T${meetingSlot}:00`).getTime();
+    const endMs   = startMs + duration * 60000;
+    return allMeetings.filter((mtg) => {
+      if (meeting && mtg.id === meeting.id) return false;
+      if (!mtg.start_time) return false;
+      const ms = new Date(mtg.start_time).getTime();
+      const me = mtg.end_time ? new Date(mtg.end_time).getTime() : ms + 3600000;
+      return ms < endMs && me > startMs;
+    });
+  }, [meetingDate, meetingSlot, duration, allDay, allMeetings, meeting]);
+
+  const externalEmailsList = externalEmails
+    .split(",")
+    .map((e) => e.trim())
+    .filter(Boolean);
+
+  const watchedTitle    = watch("title");
+  const watchedCompany  = watch("company_name");
+  const watchedEmail    = watch("customer_email");
+  const watchedLocation = watch("location");
+  const watchedLink     = watch("meeting_link");
+
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <motion.div className="modal-box" initial={{ opacity: 0, scale: 0.94, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.94, y: 16 }} transition={{ type: "spring", damping: 22, stiffness: 280 }} style={{ maxWidth: 900, width: "96vw", maxHeight: "94vh", overflowY: "auto" }}>
-
-        {/* ── Modal Header ── */}
+      <motion.div
+        className="modal-box"
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        transition={{ type: "spring", damping: 24, stiffness: 300 }}
+        style={{ maxWidth: 720, width: "96vw", maxHeight: "94vh", overflowY: "auto" }}
+      >
+        {/* ── Header ── */}
         <div style={{ background: "var(--surface)", padding: "16px 24px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.15)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: 38, height: 38, borderRadius: 11, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.15)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <CalendarCheck size={18} style={{ color: "#2563EB" }} />
             </div>
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.02em" }}>
-                  {reuseFrom ? "Schedule Follow-up Meeting" : meeting ? "Edit Meeting" : "Schedule Meeting"}
+                <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.025em" }}>
+                  {reuseFrom ? "Schedule Follow-up" : meeting ? "Edit Meeting" : "Schedule Meeting"}
                 </h2>
                 {selectedParent && (
                   <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", display: "flex", alignItems: "center", gap: 4 }}>
@@ -565,33 +785,39 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                 )}
               </div>
               <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>
-                {reuseFrom ? `Pre-filled from ${codeMap[reuseFrom.id] || "previous meeting"} — update fields as needed` : meeting ? "Revise details — a new iCal invite will be sent" : "Search a CRM record or fill details manually"}
+                {reuseFrom
+                  ? `Pre-filled from ${codeMap[reuseFrom.id] || "previous meeting"}`
+                  : meeting
+                  ? "Update details — a revised iCal invite will be sent"
+                  : "Fill details to schedule and send a calendar invite"}
               </p>
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {!meeting && !reuseFrom && allMeetings.length > 0 && (
               <button type="button" onClick={() => setShowReuse((v) => !v)}
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8, border: `1px solid ${showReuse ? "#6366F1" : "var(--border)"}`, background: showReuse ? "rgba(99,102,241,0.08)" : "var(--surface-2)", cursor: "pointer", fontSize: 12, fontWeight: 600, color: showReuse ? "#6366F1" : "var(--text-muted)", fontFamily: "inherit", transition: "all 0.15s" }}>
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8, border: `1px solid ${showReuse ? "#6366F1" : "var(--border)"}`, background: showReuse ? "rgba(99,102,241,0.08)" : "var(--surface-2)", cursor: "pointer", fontSize: 12, fontWeight: 600, color: showReuse ? "#6366F1" : "var(--text-muted)", fontFamily: "inherit" }}>
                 <RotateCcw size={12} /> Reuse Previous
               </button>
             )}
-            <button onClick={onClose} style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 8px", cursor: "pointer", color: "var(--text-muted)", display: "flex", alignItems: "center" }}><X size={16} /></button>
+            <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, background: "var(--surface-2)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <X size={15} />
+            </button>
           </div>
         </div>
 
-        <form onSubmit={handleSubmit(handleFormSubmit)} style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
+        <form onSubmit={handleSubmit(handleFormSubmit)} style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 0 }}>
 
           {/* ── Reuse Previous Meeting Panel ── */}
           {showReuse && !reuseFrom && (
             <motion.div
               initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-              style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.05), rgba(139,92,246,0.04))", border: "1.5px solid rgba(99,102,241,0.25)", borderRadius: 14, padding: "16px", overflow: "hidden" }}
+              style={{ background: "linear-gradient(135deg,rgba(99,102,241,0.05),rgba(139,92,246,0.04))", border: "1.5px solid rgba(99,102,241,0.25)", borderRadius: 12, padding: 16, overflow: "hidden", marginBottom: 20 }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                <RotateCcw size={14} style={{ color: "#6366F1" }} />
-                <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.01em" }}>Reuse a Previous Meeting</span>
-                <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>— select a past meeting to auto-fill this form</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <RotateCcw size={13} style={{ color: "#6366F1" }} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>Reuse a Previous Meeting</span>
+                <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>— auto-fill from a past meeting</span>
               </div>
               <div ref={reuseDropRef} style={{ position: "relative" }}>
                 <Search size={13} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none", zIndex: 1 }} />
@@ -600,26 +826,24 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                   onChange={(e) => { setReuseSearch(e.target.value); setReuseDropOpen(true); }}
                   onFocus={() => setReuseDropOpen(true)}
                   placeholder="Search by MEET-001, company, title…"
-                  style={{ width: "100%", boxSizing: "border-box", height: 40, paddingLeft: 36, paddingRight: 14, borderRadius: 10, border: "1px solid rgba(99,102,241,0.3)", background: "var(--surface)", fontSize: 13, color: "var(--text)", fontFamily: "inherit", outline: "none" }}
+                  style={{ width: "100%", boxSizing: "border-box", height: 40, paddingLeft: 36, paddingRight: 14, borderRadius: 9, border: "1px solid rgba(99,102,241,0.3)", background: "var(--surface)", fontSize: 13, color: "var(--text)", fontFamily: "inherit", outline: "none" }}
                 />
                 {reuseDropOpen && reuseMeetings.length > 0 && (
-                  <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid rgba(99,102,241,0.2)", borderRadius: 12, boxShadow: "0 12px 36px rgba(0,0,0,0.14)", zIndex: 9999, maxHeight: 260, overflowY: "auto" }}>
+                  <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid rgba(99,102,241,0.2)", borderRadius: 11, boxShadow: "0 12px 36px rgba(0,0,0,0.14)", zIndex: 9999, maxHeight: 260, overflowY: "auto" }}>
                     {reuseMeetings.map((src) => {
                       const code = codeMap[src.id] || "MEET-?";
-                      const sm   = STATUS_META[src.status] || STATUS_META.scheduled;
+                      const sm = STATUS_META[src.status] || STATUS_META.scheduled;
                       return (
-                        <button key={src.id} type="button"
-                          onMouseDown={(e) => { e.preventDefault(); applyReuseMeeting(src); setShowReuse(false); }}
-                          style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit", borderBottom: "1px solid var(--border)" }}
-                          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(99,102,241,0.05)"}
-                          onMouseLeave={(e) => e.currentTarget.style.background = "none"}
-                        >
-                          <span style={{ fontSize: 11, fontFamily: "monospace", fontWeight: 800, color: "#6366F1", background: "rgba(99,102,241,0.1)", padding: "2px 7px", borderRadius: 6, flexShrink: 0 }}>{code}</span>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{src.title}</div>
-                            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{src.company_name || src.customer_name || ""}{src.start_time ? ` · ${format(new Date(src.start_time), "dd MMM yyyy")}` : ""}</div>
+                        <button key={src.id} type="button" onMouseDown={(e) => { e.preventDefault(); applyReuseMeeting(src); }}
+                          style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(99,102,241,0.05)")}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = "none")}>
+                          <span style={{ fontSize: 11, fontWeight: 800, color: "#6366F1", fontFamily: "monospace", minWidth: 72 }}>{code}</span>
+                          <div style={{ flex: 1, overflow: "hidden" }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{src.title}</div>
+                            <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{src.company_name}</div>
                           </div>
-                          <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 6, background: sm.bg, color: sm.color, flexShrink: 0 }}>{sm.label}</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 99, background: sm.bg, color: sm.color }}>{sm.label}</span>
                         </button>
                       );
                     })}
@@ -627,305 +851,171 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                 )}
               </div>
               {selectedParent && (
-                <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.22)", borderRadius: 8 }}>
-                  <CheckCircle2 size={13} style={{ color: "#10B981" }} />
-                  <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>Pre-filled from <span style={{ fontFamily: "monospace", color: "#6366F1" }}>{codeMap[selectedParent.id]}</span>: {selectedParent.title}</span>
-                  <button type="button" onClick={() => { setSelectedParent(null); setInternalNotes(""); }} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 3 }}><X size={10} /> Clear</button>
+                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, background: "rgba(99,102,241,0.07)", border: "1px solid rgba(99,102,241,0.18)" }}>
+                  <CheckCircle2 size={12} style={{ color: "#6366F1", flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "#6366F1" }}>Pre-filled from {codeMap[selectedParent.id] || "MEET-?"}: {selectedParent.title}</span>
+                  <button type="button" onClick={() => setSelectedParent(null)} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 3, fontSize: 11, fontFamily: "inherit" }}>
+                    <X size={10} /> Clear
+                  </button>
                 </div>
               )}
             </motion.div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          {/* ── CRM QUICK LINK ── */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 24, height: 24, borderRadius: 7, background: "rgba(99,102,241,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Target size={12} style={{ color: "#6366F1" }} />
+              </div>
+              <span style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--text-muted)" }}>CRM Quick Link</span>
+              <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 4, background: "var(--surface-3)", color: "var(--text-muted)" }}>Optional</span>
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            </div>
+            <div ref={dropdownRef} style={{ position: "relative" }}>
+              <Search size={14} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)", color: lookupStatus === "found" ? "#10B981" : "var(--text-muted)", pointerEvents: "none", zIndex: 1 }} />
+              <input
+                value={leadCodeInput}
+                onChange={(e) => handleLeadCodeChange(e.target.value)}
+                onFocus={() => setDropdownOpen(true)}
+                placeholder="Search Lead ID / Company / Contact / Deal…"
+                style={{ width: "100%", boxSizing: "border-box", height: 44, paddingLeft: 40, paddingRight: crmEntity ? 76 : 14, borderRadius: 12, border: `1.5px solid ${lookupStatus === "found" ? "rgba(16,185,129,0.4)" : "var(--border)"}`, background: lookupStatus === "found" ? "rgba(16,185,129,0.03)" : "var(--surface-2)", fontSize: 13.5, fontWeight: 500, color: "var(--text)", fontFamily: "inherit", outline: "none", boxShadow: lookupStatus === "found" ? "0 0 0 3px rgba(16,185,129,0.12)" : "none", transition: "all 0.15s" }}
+              />
+              {lookupStatus === "found" && (
+                <>
+                  <CheckCircle2 size={14} style={{ position: "absolute", right: 56, top: "50%", transform: "translateY(-50%)", color: "#10B981", pointerEvents: "none" }} />
+                  <button type="button" onClick={clearSelection}
+                    style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", background: "rgba(107,114,128,0.1)", border: "1px solid rgba(107,114,128,0.18)", borderRadius: 7, cursor: "pointer", display: "flex", alignItems: "center", padding: "3px 7px", color: "var(--text-muted)", fontSize: 10.5, fontWeight: 700, gap: 2, fontFamily: "inherit" }}>
+                    <X size={10} /> Clear
+                  </button>
+                </>
+              )}
+              {dropdownOpen && filteredSources.length > 0 && (
+                <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid rgba(11,95,255,0.15)", borderRadius: 12, boxShadow: "0 16px 48px rgba(11,95,255,0.12),0 4px 12px rgba(0,0,0,0.08)", zIndex: 999, maxHeight: 240, overflowY: "auto" }}>
+                  <div style={{ padding: "7px 12px 4px", fontSize: 10, fontWeight: 700, color: "#0B5FFF", textTransform: "uppercase", letterSpacing: "0.1em", borderBottom: "1px solid rgba(11,95,255,0.08)" }}>
+                    {filteredSources.length} record{filteredSources.length !== 1 ? "s" : ""} found
+                  </div>
+                  {filteredSources.map((entity) => {
+                    const srcConfig = {
+                      lead:     { dot: "#6366F1", label: "LEAD",     bg: "linear-gradient(135deg,#6366F1,#8B5CF6)" },
+                      pipeline: { dot: "#8B5CF6", label: "PIPELINE", bg: "linear-gradient(135deg,#8B5CF6,#A78BFA)" },
+                      deal:     { dot: "#10B981", label: "DEAL",     bg: "linear-gradient(135deg,#10B981,#34D399)" },
+                    };
+                    const sc = srcConfig[entity._src] || srcConfig.lead;
+                    return (
+                      <button key={entity.id} type="button"
+                        onMouseDown={(e) => { e.preventDefault(); selectEntity(entity); }}
+                        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(11,95,255,0.04)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "none")}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 80 }}>
+                          <div style={{ width: 6, height: 6, borderRadius: "50%", background: sc.dot, flexShrink: 0 }} />
+                          <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 800, color: "#0B5FFF" }}>{entity.lead_code || (entity._src === "deal" ? "DEAL" : "—")}</span>
+                        </div>
+                        <div style={{ flex: 1, overflow: "hidden" }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entity.company_name || entity.title || "—"}</div>
+                          <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{[entity.contact_name, entity.email].filter(Boolean).join(" · ")}</div>
+                        </div>
+                        <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: sc.bg, color: "#fff", flexShrink: 0 }}>{sc.label}</span>
+                      </button>
+                    );
+                  })}
+                </motion.div>
+              )}
+              {dropdownOpen && leadCodeInput.trim() && filteredSources.length === 0 && (
+                <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 11, padding: "12px 14px", fontSize: 12.5, color: "var(--text-muted)", textAlign: "center", zIndex: 999 }}>
+                  No match for &ldquo;<strong style={{ color: "var(--text)" }}>{leadCodeInput}</strong>&rdquo;
+                </div>
+              )}
+            </div>
+            {crmEntity && (
+              <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 9, background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)" }}>
+                <CheckCircle2 size={13} style={{ color: "#10B981", flexShrink: 0 }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: "#059669" }}>Linked to {crmEntity._src === "deal" ? "Deal" : "Lead"}: {crmEntity.lead_code ? `${crmEntity.lead_code} — ` : ""}{crmEntity.company_name || crmEntity.title}</span>
+                <span style={{ fontSize: 10.5, color: "#10B981", marginLeft: 4 }}>Auto-filled ✓</span>
+              </div>
+            )}
+            {noPocError && (
+              <div style={{ marginTop: 8, display: "flex", alignItems: "flex-start", gap: 8, padding: "9px 12px", borderRadius: 9, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.25)" }}>
+                <AlertCircle size={13} style={{ color: "#EF4444", flexShrink: 0, marginTop: 1 }} />
+                <span style={{ fontSize: 12, color: "#DC2626", lineHeight: 1.5 }}>No Contact Person or Email found for this lead. Update the lead in the Leads module first.</span>
+              </div>
+            )}
+          </div>
 
-            {/* ── § 1: CRM Quick Link (optional) ── */}
-            <SectionHeader icon={Target} label="CRM Quick Link (Optional)" />
+          {/* ── SECTION 1 — MEETING TYPE ── */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 22, height: 22, borderRadius: 6, background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0 }}>1</div>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.01em" }}>Meeting Type</span>
+              <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>— How will this meeting take place?</span>
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+              {[
+                { key: "online",  label: "Virtual Meeting",   Icon: Video,  desc: "Google Meet, Teams, Zoom" },
+                { key: "offline", label: "In-Person Meeting", Icon: MapPin, desc: "Physical location / venue" },
+              ].map(({ key, label, Icon, desc }) => {
+                const isActive = mode === key;
+                return (
+                  <button key={key} type="button" onClick={() => setMode(key)}
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderRadius: 12, border: `2px solid ${isActive ? "var(--accent)" : "var(--border)"}`, background: isActive ? "rgba(37,99,235,0.05)" : "var(--surface-2)", cursor: "pointer", textAlign: "left", fontFamily: "inherit", transition: "all 0.15s" }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 9, background: isActive ? "rgba(37,99,235,0.12)" : "var(--surface-3)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <Icon size={16} style={{ color: isActive ? "var(--accent)" : "var(--text-muted)" }} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, color: isActive ? "var(--accent)" : "var(--text)", lineHeight: 1.3 }}>{label}</div>
+                      <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 2 }}>{desc}</div>
+                    </div>
+                    {isActive && <CheckCircle2 size={16} style={{ color: "var(--accent)", flexShrink: 0 }} />}
+                  </button>
+                );
+              })}
+            </div>
 
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label className="crm-label">
-                Search CRM Record
-                <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)", marginLeft: 6 }}>Lead ID · Company · Contact name · Email · Phone — across Pipeline, Leads &amp; Deals</span>
-              </label>
-
-              {/* ── Premium frosted glass CRM search combobox ── */}
-              <div ref={dropdownRef} style={{ position: "relative" }}>
-                {/* Glow ring when focused / found */}
-                <div style={{ position: "relative", borderRadius: 16, boxShadow: lookupStatus === "found" ? "0 0 0 3px rgba(16,185,129,0.2), 0 4px 20px rgba(16,185,129,0.12)" : lookupStatus === "searching" ? "0 0 0 3px rgba(11,95,255,0.18), 0 4px 20px rgba(11,95,255,0.1)" : "0 2px 12px rgba(11,95,255,0.08)", transition: "box-shadow 0.2s" }}>
-                  <Search size={15} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: lookupStatus === "found" ? "#10B981" : "#0B5FFF", pointerEvents: "none", zIndex: 1 }} />
-                  <input
-                    value={leadCodeInput}
-                    onChange={(e) => handleLeadCodeChange(e.target.value)}
-                    onFocus={() => setDropdownOpen(true)}
-                    placeholder="Search Lead ID / Company / Contact / Deal / Pipeline…"
-                    autoFocus={false}
-                    style={{
-                      width: "100%", boxSizing: "border-box",
-                      height: 50, paddingLeft: 42, paddingRight: crmEntity ? 80 : 16,
-                      borderRadius: 16, border: `1.5px solid ${lookupStatus === "found" ? "rgba(16,185,129,0.45)" : "rgba(11,95,255,0.2)"}`,
-                      background: lookupStatus === "found" ? "rgba(16,185,129,0.04)" : "rgba(11,95,255,0.03)",
-                      fontSize: 14, fontWeight: 500, color: "var(--text)", fontFamily: "inherit",
-                      outline: "none", transition: "all 0.2s",
-                    }}
+            {/* Platform selection — virtual only */}
+            {mode === "online" && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>Platform</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 12 }}>
+                  {[
+                    { key: "google_meet", label: "Google Meet", emoji: "📹", color: "#EA4335" },
+                    { key: "teams",       label: "MS Teams",    emoji: "🟦", color: "#6264A7" },
+                    { key: "zoom",        label: "Zoom",        emoji: "🎥", color: "#2D8CFF" },
+                    { key: "custom",      label: "Custom Link", emoji: "🔗", color: "#6366F1" },
+                  ].map(({ key, label, emoji, color }) => {
+                    const isActive = platform === key;
+                    return (
+                      <button key={key} type="button" onClick={() => setPlatform(key)}
+                        style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, padding: "10px 8px", borderRadius: 10, border: `1.5px solid ${isActive ? color : "var(--border)"}`, background: isActive ? `${color}15` : "var(--surface-2)", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
+                        <span style={{ fontSize: 20 }}>{emoji}</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: isActive ? color : "var(--text-muted)" }}>{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div>
+                  <label className="crm-label">
+                    Meeting Link
+                    {platform === "google_meet" && <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)", marginLeft: 6 }}>Auto-generated by Google Calendar</span>}
+                  </label>
+                  <input className="crm-input" {...register("meeting_link")}
+                    placeholder={platform === "google_meet" ? "https://meet.google.com/abc-defg-hij (auto-generated)" : platform === "teams" ? "https://teams.microsoft.com/l/meetup-join/..." : platform === "zoom" ? "https://zoom.us/j/123456789" : "https://..."}
                   />
-                  {lookupStatus === "found" && (
-                    <>
-                      <CheckCircle2 size={15} style={{ position: "absolute", right: 58, top: "50%", transform: "translateY(-50%)", color: "#10B981", pointerEvents: "none" }} />
-                      <button
-                        type="button" onClick={clearSelection} title="Change"
-                        style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "rgba(107,114,128,0.1)", border: "1px solid rgba(107,114,128,0.18)", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", padding: "3px 7px", color: "var(--text-muted)", fontSize: 10.5, fontWeight: 700, gap: 2, fontFamily: "inherit" }}
-                      ><X size={10} /> Clear</button>
-                    </>
+                  {watchedLink && (
+                    <a href={watchedLink} target="_blank" rel="noopener noreferrer"
+                      style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 5, fontSize: 12, color: "var(--accent)", textDecoration: "none" }}>
+                      <ExternalLink size={11} /> Preview link
+                    </a>
                   )}
                 </div>
-
-                {/* Premium dropdown */}
-                {dropdownOpen && filteredSources.length > 0 && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -6, scale: 0.98 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -4 }}
-                    transition={{ duration: 0.14 }}
-                    style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid rgba(11,95,255,0.15)", borderRadius: 14, boxShadow: "0 16px 48px rgba(11,95,255,0.14), 0 4px 12px rgba(0,0,0,0.1)", zIndex: 999, maxHeight: 240, overflowY: "auto" }}
-                  >
-                    <div style={{ padding: "8px 12px 4px", fontSize: 10, fontWeight: 700, color: "#0B5FFF", textTransform: "uppercase", letterSpacing: "0.1em", borderBottom: "1px solid rgba(11,95,255,0.08)" }}>
-                      {filteredSources.length} record{filteredSources.length !== 1 ? "s" : ""} found
-                    </div>
-                    {filteredSources.map((entity) => {
-                      const srcConfig = {
-                        lead:     { bg: "linear-gradient(135deg,#6366F1,#8B5CF6)", label: "LEAD",     dot: "#6366F1" },
-                        pipeline: { bg: "linear-gradient(135deg,#8B5CF6,#A78BFA)", label: "PIPELINE", dot: "#8B5CF6" },
-                        deal:     { bg: "linear-gradient(135deg,#10B981,#34D399)", label: "DEAL",     dot: "#10B981" },
-                      };
-                      const sc = srcConfig[entity._src] || srcConfig.lead;
-                      return (
-                        <button
-                          key={entity.id} type="button"
-                          onMouseDown={(e) => { e.preventDefault(); selectEntity(entity); }}
-                          style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: "none", border: "none", cursor: "pointer", textAlign: "left", transition: "background 0.1s", fontFamily: "inherit" }}
-                          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(11,95,255,0.05)"}
-                          onMouseLeave={(e) => e.currentTarget.style.background = "none"}
-                        >
-                          {/* Source dot + code */}
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 90 }}>
-                            <div style={{ width: 6, height: 6, borderRadius: "50%", background: sc.dot, flexShrink: 0 }} />
-                            <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 800, color: "#0B5FFF" }}>{entity.lead_code || (entity._src === "deal" ? "DEAL" : "—")}</span>
-                          </div>
-                          <div style={{ flex: 1, overflow: "hidden" }}>
-                            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entity.company_name || entity.title || "—"}</div>
-                            <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {[entity.contact_name, entity.email].filter(Boolean).join(" · ")}
-                            </div>
-                          </div>
-                          <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 6, background: sc.bg, color: "#fff", flexShrink: 0, letterSpacing: "0.06em" }}>{sc.label}</span>
-                        </button>
-                      );
-                    })}
-                    {allCrmSources.length === 0 && (
-                      <div style={{ padding: "16px", fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>No CRM records found — add leads or pipeline entries first</div>
-                    )}
-                  </motion.div>
-                )}
-                {dropdownOpen && leadCodeInput.trim() && filteredSources.length === 0 && (
-                  <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid rgba(239,68,68,0.15)", borderRadius: 14, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 999, padding: "14px 16px", fontSize: 12.5, color: "var(--text-muted)", textAlign: "center" }}>
-                    No match for &ldquo;<strong style={{ color: "var(--text)" }}>{leadCodeInput}</strong>&rdquo; — try company name, LEAD-001, or just &ldquo;1&rdquo;
-                  </div>
-                )}
-              </div>
-
-              {lookupStatus === "idle" && (
-                <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>Optional — select a CRM record to auto-fill company, contact, email and phone below.</p>
-              )}
-            </div>
-
-            {/* Linked badge */}
-            {crmEntity && (
-              <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.25)", borderRadius: 10 }}>
-                <CheckCircle2 size={15} style={{ color: "#10B981", flexShrink: 0 }} />
-                <div style={{ flex: 1 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>
-                    Linked to {crmEntity._src === "pipeline" ? "Pipeline" : crmEntity._src === "deal" ? "Deal" : "Lead"}:
-                    {crmEntity.lead_code && <span style={{ fontFamily: "monospace", marginLeft: 6, color: "var(--accent)" }}>{crmEntity.lead_code}</span>}
-                  </span>
-                  <span style={{ fontSize: 12, color: "var(--text-muted)", marginLeft: 8 }}>{crmEntity.company_name || crmEntity.title}</span>
-                </div>
-                <span style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 3 }}>
-                  <Lock size={10} /> Auto-filled
-                </span>
               </div>
             )}
 
-            {/* No POC error */}
-            {noPocError && (
-              <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 10 }}>
-                <AlertCircle size={15} style={{ color: "#EF4444", flexShrink: 0 }} />
-                <span style={{ fontSize: 12.5, color: "#EF4444", fontWeight: 600 }}>
-                  No Contact Person or Email found for this lead. Please update the lead in the Leads module before scheduling a meeting.
-                </span>
-              </div>
-            )}
-
-            {/* ── § 2: Client Details (always editable, auto-filled from CRM) ── */}
-            <SectionHeader icon={Users} label="Client Details" />
-
-            {crmEntity && (
-              <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.22)", borderRadius: 8, fontSize: 12, color: "#059669", fontWeight: 600 }}>
-                <CheckCircle2 size={13} style={{ color: "#10B981", flexShrink: 0 }} />
-                Auto-filled from CRM · {crmEntity.lead_code ? <span style={{ fontFamily: "monospace" }}>{crmEntity.lead_code}</span> : <span style={{ color: "#10B981" }}>{crmEntity._src?.toUpperCase()}</span>} — {crmEntity.company_name || crmEntity.title}
-                <button type="button" onClick={clearSelection} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "#6B7280", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 3 }}>
-                  <X size={10} /> Clear
-                </button>
-              </div>
-            )}
-
-            <div>
-              <label className="crm-label">Company Name <span style={{ color: "#EF4444" }}>*</span></label>
-              <input className="crm-input" {...register("company_name", { required: "Company name is required" })} placeholder="Acme Corporation" />
-              {errors.company_name && <span style={{ color: "var(--red)", fontSize: 11.5 }}>{errors.company_name.message}</span>}
-            </div>
-            <div>
-              <label className="crm-label">Contact Person</label>
-              <input className="crm-input" {...register("customer_name")} placeholder="John Doe" />
-            </div>
-            <div>
-              <label className="crm-label">Email <span style={{ fontSize: 10.5, fontWeight: 400, color: "var(--text-muted)" }}>(for invite)</span></label>
-              <input className="crm-input" type="email" {...register("customer_email")} placeholder="john@company.com" />
-            </div>
-            <div>
-              <label className="crm-label">Phone</label>
-              <input className="crm-input" {...register("customer_phone")} placeholder="+91 98765 43210" />
-            </div>
-
-            {/* External attendees */}
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label className="crm-label">
-                Other Attendees
-                <span style={{ fontWeight: 400, color: "var(--text-muted)", marginLeft: 6 }}>Clients, vendors, partners — comma-separated emails (each gets an invite)</span>
-              </label>
-              <input className="crm-input" value={externalEmails} onChange={(e) => setExternalEmails(e.target.value)} placeholder="client@company.com, partner@firm.com, vendor@co.com..." />
-            </div>
-
-            {/* ── § 3: Meeting Details ── */}
-            <SectionHeader icon={CalendarCheck} label="Meeting Details" />
-
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label className="crm-label">Meeting Title <span style={{ color: "#EF4444" }}>*</span></label>
-              <input className="crm-input" {...register("title", { required: "Title is required" })} placeholder={crmEntity ? `Product Demo — ${crmEntity.company_name}` : "Meeting title…"} />
-              {errors.title && <span style={{ color: "var(--red)", fontSize: 11.5 }}>{errors.title.message}</span>}
-            </div>
-
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label className="crm-label" style={{ marginBottom: 6 }}>Meeting Purpose / Type</label>
-              <select
-                className="crm-input"
-                value={purpose}
-                onChange={(e) => { setPurpose(e.target.value); if (e.target.value !== "others") setPurposeOther(""); }}
-                style={{ height: 36 }}
-              >
-                <option value="">— Select purpose —</option>
-                {MEETING_PURPOSES.map((p) => (
-                  <option key={p.key} value={p.key}>{p.label}</option>
-                ))}
-              </select>
-              {purpose === "others" && (
-                <input
-                  className="crm-input"
-                  value={purposeOther}
-                  onChange={(e) => setPurposeOther(e.target.value)}
-                  placeholder="Please specify the meeting purpose..."
-                  style={{ marginTop: 8 }}
-                />
-              )}
-              {purpose && purpose !== "others" && (() => {
-                const p = MEETING_PURPOSES.find((x) => x.key === purpose);
-                if (!p) return null;
-                return <span style={{ display: "inline-block", marginTop: 6, fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: p.bg, color: p.color }}>{p.label}</span>;
-              })()}
-            </div>
-
-            {/* ── § 4: Meeting Mode ── */}
-            <SectionHeader icon={Globe} label="Meeting Mode" />
-
-            {/* Mode toggle: Online / In-Person */}
-            <div style={{ gridColumn: "1 / -1" }}>
-              <div style={{ display: "flex", gap: 0, background: "var(--surface-2)", borderRadius: 9, padding: 3, width: "fit-content", border: "1px solid var(--border)" }}>
-                {[{ key: "online", label: "Online Meeting", icon: Video }, { key: "offline", label: "In-Person Meeting", icon: MapPin }].map((m) => {
-                  const Icon = m.icon;
-                  return (
-                    <button key={m.key} type="button" onClick={() => { setMode(m.key); if (m.key === "online" && !["google_meet","teams","zoom","custom"].includes(platform)) setPlatform("google_meet"); }}
-                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", borderRadius: 7, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, background: mode === m.key ? "var(--accent)" : "transparent", color: mode === m.key ? "#fff" : "var(--text-muted)", transition: "all 0.15s" }}>
-                      <Icon size={13} /> {m.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Online: platform selector */}
-            {mode === "online" && (
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label className="crm-label" style={{ marginBottom: 8, display: "block" }}>Meeting Platform</label>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 14 }}>
-                  {[
-                    { key: "google_meet", label: "Google Meet",      emoji: "📹", color: "#EA4335" },
-                    { key: "teams",       label: "Microsoft Teams",  emoji: "🟦", color: "#6264A7" },
-                    { key: "zoom",        label: "Zoom",             emoji: "🎥", color: "#2D8CFF" },
-                    { key: "custom",      label: "Custom Link",      emoji: "🔗", color: "#6366F1" },
-                  ].map((p) => (
-                    <button
-                      key={p.key}
-                      type="button"
-                      onClick={() => setPlatform(p.key)}
-                      style={{ padding: "10px 8px", borderRadius: 9, border: `2px solid ${platform === p.key ? p.color : "var(--border)"}`, background: platform === p.key ? `${p.color}12` : "var(--surface-2)", cursor: "pointer", fontFamily: "inherit", textAlign: "center", transition: "all 0.15s" }}
-                    >
-                      <div style={{ fontSize: 20, marginBottom: 4 }}>{p.emoji}</div>
-                      <div style={{ fontSize: 11.5, fontWeight: 700, color: platform === p.key ? p.color : "var(--text-2)" }}>{p.label}</div>
-                    </button>
-                  ))}
-                </div>
-                <label className="crm-label">
-                  {platform === "google_meet" ? "Google Meet Link" : platform === "teams" ? "Microsoft Teams URL" : platform === "zoom" ? "Zoom Meeting URL" : "Custom Meeting URL"}
-                  {platform === "google_meet" && <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 400, marginLeft: 6 }}>(optional — Google Calendar generates it automatically)</span>}
-                </label>
-                <input
-                  className="crm-input"
-                  {...register("meeting_link")}
-                  placeholder={
-                    platform === "google_meet" ? "https://meet.google.com/abc-defg-hij" :
-                    platform === "teams"       ? "https://teams.microsoft.com/l/meetup-join/..." :
-                    platform === "zoom"        ? "https://zoom.us/j/123456789" :
-                    "https://..."
-                  }
-                />
-                {platform === "google_meet" && (
-                  <p style={{ margin: "5px 0 0", fontSize: 11.5, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
-                    <Video size={11} /> Leave blank — Google Calendar will auto-generate a Meet link when you save the event.
-                  </p>
-                )}
-                {watchLink && <a href={watchLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11.5, color: "var(--accent)", display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}><ExternalLink size={11} /> Preview link</a>}
-              </div>
-            )}
-
-            {/* In-Person: location with Maps autocomplete */}
+            {/* Location — in-person only */}
             {mode === "offline" && (
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label className="crm-label">Location / Venue</label>
-                <input
-                  id="meeting-location-input"
-                  className="crm-input"
-                  {...register("location")}
-                  placeholder="Search address or enter venue name…"
-                  onChange={(e) => { if (!e.target.value) { setLocationLat(null); setLocationLng(null); } }}
-                />
-                {locationLat && locationLng && (
-                  <a
-                    href={`https://maps.google.com/?q=${locationLat},${locationLng}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ fontSize: 11.5, color: "#10B981", display: "flex", alignItems: "center", gap: 4, marginTop: 5, fontWeight: 600 }}
-                  >
-                    <MapPin size={11} /> Location pinned on Google Maps ↗
-                  </a>
-                )}
+              <div>
+                <label className="crm-label">Location / Venue *</label>
                 {import.meta.env.VITE_GOOGLE_MAPS_API_KEY && (
                   <GoogleMapsAutocomplete
                     inputId="meeting-location-input"
@@ -937,191 +1027,381 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                     }}
                   />
                 )}
+                <input id="meeting-location-input" className="crm-input"
+                  {...register("location")}
+                  placeholder="Search address or enter venue name…"
+                />
+                {locationLat && locationLng && (
+                  <a href={`https://maps.google.com/?q=${locationLat},${locationLng}`} target="_blank" rel="noopener noreferrer"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 5, fontSize: 12, color: "#10B981", textDecoration: "none" }}>
+                    <MapPin size={11} /> Location pinned on Google Maps ↗
+                  </a>
+                )}
               </div>
             )}
+          </div>
 
-            {/* ── § 5: Agenda ── */}
-            <SectionHeader icon={FileText} label="Agenda" />
-
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label className="crm-label">
-                Meeting Agenda <span style={{ color: "#EF4444" }}>*</span>
-                <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)", marginLeft: 6 }}>Sent verbatim in the client email invite</span>
-              </label>
-              <textarea className="crm-input" {...register("agenda", { required: "Agenda is required" })} rows={3} placeholder="1. Introduction&#10;2. Product demonstration&#10;3. Pricing discussion&#10;4. Q&A" style={{ resize: "vertical" }} />
-              {errors.agenda && <span style={{ color: "var(--red)", fontSize: 11.5 }}>{errors.agenda.message}</span>}
+          {/* ── SECTION 2 — CLIENT DETAILS ── */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 22, height: 22, borderRadius: 6, background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0 }}>2</div>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.01em" }}>Client Details</span>
+              <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>— Customer and company information</span>
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
             </div>
-
-            {/* ── § 6: Schedule ── */}
-            <SectionHeader icon={Clock} label="Schedule" />
-
-            {/* All Day toggle */}
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "8px 12px", background: allDay ? "rgba(99,102,241,0.06)" : "var(--surface-2)", borderRadius: 8, border: `1px solid ${allDay ? "rgba(99,102,241,0.3)" : "var(--border)"}`, width: "fit-content", transition: "all 0.15s" }}>
-                <input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} style={{ accentColor: "#6366F1", width: 14, height: 14 }} />
-                <span style={{ fontSize: 13, fontWeight: 600, color: allDay ? "#6366F1" : "var(--text-2)" }}>☐ All Day Event</span>
-              </label>
-            </div>
-
-            <div>
-              <label className="crm-label">Date <span style={{ color: "#EF4444" }}>*</span></label>
-              <input
-                className="crm-input"
-                type="date"
-                min={todayStr}
-                value={meetingDate}
-                onChange={(e) => setMeetingDate(e.target.value)}
-              />
-              {!meetingDate && <span style={{ color: "var(--red)", fontSize: 11.5 }}>Date is required</span>}
-            </div>
-
-            {!allDay && (
-              <div>
-                <label className="crm-label">Start Time <span style={{ color: "#EF4444" }}>*</span></label>
-                <select
-                  className="crm-input"
-                  value={meetingSlot}
-                  onChange={(e) => setMeetingSlot(e.target.value)}
-                  style={{ color: meetingSlot ? "var(--text)" : "var(--text-muted)" }}
-                >
-                  <option value="">— Pick a time —</option>
-                  {TIME_SLOTS.map((s) => (
-                    <option key={s.value} value={s.value}>{s.label}</option>
-                  ))}
-                </select>
-                {!meetingSlot && <span style={{ color: "var(--red)", fontSize: 11.5 }}>Time is required</span>}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label className="crm-label">Company Name *</label>
+                <input className="crm-input" {...register("company_name", { required: "Company name is required" })} placeholder="Acme Corporation" />
+                {errors.company_name && <div style={{ fontSize: 11.5, color: "#EF4444", marginTop: 4 }}>{errors.company_name.message}</div>}
               </div>
-            )}
-
-            {!allDay && (
               <div>
-                <label className="crm-label">Duration</label>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
-                  {DURATIONS.map((d) => (
-                    <button key={d.value} type="button" onClick={() => setDuration(d.value)}
-                      style={{ padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${duration === d.value ? "var(--accent)" : "var(--border)"}`, background: duration === d.value ? "rgba(99,102,241,0.1)" : "transparent", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, color: duration === d.value ? "var(--accent)" : "var(--text-muted)", transition: "all 0.14s" }}>
-                      {d.label}
+                <label className="crm-label">Contact Person</label>
+                <input className="crm-input" {...register("customer_name")} placeholder="John Doe" />
+              </div>
+              <div>
+                <label className="crm-label">Email <span style={{ fontSize: 10.5, color: "var(--text-muted)", fontWeight: 400 }}>(calendar invite)</span></label>
+                <input className="crm-input" type="email" {...register("customer_email")} placeholder="john@company.com" />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label className="crm-label">Phone</label>
+                <input className="crm-input" {...register("customer_phone")} placeholder="+91 98765 43210" />
+              </div>
+            </div>
+          </div>
+
+          {/* ── SECTION 3 — MEETING DETAILS ── */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 22, height: 22, borderRadius: 6, background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0 }}>3</div>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.01em" }}>Meeting Details</span>
+              <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>— Title, purpose and agenda</span>
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <label className="crm-label">Meeting Title *</label>
+                <input className="crm-input"
+                  {...register("title", { required: "Title is required" })}
+                  placeholder={crmEntity ? `Meeting — ${crmEntity.company_name || crmEntity.title || ""}` : "e.g. Product Demo — Acme Corp"}
+                />
+                {errors.title && <div style={{ fontSize: 11.5, color: "#EF4444", marginTop: 4 }}>{errors.title.message}</div>}
+              </div>
+              <div>
+                <label className="crm-label">Priority</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {Object.entries(PRIORITY_META).map(([key, { label, color, bg }]) => (
+                    <button key={key} type="button" onClick={() => setPriority(key)}
+                      style={{ flex: 1, padding: "8px 0", borderRadius: 9, border: `1.5px solid ${priority === key ? color : "var(--border)"}`, background: priority === key ? bg : "var(--surface-2)", color: priority === key ? color : "var(--text-muted)", fontSize: 12, fontWeight: priority === key ? 700 : 500, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, transition: "all 0.12s" }}>
+                      <Flag size={11} /> {label}
                     </button>
                   ))}
                 </div>
               </div>
-            )}
-
-            {!allDay && (
               <div>
-                <label className="crm-label">Timezone</label>
-                <select className="crm-input" {...register("timezone")}>
-                  {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                <label className="crm-label">Meeting Purpose</label>
+                <select className="crm-input" value={purpose} onChange={(e) => { setPurpose(e.target.value); setPurposeOther(""); }} style={{ appearance: "auto" }}>
+                  <option value="">— Select purpose —</option>
+                  {MEETING_PURPOSES.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
                 </select>
+                {purpose && purpose !== "others" && (() => {
+                  const mp = MEETING_PURPOSES.find((p) => p.key === purpose);
+                  return mp ? <span style={{ display: "inline-flex", alignItems: "center", marginTop: 6, fontSize: 11.5, fontWeight: 700, padding: "2px 10px", borderRadius: 99, background: mp.bg, color: mp.color }}>{mp.label}</span> : null;
+                })()}
+                {purpose === "others" && (
+                  <input className="crm-input" value={purposeOther} onChange={(e) => setPurposeOther(e.target.value)} placeholder="Please specify the meeting purpose…" style={{ marginTop: 8 }} />
+                )}
               </div>
-            )}
-
-            <div>
-              <label className="crm-label">Status</label>
-              <select className="crm-input" {...register("status")}>
-                <option value="scheduled">Scheduled</option>
-                <option value="rescheduled">Rescheduled</option>
-                <option value="completed">Completed</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
+              <div>
+                <label className="crm-label">
+                  Agenda *
+                  <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)", marginLeft: 6 }}>Included verbatim in calendar invite</span>
+                </label>
+                <textarea className="crm-input" rows={3}
+                  {...register("agenda", { required: "Agenda is required" })}
+                  placeholder={"1. Introduction\n2. Product walkthrough\n3. Pricing discussion\n4. Q&A"}
+                  style={{ resize: "vertical" }}
+                />
+                {errors.agenda && <div style={{ fontSize: 11.5, color: "#EF4444", marginTop: 4 }}>{errors.agenda.message}</div>}
+              </div>
             </div>
+          </div>
 
-            {/* ── § 7: Internal Team ── */}
-            <SectionHeader icon={Briefcase} label="Internal Team Attendees" />
+          {/* ── SECTION 4 — DATE & TIME ── */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 22, height: 22, borderRadius: 6, background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0 }}>4</div>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.01em" }}>Date & Time</span>
+              <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>— Schedule the meeting slot</span>
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", userSelect: "none" }}>
+                <div onClick={() => setAllDay((v) => !v)}
+                  style={{ width: 40, height: 22, borderRadius: 99, background: allDay ? "var(--accent)" : "var(--border)", transition: "background 0.15s", position: "relative", cursor: "pointer", flexShrink: 0 }}>
+                  <div style={{ position: "absolute", top: 3, left: allDay ? 21 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.15s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-2)" }}>All Day Event</span>
+              </label>
 
-            <div style={{ gridColumn: "1 / -1" }}>
-              {/* Selected chips */}
-              {attendeeIds.length > 0 && (
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                  {attendeeIds.map((id) => {
-                    const member = teamMembers.find((tm) => tm.id === id);
-                    if (!member) return null;
-                    return (
-                      <div key={id} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 6px 3px 10px", borderRadius: 99, background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.3)", fontSize: 12, fontWeight: 600, color: "var(--accent)" }}>
-                        {member.full_name}
-                        <button type="button" onClick={() => toggleAttendee(id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--accent)", display: "flex", alignItems: "center", padding: "0 2px" }}>
-                          <X size={11} />
+              <div>
+                <label className="crm-label">Meeting Date *</label>
+                <input className="crm-input" type="date" value={meetingDate} min={todayStr} onChange={(e) => setMeetingDate(e.target.value)} />
+              </div>
+
+              {!allDay && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div>
+                    <label className="crm-label">Start Time *</label>
+                    <select className="crm-input" value={meetingSlot} onChange={(e) => setMeetingSlot(e.target.value)} style={{ appearance: "auto" }}>
+                      <option value="">— Pick a time —</option>
+                      {TIME_SLOTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="crm-label">Duration</label>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6 }}>
+                      {DURATIONS.map(({ value, label }) => (
+                        <button key={value} type="button" onClick={() => setDuration(value)}
+                          style={{ padding: "7px 4px", borderRadius: 8, border: `1.5px solid ${duration === value ? "var(--accent)" : "var(--border)"}`, background: duration === value ? "rgba(37,99,235,0.08)" : "var(--surface-2)", color: duration === value ? "var(--accent)" : "var(--text-muted)", fontSize: 11.5, fontWeight: duration === value ? 700 : 500, cursor: "pointer", fontFamily: "inherit", transition: "all 0.12s" }}>
+                          {label}
                         </button>
-                      </div>
-                    );
-                  })}
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
-              {/* Searchable dropdown */}
-              <div ref={teamDropRef} style={{ position: "relative" }}>
-                <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none", zIndex: 1 }} />
-                <input
-                  className="crm-input"
-                  value={teamSearch}
-                  onChange={(e) => { setTeamSearch(e.target.value); setTeamDropOpen(true); }}
-                  onFocus={() => setTeamDropOpen(true)}
-                  placeholder={attendeeIds.length ? "Add more team members…" : "Search team members to add…"}
-                  style={{ paddingLeft: 32 }}
+
+              {!allDay && meetingSlot && (
+                <div style={{ padding: "10px 14px", borderRadius: 10, background: "rgba(37,99,235,0.05)", border: "1px solid rgba(37,99,235,0.15)", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <Clock size={12} style={{ color: "var(--accent)" }} />
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)" }}>Start: <strong style={{ color: "var(--text)" }}>{TIME_SLOTS.find((s) => s.value === meetingSlot)?.label}</strong></span>
+                  </div>
+                  {endTimeLabel && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <Clock size={12} style={{ color: "#10B981" }} />
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)" }}>End: <strong style={{ color: "var(--text)" }}>{endTimeLabel}</strong></span>
+                    </div>
+                  )}
+                  <span style={{ fontSize: 12, fontWeight: 700, padding: "2px 9px", borderRadius: 99, background: "rgba(37,99,235,0.1)", color: "var(--accent)" }}>{durationLabel}</span>
+                </div>
+              )}
+
+              {conflictMeetings.length > 0 && (
+                <div style={{ padding: "10px 14px", borderRadius: 10, background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.25)", display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <AlertCircle size={14} style={{ color: "#EF4444", flexShrink: 0, marginTop: 1 }} />
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#EF4444", marginBottom: 3 }}>
+                      Scheduling Conflict ({conflictMeetings.length})
+                    </div>
+                    {conflictMeetings.slice(0, 2).map((mt) => (
+                      <div key={mt.id} style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+                        {codeMap[mt.id] || "MEET-?"}: {mt.title} ({fmtDate(mt.start_time)})
+                      </div>
+                    ))}
+                    {conflictMeetings.length > 2 && (
+                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>+{conflictMeetings.length - 2} more conflicts</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label className="crm-label">Timezone</label>
+                  <select className="crm-input" {...register("timezone")} style={{ appearance: "auto" }}>
+                    {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="crm-label">Status</label>
+                  <select className="crm-input" {...register("status")} style={{ appearance: "auto" }}>
+                    {Object.entries(STATUS_META).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── SECTION 5 — ATTENDEES ── */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 22, height: 22, borderRadius: 6, background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0 }}>5</div>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.01em" }}>Attendees</span>
+              <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>— Internal team and external participants</span>
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div>
+                <label className="crm-label">
+                  External Participants
+                  <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)", marginLeft: 6 }}>Each gets a calendar invite</span>
+                </label>
+                <textarea className="crm-input" rows={2}
+                  value={externalEmails}
+                  onChange={(e) => setExternalEmails(e.target.value)}
+                  placeholder="client@company.com, partner@firm.com, vendor@co.com…"
+                  style={{ resize: "vertical" }}
                 />
-                {teamDropOpen && (
-                  <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.14)", zIndex: 999, maxHeight: 200, overflowY: "auto" }}>
-                    {teamMembers.filter((tm) => !teamSearch.trim() || tm.full_name.toLowerCase().includes(teamSearch.toLowerCase())).length === 0 ? (
-                      <div style={{ padding: "12px 16px", fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>No match found</div>
-                    ) : teamMembers
-                      .filter((tm) => !teamSearch.trim() || tm.full_name.toLowerCase().includes(teamSearch.toLowerCase()))
-                      .map((tm) => {
-                        const selected = attendeeIds.includes(tm.id);
-                        return (
-                          <button key={tm.id} type="button"
-                            onMouseDown={(e) => { e.preventDefault(); toggleAttendee(tm.id); setTeamSearch(""); setTeamDropOpen(false); }}
-                            style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: selected ? "rgba(99,102,241,0.06)" : "none", border: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
-                            onMouseEnter={(e) => e.currentTarget.style.background = selected ? "rgba(99,102,241,0.1)" : "var(--surface-2)"}
-                            onMouseLeave={(e) => e.currentTarget.style.background = selected ? "rgba(99,102,241,0.06)" : "none"}
-                          >
-                            <div style={{ width: 26, height: 26, borderRadius: "50%", background: "linear-gradient(135deg,#6366F1,#8B5CF6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "#fff", flexShrink: 0 }}>
-                              {tm.full_name?.charAt(0).toUpperCase() || "?"}
-                            </div>
-                            <div style={{ flex: 1, overflow: "hidden" }}>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tm.full_name}</div>
-                              {tm.email && <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tm.email}</div>}
-                            </div>
-                            {selected && <CheckCircle2 size={13} style={{ color: "var(--accent)", flexShrink: 0 }} />}
-                          </button>
-                        );
-                      })
-                    }
+                {externalEmailsList.length > 0 && (
+                  <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    {externalEmailsList.map((email, i) => (
+                      <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 99, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.2)", fontSize: 11.5, fontWeight: 600, color: "var(--accent)" }}>
+                        <AtSign size={10} /> {email}
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>
+              <div>
+                <label className="crm-label">Internal Participants</label>
+                {attendeeIds.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                    {attendeeIds.map((id) => {
+                      const tm = teamMembers.find((m) => m.id === id);
+                      return tm ? (
+                        <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px 4px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", fontSize: 12, fontWeight: 600, color: "#6366F1" }}>
+                          <span style={{ width: 18, height: 18, borderRadius: "50%", background: "#6366F1", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                            {tm.full_name.charAt(0).toUpperCase()}
+                          </span>
+                          {tm.full_name}
+                          <button type="button" onClick={() => toggleAttendee(id)}
+                            style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#6366F1", display: "flex", alignItems: "center", opacity: 0.6, lineHeight: 1 }}>
+                            <X size={11} />
+                          </button>
+                        </span>
+                      ) : null;
+                    })}
+                  </div>
+                )}
+                <div ref={teamDropRef} style={{ position: "relative" }}>
+                  <Search size={12} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none", zIndex: 1 }} />
+                  <input
+                    value={teamSearch}
+                    onChange={(e) => { setTeamSearch(e.target.value); setTeamDropOpen(true); }}
+                    onFocus={() => setTeamDropOpen(true)}
+                    placeholder={attendeeIds.length ? "Add more team members…" : "Search team members to add…"}
+                    style={{ width: "100%", boxSizing: "border-box", height: 38, paddingLeft: 30, paddingRight: 14, borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", fontSize: 12.5, color: "var(--text)", fontFamily: "inherit", outline: "none" }}
+                  />
+                  {teamDropOpen && teamMembers.filter((tm) => !teamSearch || tm.full_name.toLowerCase().includes(teamSearch.toLowerCase())).length > 0 && (
+                    <div style={{ position: "absolute", top: "calc(100% + 5px)", left: 0, right: 0, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, boxShadow: "0 8px 28px rgba(0,0,0,0.12)", zIndex: 999, maxHeight: 200, overflowY: "auto" }}>
+                      {teamMembers
+                        .filter((tm) => !teamSearch || tm.full_name.toLowerCase().includes(teamSearch.toLowerCase()))
+                        .map((tm) => {
+                          const selected = attendeeIds.includes(tm.id);
+                          return (
+                            <button key={tm.id} type="button"
+                              onMouseDown={(e) => { e.preventDefault(); toggleAttendee(tm.id); setTeamSearch(""); setTeamDropOpen(false); }}
+                              style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: selected ? "rgba(99,102,241,0.05)" : "none", border: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
+                              onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "rgba(0,0,0,0.03)"; }}
+                              onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = "none"; }}>
+                              <div style={{ width: 28, height: 28, borderRadius: "50%", background: selected ? "#6366F1" : "var(--surface-3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: selected ? "#fff" : "var(--text-muted)", flexShrink: 0 }}>
+                                {tm.full_name.charAt(0).toUpperCase()}
+                              </div>
+                              <div style={{ flex: 1, overflow: "hidden" }}>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tm.full_name}</div>
+                                {tm.email && <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tm.email}</div>}
+                              </div>
+                              {selected && <CheckCircle2 size={13} style={{ color: "var(--accent)", flexShrink: 0 }} />}
+                            </button>
+                          );
+                        })
+                      }
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-
-            {/* ── § 8: Internal Only ── */}
-            <SectionHeader icon={Lock} label="Internal Only — Not Sent to Client" />
-
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label className="crm-label" style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                Internal Notes / Remarks
-                <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: "rgba(245,158,11,0.12)", color: "#B45309", letterSpacing: "0.05em" }}>INTERNAL</span>
-                <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)", marginLeft: 4 }}>Never shared with client</span>
-              </label>
-              <textarea className="crm-input" rows={2} value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Client context, objections, key talking points, pre-meeting briefing..." style={{ resize: "vertical", background: "rgba(245,158,11,0.03)", borderColor: internalNotes ? "rgba(245,158,11,0.35)" : undefined }} />
-            </div>
-
           </div>
 
-          {/* Info banner */}
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 16px", background: "linear-gradient(135deg,rgba(16,185,129,0.06),rgba(16,185,129,0.03))", border: "1px solid rgba(16,185,129,0.22)", borderRadius: 12 }}>
-            <CheckCircle2 size={14} style={{ color: "#10B981", flexShrink: 0, marginTop: 2 }} />
-            <span style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.55 }}>
-              A <strong>branded Ccentrik email with an iCalendar invite</strong> is sent automatically. The event appears in the client's Google Calendar, Outlook, or Apple Calendar — no redirect or manual steps needed. Cancellations are also removed from all calendars automatically.
-            </span>
+          {/* ── SECTION 6 — CALENDAR SETTINGS ── */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 22, height: 22, borderRadius: 6, background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0 }}>6</div>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.01em" }}>Calendar Settings</span>
+              <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>— Invite and notification preferences</span>
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {[
+                { label: "Send Calendar Invite",    desc: "iCal invite emailed to all attendees",  Icon: CalendarCheck },
+                { label: "Block Calendar Slot",     desc: "Event added to attendee calendars",     Icon: Calendar      },
+                { label: "Notify All Participants", desc: "Branded Ccentrik invite email sent",    Icon: Mail          },
+              ].map(({ label, desc, Icon }) => (
+                <div key={label} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, background: "rgba(16,185,129,0.04)", border: "1px solid rgba(16,185,129,0.18)" }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: "rgba(16,185,129,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Icon size={14} style={{ color: "#10B981" }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{label}</div>
+                    <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{desc}</div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 99, background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.25)" }}>
+                    <CheckCircle2 size={11} style={{ color: "#10B981" }} />
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#059669" }}>Always On</span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
-          {/* Footer */}
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", paddingTop: 4 }}>
-            <button type="button" className="btn-secondary" onClick={onClose} style={{ height: 42, padding: "0 20px", borderRadius: 12 }}>Cancel</button>
+          {/* ── SECTION 7 — INTERNAL NOTES ── */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 22, height: 22, borderRadius: 6, background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0 }}>7</div>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.01em" }}>Internal Notes</span>
+              <span style={{ fontSize: 11, fontWeight: 600, padding: "1px 7px", borderRadius: 4, background: "rgba(245,158,11,0.1)", color: "#B45309", marginLeft: 4 }}>INTERNAL</span>
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            </div>
+            <textarea className="crm-input" rows={2}
+              value={internalNotes}
+              onChange={(e) => setInternalNotes(e.target.value)}
+              placeholder="Client context, objections, key talking points, pre-meeting briefing…"
+              style={{ resize: "vertical", background: internalNotes ? "rgba(245,158,11,0.02)" : undefined, borderColor: internalNotes ? "rgba(245,158,11,0.3)" : undefined }}
+            />
+            <div style={{ marginTop: 5, fontSize: 11.5, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
+              <Lock size={10} style={{ color: "var(--text-muted)" }} />
+              Never shared with client or included in calendar invites
+            </div>
+          </div>
+
+          {/* ── SECTION 8 — REVIEW ── */}
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 22, height: 22, borderRadius: 6, background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0 }}>8</div>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.01em" }}>Review Before Scheduling</span>
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              {[
+                { label: "Meeting Title", value: watchedTitle || "—" },
+                { label: "Company",       value: watchedCompany || "—" },
+                { label: "Date",          value: meetingDate ? new Date(meetingDate + "T12:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" }) : "—" },
+                { label: "Time",          value: allDay ? "All Day" : meetingSlot ? `${TIME_SLOTS.find((s) => s.value === meetingSlot)?.label || ""}${endTimeLabel ? ` → ${endTimeLabel}` : ""}` : "—" },
+                { label: "Duration",      value: allDay ? "All Day" : durationLabel },
+                { label: "Type",          value: mode === "online" ? `Virtual — ${({ google_meet: "Google Meet", teams: "MS Teams", zoom: "Zoom", custom: "Custom" })[platform] || platform}` : "In-Person Meeting" },
+                { label: mode === "online" ? "Meeting Link" : "Location", value: mode === "online" ? (watchedLink || "Auto-generated") : (watchedLocation || "—") },
+                { label: "Attendees",     value: `${[watchedEmail, ...externalEmailsList].filter(Boolean).length + attendeeIds.length} participant(s)` },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ padding: "10px 12px", borderRadius: 9, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>{label}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", wordBreak: "break-word" }}>{value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Footer ── */}
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", paddingTop: 8 }}>
+            <button type="button" className="btn-secondary" onClick={onClose} style={{ height: 44, padding: "0 22px", borderRadius: 12 }}>Cancel</button>
             <motion.button
               type="submit"
               disabled={isSubmitting}
               whileHover={!isSubmitting ? { scale: 1.02 } : {}}
-              whileTap={!isSubmitting ? { scale: 0.98 } : {}}
+              whileTap={!isSubmitting ? { scale: 0.97 } : {}}
               className="btn-primary"
-              style={{ height: 42, padding: "0 24px", borderRadius: 12, fontSize: 13.5, opacity: isSubmitting ? 0.6 : 1, cursor: isSubmitting ? "not-allowed" : "pointer" }}
+              style={{ height: 44, padding: "0 28px", borderRadius: 12, fontSize: 14, fontWeight: 700, opacity: isSubmitting ? 0.65 : 1, cursor: isSubmitting ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 8 }}
             >
               {isSubmitting ? (
                 <><RefreshCw size={14} style={{ animation: "spin 1s linear infinite" }} /> Scheduling…</>
@@ -1135,6 +1415,198 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
         </form>
       </motion.div>
     </div>
+  );
+}
+
+// ─── Meeting Detail Panel ─────────────────────────────────────────────────────
+
+function MeetingDetailPanel({ meeting, codeMap, canDelete, onClose, onEdit, onComplete, onDelete, onFollowUp }) {
+  if (!meeting) return null;
+
+  const sm        = STATUS_META[meeting.status] || STATUS_META.scheduled;
+  const isOverdue = meeting.status === "scheduled" && meeting.start_time && isPast(new Date(meeting.start_time));
+  const isOnline  = meeting.mode === "online" || meeting.meeting_type !== "in_person";
+  const fmtDT     = (d) => { try { return format(new Date(d), "EEE, MMM d, yyyy"); } catch { return "—"; } };
+  const fmtTime   = (d) => { try { return format(new Date(d), "h:mm a"); } catch { return null; } };
+  const platformLabel = { google_meet: "Google Meet", teams: "MS Teams", zoom: "Zoom", custom: "Custom Link" };
+
+  return (
+    <motion.div
+      initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
+      transition={{ type: "spring", damping: 28, stiffness: 260 }}
+      style={{ position: "fixed", right: 0, top: 0, bottom: 0, width: 420, maxWidth: "95vw", background: "var(--surface)", borderLeft: "1px solid var(--border)", boxShadow: "-6px 0 32px rgba(0,0,0,0.12)", zIndex: 40, display: "flex", flexDirection: "column" }}
+    >
+      {/* Header */}
+      <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 7 }}>
+              <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 800, color: "#6366F1", background: "rgba(99,102,241,0.1)", padding: "2px 7px", borderRadius: 6, border: "1px solid rgba(99,102,241,0.18)" }}>
+                {codeMap[meeting.id] || "—"}
+              </span>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: sm.bg, color: sm.color }}>{sm.label}</span>
+              {isOverdue && <span style={{ fontSize: 10, fontWeight: 700, color: "#EF4444", background: "rgba(239,68,68,0.08)", padding: "2px 6px", borderRadius: 99 }}>Overdue</span>}
+              {meeting.priority && <PriorityBadge priority={meeting.priority} />}
+            </div>
+            <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: "var(--text)", lineHeight: 1.3 }}>{meeting.title}</h2>
+          </div>
+          <button onClick={onClose} className="btn-ghost" style={{ padding: 4, flexShrink: 0 }}><X size={18} /></button>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+
+        {/* Date & Time */}
+        <div style={{ background: "var(--surface-2)", borderRadius: 12, padding: "13px 16px", marginBottom: 12, border: "1px solid var(--border)", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Date</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{fmtDT(meeting.start_time)}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Time (IST)</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>
+              {fmtTime(meeting.start_time) || "—"}{meeting.end_time ? ` – ${fmtTime(meeting.end_time)}` : ""}
+            </div>
+          </div>
+        </div>
+
+        {/* Mode + Link/Location */}
+        <div style={{ background: "var(--surface-2)", borderRadius: 12, padding: "13px 16px", marginBottom: 12, border: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: isOnline && meeting.meeting_link ? 8 : 0 }}>
+            {isOnline
+              ? <><Video size={13} style={{ color: "#3B82F6" }} /><span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>Online Meeting</span><span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 4 }}>— {platformLabel[meeting.meeting_type] || meeting.meeting_type || ""}</span></>
+              : <><MapPin size={13} style={{ color: "#10B981" }} /><span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>In-Person</span></>
+            }
+          </div>
+          {isOnline && meeting.meeting_link && (
+            <a href={meeting.meeting_link} target="_blank" rel="noopener noreferrer"
+              style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--accent)", textDecoration: "none", background: "rgba(99,102,241,0.06)", padding: "7px 10px", borderRadius: 8, border: "1px solid rgba(99,102,241,0.15)", wordBreak: "break-all" }}>
+              <ExternalLink size={11} style={{ flexShrink: 0 }} /> {meeting.meeting_link}
+            </a>
+          )}
+          {!isOnline && meeting.location && (
+            <div style={{ fontSize: 12, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 5, marginTop: 6 }}>
+              <MapPin size={11} style={{ color: "var(--text-muted)" }} /> {meeting.location}
+            </div>
+          )}
+        </div>
+
+        {/* Client */}
+        {(meeting.customer_name || meeting.customer_email || meeting.company_name) && (
+          <div style={{ background: "var(--surface-2)", borderRadius: 12, padding: "13px 16px", marginBottom: 12, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Client</div>
+            {meeting.customer_name && <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", marginBottom: 3 }}>{meeting.customer_name}</div>}
+            {meeting.company_name && <div style={{ fontSize: 12, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}><Building2 size={11} style={{ color: "var(--text-muted)" }} />{meeting.company_name}</div>}
+            {meeting.customer_email && <div style={{ fontSize: 12, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 5 }}><Mail size={11} style={{ color: "var(--text-muted)" }} />{meeting.customer_email}</div>}
+          </div>
+        )}
+
+        {/* Purpose + Outcome */}
+        {(meeting.meeting_purpose || meeting.outcome) && (
+          <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+            {meeting.meeting_purpose && (
+              <div style={{ flex: 1, minWidth: 120, background: "var(--surface-2)", borderRadius: 12, padding: "12px 14px", border: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5 }}>Purpose</div>
+                <PurposeBadge purpose={meeting.meeting_purpose} />
+              </div>
+            )}
+            {meeting.outcome && (
+              <div style={{ flex: 1, minWidth: 120, background: "var(--surface-2)", borderRadius: 12, padding: "12px 14px", border: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5 }}>Outcome</div>
+                <OutcomeBadge outcome={meeting.outcome} />
+                {meeting.outcome_notes && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 5, lineHeight: 1.4 }}>{meeting.outcome_notes}</div>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Team Attendees */}
+        {meeting.attendees?.length > 0 && (
+          <div style={{ background: "var(--surface-2)", borderRadius: 12, padding: "13px 16px", marginBottom: 12, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Team Attendees</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {meeting.attendees.map((a, i) => {
+                const u = a.user || a;
+                return (
+                  <div key={u?.id || i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {u?.avatar_url
+                      ? <img src={u.avatar_url} alt="" style={{ width: 26, height: 26, borderRadius: "50%", objectFit: "cover" }} />
+                      : <div style={{ width: 26, height: 26, borderRadius: "50%", background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "#fff" }}>{(u?.full_name?.[0] || "?").toUpperCase()}</div>
+                    }
+                    <span style={{ fontSize: 12.5, color: "var(--text-2)", fontWeight: 600 }}>{u?.full_name || "—"}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Agenda */}
+        {meeting.agenda && (
+          <div style={{ background: "var(--surface-2)", borderRadius: 12, padding: "13px 16px", marginBottom: 12, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Agenda</div>
+            <div style={{ fontSize: 12.5, color: "var(--text-2)", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{meeting.agenda}</div>
+          </div>
+        )}
+
+        {/* Internal Notes */}
+        {meeting.internal_notes && (
+          <div style={{ background: "rgba(245,158,11,0.04)", borderRadius: 12, padding: "13px 16px", marginBottom: 12, border: "1px solid rgba(245,158,11,0.2)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}>
+              <Lock size={11} style={{ color: "#B45309" }} />
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#B45309", textTransform: "uppercase", letterSpacing: "0.06em" }}>Internal Notes</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: "var(--text-2)", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{meeting.internal_notes}</div>
+          </div>
+        )}
+
+        {/* CRM Links */}
+        {(meeting.lead_id || meeting.deal_id) && (
+          <div style={{ background: "var(--surface-2)", borderRadius: 12, padding: "13px 16px", marginBottom: 12, border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>CRM Links</div>
+            {meeting.linked_lead && (
+              <div style={{ fontSize: 12, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 5 }}>
+                <Link2 size={11} style={{ color: "var(--text-muted)" }} />
+                Lead: <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#6366F1" }}>{meeting.linked_lead.lead_code}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Next Follow-up */}
+        {meeting.next_follow_up && (
+          <div style={{ background: "rgba(59,130,246,0.04)", borderRadius: 12, padding: "10px 14px", marginBottom: 12, border: "1px solid rgba(59,130,246,0.15)", display: "flex", alignItems: "center", gap: 6 }}>
+            <Calendar size={13} style={{ color: "#3B82F6" }} />
+            <span style={{ fontSize: 12, color: "var(--text-2)", fontWeight: 600 }}>Follow-up: {format(new Date(meeting.next_follow_up), "MMM d, yyyy")}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Footer Actions */}
+      <div style={{ padding: "14px 20px", borderTop: "1px solid var(--border)", flexShrink: 0, display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {meeting.status === "scheduled" && (
+          <button onClick={() => { onComplete(meeting); onClose(); }}
+            style={{ flex: 1, minWidth: 80, height: 36, fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: 8, background: "#10B981", color: "#fff", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+            <CheckCircle2 size={13} /> Done
+          </button>
+        )}
+        <button onClick={() => { onFollowUp(meeting); onClose(); }}
+          style={{ flex: 1, minWidth: 80, height: 36, fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: 8, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", cursor: "pointer", fontFamily: "inherit" }}>
+          <GitBranch size={13} /> Follow-up
+        </button>
+        <button onClick={() => { onEdit(meeting); onClose(); }} className="btn-secondary"
+          style={{ height: 36, padding: "0 14px", fontSize: 12, display: "flex", alignItems: "center", gap: 5 }}>
+          <Pencil size={13} /> Edit
+        </button>
+        {canDelete && (
+          <button onClick={() => { if (window.confirm("Delete this meeting?")) { onDelete(meeting.id); onClose(); } }}
+            style={{ height: 36, padding: "0 10px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, background: "rgba(239,68,68,0.08)", color: "#EF4444", border: "1px solid rgba(239,68,68,0.2)", cursor: "pointer", fontFamily: "inherit" }}>
+            <Trash2 size={13} />
+          </button>
+        )}
+      </div>
+    </motion.div>
   );
 }
 
@@ -1236,6 +1708,8 @@ export default function Meetings() {
   const [editMeeting, setEditMeeting] = useState(null);
   const [postMeeting, setPostMeeting] = useState(null);
   const [followUpMeeting, setFollowUpMeeting] = useState(null);
+  const [selectedMeeting, setSelectedMeeting] = useState(null);
+  const [viewMode, setViewMode] = useState("table"); // table | list | calendar
   const [search, setSearch] = useState("");
   const [copiedId, setCopiedId] = useState(null);
   const [filterStatus, setFilterStatus] = useState("");
@@ -1333,6 +1807,7 @@ export default function Meetings() {
   const todayCount     = allMeetings.filter((m) => m.start_time && isToday(new Date(m.start_time))).length;
   const upcomingCount  = allMeetings.filter((m) => m.status === "scheduled" && m.start_time && !isPast(new Date(m.start_time))).length;
   const completedCount = allMeetings.filter((m) => m.status === "completed").length;
+  const overdueCount   = allMeetings.filter((m) => m.status === "scheduled" && m.start_time && isPast(new Date(m.start_time))).length;
 
   // Send branded email + iCalendar MIME invite (triggers Gmail RSVP + auto calendar sync)
   const sendMeetingInvite = async (data, isUpdate = false) => {
@@ -1414,6 +1889,36 @@ export default function Meetings() {
     const { _extra_emails, _contact_method, _all_day, _lead_code, _meeting_id, _sequence, meeting_code, ...clean } = data;
     return clean;
   };
+
+  const exportCSV = useCallback(() => {
+    const headers = ["Meeting ID","Title","Client","Company","Email","Date","Start Time","End Time","Mode","Status","Purpose","Priority","Outcome","Lead","Created At"];
+    const rows = meetings.map((m) => [
+      codeMap[m.id] || "",
+      m.title || "",
+      m.customer_name || "",
+      m.company_name || "",
+      m.customer_email || "",
+      m.start_time ? format(new Date(m.start_time), "yyyy-MM-dd") : "",
+      m.start_time ? format(new Date(m.start_time), "HH:mm") : "",
+      m.end_time   ? format(new Date(m.end_time),   "HH:mm") : "",
+      m.mode === "online" ? "Online" : "In-Person",
+      m.status || "",
+      m.meeting_purpose || "",
+      m.priority || "medium",
+      m.outcome || "",
+      m.linked_lead?.lead_code || "",
+      m.created_at ? format(new Date(m.created_at), "yyyy-MM-dd") : "",
+    ]);
+    const csv = [headers, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `meetings-${format(new Date(), "yyyy-MM-dd")}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${meetings.length} meeting${meetings.length !== 1 ? "s" : ""}`);
+  }, [meetings, codeMap]);
 
   const logMeetingActivity = (data, meetingId, type = "scheduled") => {
     const actType = data.mode === "offline" ? "meeting_person" : "meeting_virtual";
@@ -1553,20 +2058,21 @@ export default function Meetings() {
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
 
         {/* Stats grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 20 }}>
           {[
-            { label: "Total Meetings", value: totalCount,     color: "#6B7280", Icon: CalendarCheck },
-            { label: "Today",          value: todayCount,     color: "#F59E0B", Icon: Clock         },
-            { label: "Upcoming",       value: upcomingCount,  color: "#3B82F6", Icon: Calendar      },
-            { label: "Completed",      value: completedCount, color: "#10B981", Icon: CheckCircle2  },
+            { label: "Total",     value: totalCount,     color: "#6B7280", Icon: CalendarCheck },
+            { label: "Today",     value: todayCount,     color: "#F59E0B", Icon: Clock         },
+            { label: "Upcoming",  value: upcomingCount,  color: "#3B82F6", Icon: Calendar      },
+            { label: "Completed", value: completedCount, color: "#10B981", Icon: CheckCircle2  },
+            { label: "Overdue",   value: overdueCount,   color: "#EF4444", Icon: AlertCircle   },
           ].map((s) => (
-            <div key={s.label} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 38, height: 38, borderRadius: 10, background: `${s.color}18`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <s.Icon size={18} style={{ color: s.color }} />
+            <div key={s.label} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: "14px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: `${s.color}18`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <s.Icon size={17} style={{ color: s.color }} />
               </div>
               <div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "var(--text)", lineHeight: 1 }}>{s.value}</div>
-                <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 2 }}>{s.label}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: "var(--text)", lineHeight: 1 }}>{s.value}</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{s.label}</div>
               </div>
             </div>
           ))}
@@ -1602,8 +2108,25 @@ export default function Meetings() {
               <X size={13} /> Clear
             </button>
           )}
-          <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-            <ColumnToggle allColumns={MTG_COLUMNS} hiddenSet={hiddenSet} onToggle={toggleColumn} onReset={resetColumns} />
+          <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+            {/* View mode toggle */}
+            <div style={{ display: "flex", gap: 2, background: "var(--surface-2)", padding: 3, borderRadius: 9, border: "1px solid var(--border)" }}>
+              {[
+                { key: "table",    Icon: LayoutGrid,   title: "Table View"    },
+                { key: "list",     Icon: LayoutList,   title: "List View"     },
+                { key: "calendar", Icon: CalendarDays, title: "Calendar View" },
+              ].map(({ key, Icon, title }) => (
+                <button key={key} title={title} onClick={() => setViewMode(key)}
+                  style={{ padding: "5px 8px", borderRadius: 7, background: viewMode === key ? "var(--accent)" : "transparent", border: "none", cursor: "pointer", color: viewMode === key ? "#fff" : "var(--text-muted)", display: "flex", alignItems: "center", transition: "all 0.12s" }}>
+                  <Icon size={14} />
+                </button>
+              ))}
+            </div>
+            {/* Export CSV */}
+            <button onClick={exportCSV} className="btn-ghost" title="Export CSV" style={{ height: 36, padding: "0 10px", display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600 }}>
+              <Download size={13} /> Export
+            </button>
+            {viewMode === "table" && <ColumnToggle allColumns={MTG_COLUMNS} hiddenSet={hiddenSet} onToggle={toggleColumn} onReset={resetColumns} />}
             <TemplateMenu
               templates={templates}
               onSave={saveTemplate}
@@ -1629,6 +2152,19 @@ export default function Meetings() {
             <div style={{ fontSize: 13, color: "var(--text-muted)", textAlign: "center", maxWidth: 340 }}>Schedule your first meeting to start tracking client interactions.</div>
             <button className="btn-primary" onClick={() => setShowForm(true)} style={{ marginTop: 4 }}><Plus size={14} /> Schedule Meeting</button>
           </div>
+        ) : viewMode === "calendar" ? (
+          <CalendarView meetings={meetings} codeMap={codeMap} onSelectMeeting={setSelectedMeeting} />
+        ) : viewMode === "list" ? (
+          <ListView
+            meetings={meetings}
+            codeMap={codeMap}
+            onSelect={setSelectedMeeting}
+            onEdit={setEditMeeting}
+            onComplete={setPostMeeting}
+            onDelete={(id) => deleteMutation.mutate(id)}
+            onFollowUp={setFollowUpMeeting}
+            canDelete={canDelete}
+          />
         ) : (
           <div className="card" style={{ overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
@@ -1649,10 +2185,13 @@ export default function Meetings() {
                 <tbody>
                   <AnimatePresence initial={false}>
                     {meetings.map((m, i) => {
-                      const duration = getDurationStr(m.start_time, m.end_time);
+                      const dur = getDurationStr(m.start_time, m.end_time);
                       const isOverdue = m.status === "scheduled" && m.start_time && isPast(new Date(m.start_time));
                       return (
-                        <motion.tr key={m.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ delay: i * 0.02, duration: 0.16 }}>
+                        <motion.tr key={m.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ delay: i * 0.02, duration: 0.16 }}
+                          onClick={() => setSelectedMeeting(m)}
+                          style={{ cursor: "pointer" }}
+                        >
                           {isVisible("meeting_id") && (
                             <td style={{ whiteSpace: "nowrap" }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -1671,10 +2210,7 @@ export default function Meetings() {
                                     title="Copy Meeting ID"
                                     style={{ background: "none", border: "none", cursor: "pointer", color: copiedId === m.id ? "#10B981" : "var(--text-muted)", padding: 2, display: "flex", alignItems: "center", transition: "color 0.15s" }}
                                   >
-                                    {copiedId === m.id
-                                      ? <CheckCircle2 size={11} style={{ color: "#10B981" }} />
-                                      : <Copy size={11} />
-                                    }
+                                    {copiedId === m.id ? <CheckCircle2 size={11} style={{ color: "#10B981" }} /> : <Copy size={11} />}
                                   </motion.button>
                                 )}
                               </div>
@@ -1684,6 +2220,7 @@ export default function Meetings() {
                             <div style={{ fontWeight: 700, fontSize: 13, color: "var(--text)", marginBottom: 3 }}>{m.title}</div>
                             <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                               {m.meeting_purpose && <PurposeBadge purpose={m.meeting_purpose} />}
+                              {m.priority && m.priority !== "medium" && <PriorityBadge priority={m.priority} />}
                               {isOverdue && <span style={{ fontSize: 10, fontWeight: 700, color: "#EF4444", background: "rgba(239,68,68,0.08)", padding: "1px 6px", borderRadius: 99 }}>Overdue</span>}
                             </div>
                           </td>
@@ -1696,7 +2233,7 @@ export default function Meetings() {
                           )}
                           <td style={{ whiteSpace: "nowrap" }}>
                             <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-2)" }}>{fmtDate(m.start_time)}</div>
-                            {duration && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{duration}</div>}
+                            {dur && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{dur}</div>}
                           </td>
                           {isVisible("mode") && (
                             <td>
@@ -1705,7 +2242,7 @@ export default function Meetings() {
                                   <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "rgba(59,130,246,0.1)", color: "#3B82F6", display: "flex", alignItems: "center", gap: 4 }}>
                                     <Video size={9} /> Online
                                   </span>
-                                  {m.meeting_link && <a href={m.meeting_link} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}><ExternalLink size={12} /></a>}
+                                  {m.meeting_link && <a href={m.meeting_link} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }} onClick={(e) => e.stopPropagation()}><ExternalLink size={12} /></a>}
                                 </div>
                               ) : (
                                 <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "rgba(16,185,129,0.1)", color: "#10B981", display: "flex", alignItems: "center", gap: 4, width: "fit-content" }}>
@@ -1718,27 +2255,20 @@ export default function Meetings() {
                           {isVisible("status")  && <td><StatusBadge status={m.status} /></td>}
                           {isVisible("outcome") && <td>{m.outcome ? <OutcomeBadge outcome={m.outcome} /> : <span style={{ fontSize: 12, color: "var(--text-muted)" }}>—</span>}</td>}
                           <td>
-                            <div style={{ display: "flex", alignItems: "center", gap: 3, justifyContent: "flex-end" }}>
-                              {/* Complete */}
+                            <div style={{ display: "flex", alignItems: "center", gap: 3, justifyContent: "flex-end" }} onClick={(e) => e.stopPropagation()}>
                               {m.status === "scheduled" && (
                                 <motion.button onClick={() => setPostMeeting(m)} title="Mark Complete" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
                                   style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 7, fontSize: 11, fontWeight: 700, background: "rgba(16,185,129,0.1)", color: "#10B981", border: "1px solid rgba(16,185,129,0.22)", cursor: "pointer", fontFamily: "inherit" }}>
                                   <CheckCircle2 size={11} /> Done
                                 </motion.button>
                               )}
-                              {/* Follow-up */}
-                              <motion.button
-                                onClick={() => setFollowUpMeeting(m)}
-                                title="Schedule Follow-up Meeting"
-                                whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+                              <motion.button onClick={() => setFollowUpMeeting(m)} title="Schedule Follow-up Meeting" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
                                 style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 7, fontSize: 11, fontWeight: 700, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.22)", cursor: "pointer", fontFamily: "inherit" }}>
                                 <GitBranch size={11} /> Follow-up
                               </motion.button>
-                              {/* Edit */}
                               <motion.button onClick={() => setEditMeeting(m)} className="btn-ghost" style={{ padding: "4px 6px" }} whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
                                 <Pencil size={13} strokeWidth={1.75} />
                               </motion.button>
-                              {/* Delete */}
                               {canDelete && (
                                 <motion.button onClick={() => { if (window.confirm("Delete this meeting?")) deleteMutation.mutate(m.id); }} className="btn-ghost" style={{ padding: "4px 6px", color: "var(--red)" }} whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
                                   <Trash2 size={13} strokeWidth={1.75} />
@@ -1756,6 +2286,30 @@ export default function Meetings() {
           </div>
         )}
       </div>
+
+      {/* ── Meeting Detail Panel ── */}
+      <AnimatePresence>
+        {selectedMeeting && (
+          <>
+            <motion.div key="detail-backdrop"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", zIndex: 39 }}
+              onClick={() => setSelectedMeeting(null)}
+            />
+            <MeetingDetailPanel
+              key="detail-panel"
+              meeting={selectedMeeting}
+              codeMap={codeMap}
+              canDelete={canDelete}
+              onClose={() => setSelectedMeeting(null)}
+              onEdit={(m) => { setEditMeeting(m); setSelectedMeeting(null); }}
+              onComplete={(m) => { setPostMeeting(m); setSelectedMeeting(null); }}
+              onDelete={(id) => { deleteMutation.mutate(id); setSelectedMeeting(null); }}
+              onFollowUp={(m) => { setFollowUpMeeting(m); setSelectedMeeting(null); }}
+            />
+          </>
+        )}
+      </AnimatePresence>
 
       {/* ── Modals ── */}
       <AnimatePresence>

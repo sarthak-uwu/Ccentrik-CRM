@@ -116,17 +116,19 @@ export const meetingsService = {
         continue;
       }
 
-      // 42703 = undefined_column (meeting_code column doesn't exist yet)
+      // 42703 = undefined_column (a column in payload doesn't exist in DB yet)
       // PGRST204 = PostgREST "column not found" variant
       if (
         error.code === "42703" ||
+        error.code === "PGRST204" ||
         (error.message || "").includes("meeting_code") ||
         (error.details || "").includes("meeting_code")
       ) {
-        // Retry once without the meeting_code field — column may not exist yet
+        // Retry without columns that may not exist yet (meeting_code, priority)
+        const { meeting_code: _mc, priority: _p, ...basePayload } = insertPayload;
         const { data: d2, error: e2 } = await supabase
           .from("meetings")
-          .insert(payload)
+          .insert(basePayload)
           .select()
           .single();
         if (e2) throw e2;
@@ -152,12 +154,24 @@ export const meetingsService = {
   },
 
   async update(id, payload, attendeeIds) {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("meetings")
       .update({ ...payload, updated_at: new Date().toISOString() })
       .eq("id", id)
       .select()
       .single();
+    // If a column doesn't exist yet, retry without it
+    if (error && (error.code === "42703" || error.code === "PGRST204")) {
+      const { priority: _p, meeting_code: _mc, ...basePayload } = payload;
+      const res2 = await supabase
+        .from("meetings")
+        .update({ ...basePayload, updated_at: new Date().toISOString() })
+        .eq("id", id)
+        .select()
+        .single();
+      data  = res2.data;
+      error = res2.error;
+    }
     if (error) throw error;
 
     if (Array.isArray(attendeeIds)) {
