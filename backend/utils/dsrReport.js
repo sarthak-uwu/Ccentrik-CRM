@@ -195,7 +195,7 @@ async function generateTSRData(dayStart, dayEnd) {
 }
 
 // ─── HTML email builder ───────────────────────────────────────────────────────
-function buildTSRHtml(staff, userStats, totals, reportDate) {
+function buildTSRHtml(staff, userStats, totals, reportDate, rangeLabel = "00:00 – 20:00 IST") {
   const LOGO = "https://ccentrik-crm.web.app/logo-blue.png";
   const G    = "linear-gradient(135deg,#0B1120 0%,#1B3A6B 100%)";
 
@@ -275,7 +275,7 @@ function buildTSRHtml(staff, userStats, totals, reportDate) {
             </td>
             <td align="right">
               <div style="font-size:15px;font-weight:700;color:#FFFFFF;">${reportDate}</div>
-              <div style="font-size:10.5px;color:rgba(255,255,255,0.45);margin-top:3px;">Data range: 00:00 – 20:00 IST</div>
+              <div style="font-size:10.5px;color:rgba(255,255,255,0.45);margin-top:3px;">Period: ${rangeLabel}</div>
             </td>
           </tr></table>
         </td></tr>
@@ -379,7 +379,7 @@ function buildTSRHtml(staff, userStats, totals, reportDate) {
 }
 
 // ─── Plain-text fallback ──────────────────────────────────────────────────────
-function buildTSRText(staff, userStats, totals, reportDate) {
+function buildTSRText(staff, userStats, totals, reportDate, rangeLabel = "00:00 – 20:00 IST") {
   const n = (v) => String(v || 0);
   const cv = (w, l) => (w + l) > 0 ? `${Math.round((w / (w + l)) * 100)}%` : "N/A";
   const sep = "=".repeat(80);
@@ -394,7 +394,7 @@ function buildTSRText(staff, userStats, totals, reportDate) {
   return `${sep}
 CCENTRIK DAILY SALES REPORT
 ${reportDate}
-Data range: 00:00 – 20:00 IST
+Period: ${rangeLabel}
 ${sep}
 
 TEAM OVERVIEW

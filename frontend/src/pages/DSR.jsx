@@ -398,72 +398,44 @@ function DSRActivityCard({ act, cfg, timestampFmt, selectedUser }) {
    SEND DSR MODAL
 ═══════════════════════════════════════════════════════════════════════ */
 function SendDSRModal({ onClose }) {
-  const { user }                              = useAuth();
-  const dropRef                               = useRef(null);
-  const [allOptions, setAllOptions]           = useState([]);
-  const [recipients, setRecipients]           = useState([]);
-  const [customEmail, setCustomEmail]         = useState("");
-  const [reportDate, setReportDate]           = useState(format(new Date(), "yyyy-MM-dd"));
-  const [isLoading, setIsLoading]             = useState(false);
-  const [fetchingOpts, setFetchingOpts]       = useState(true);
-  const [searchQuery, setSearchQuery]         = useState("");
-  const [dropdownOpen, setDropdownOpen]       = useState(false);
+  const { user }                            = useAuth();
+  const [recipientType, setRecipientType]  = useState("");
+  const [reportType, setReportType]        = useState("daily");
+  const [datePeriod, setDatePeriod]        = useState(format(new Date(), "yyyy-MM-dd"));
+  const [isLoading, setIsLoading]          = useState(false);
 
-  // Fetch recipient list from backend
+  const currentYear = getYear(new Date());
+  const years = Array.from({ length: 6 }, (_, i) => currentYear - i);
+
+  const REPORT_TYPES = [
+    { value: "daily",       label: "Daily Report" },
+    { value: "weekly",      label: "Weekly Report" },
+    { value: "monthly",     label: "Monthly Report" },
+    { value: "quarterly",   label: "Quarterly Report" },
+    { value: "half_yearly", label: "Half-Yearly Report" },
+    { value: "yearly",      label: "Yearly Report" },
+  ];
+
+  // Reset datePeriod to a sensible default when report type changes
   useEffect(() => {
-    async function load() {
-      try {
-        const token = await user.getIdToken();
-        const res   = await fetch(`${API}/api/reports/recipients`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) setAllOptions(await res.json());
-      } catch (_) { /* silent */ }
-      setFetchingOpts(false);
-    }
-    load();
-  }, [user]);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    const h = (e) => { if (dropRef.current && !dropRef.current.contains(e.target)) setDropdownOpen(false); };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, []);
-
-  const filteredOptions = allOptions.filter((o) => {
-    const q = searchQuery.toLowerCase();
-    return !q || o.name?.toLowerCase().includes(q) || o.email?.toLowerCase().includes(q);
-  });
-
-  const toggleRecipient = (opt) =>
-    setRecipients((prev) =>
-      prev.find((r) => r.email === opt.email)
-        ? prev.filter((r) => r.email !== opt.email)
-        : [...prev, opt],
-    );
-
-  const addCustomEmail = () => {
-    const e = customEmail.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) { toast.error("Invalid email address"); return; }
-    if (recipients.find((r) => r.email === e))  { toast.error("Already added"); return; }
-    setRecipients((p) => [...p, { email: e, name: e, role: "custom" }]);
-    setCustomEmail("");
-  };
+    const now = new Date();
+    if      (reportType === "daily")        setDatePeriod(format(now, "yyyy-MM-dd"));
+    else if (reportType === "weekly")       setDatePeriod(format(now, "yyyy-MM-dd"));
+    else if (reportType === "monthly")      setDatePeriod(format(now, "yyyy-MM"));
+    else if (reportType === "quarterly")    setDatePeriod(`${getYear(now)}-Q${getQuarter(now)}`);
+    else if (reportType === "half_yearly")  setDatePeriod(`${getYear(now)}-${getMonth(now) < 6 ? "H1" : "H2"}`);
+    else if (reportType === "yearly")       setDatePeriod(String(getYear(now)));
+  }, [reportType]);
 
   const handleSend = async () => {
-    if (!recipients.length) { toast.error("Select at least one recipient"); return; }
+    if (!recipientType) { toast.error("Please select a recipient"); return; }
     setIsLoading(true);
     try {
       const token = await user.getIdToken();
       const res   = await fetch(`${API}/api/reports/send-dsr`, {
         method:  "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body:    JSON.stringify({
-          recipients:  recipients.map((r) => r.email),
-          reportDate,
-          reportType:  "DSR",
-        }),
+        body:    JSON.stringify({ recipientType, reportType, datePeriod }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || data.details || "Send failed");
@@ -476,7 +448,88 @@ function SendDSRModal({ onClose }) {
     }
   };
 
-  const roleLabel = (r) => (r || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  const iS = { padding: "9px 12px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 13, width: "100%", boxSizing: "border-box" };
+  const lS = { display: "block", fontSize: 11, fontWeight: 700, color: "var(--text-2)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" };
+
+  const renderDatePicker = () => {
+    if (reportType === "daily") return (
+      <div>
+        <label style={lS}>Report Date <span style={{ color: "#EF4444" }}>*</span></label>
+        <input type="date" value={datePeriod} max={format(new Date(), "yyyy-MM-dd")}
+          onChange={(e) => setDatePeriod(e.target.value)} style={iS} />
+      </div>
+    );
+
+    if (reportType === "weekly") return (
+      <div>
+        <label style={lS}>Any Date in the Target Week <span style={{ color: "#EF4444" }}>*</span></label>
+        <input type="date" value={datePeriod} max={format(new Date(), "yyyy-MM-dd")}
+          onChange={(e) => setDatePeriod(e.target.value)} style={iS} />
+        <p style={{ margin: "5px 0 0", fontSize: 11, color: "var(--text-muted)" }}>The full Monday – Sunday week containing this date will be used.</p>
+      </div>
+    );
+
+    if (reportType === "monthly") return (
+      <div>
+        <label style={lS}>Month <span style={{ color: "#EF4444" }}>*</span></label>
+        <input type="month" value={datePeriod} max={format(new Date(), "yyyy-MM")}
+          onChange={(e) => setDatePeriod(e.target.value)} style={iS} />
+      </div>
+    );
+
+    if (reportType === "quarterly") {
+      const [qYear = String(currentYear), qNum = "Q2"] = datePeriod.split("-");
+      return (
+        <div>
+          <label style={lS}>Quarter & Year <span style={{ color: "#EF4444" }}>*</span></label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <select value={qNum} onChange={(e) => setDatePeriod(`${qYear}-${e.target.value}`)}
+              style={{ ...iS, flex: 1, width: "auto" }}>
+              <option value="Q1">Q1 — January to March</option>
+              <option value="Q2">Q2 — April to June</option>
+              <option value="Q3">Q3 — July to September</option>
+              <option value="Q4">Q4 — October to December</option>
+            </select>
+            <select value={qYear} onChange={(e) => setDatePeriod(`${e.target.value}-${qNum}`)}
+              style={{ ...iS, width: 90 }}>
+              {years.map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+        </div>
+      );
+    }
+
+    if (reportType === "half_yearly") {
+      const [hyYear = String(currentYear), hyH = "H1"] = datePeriod.split("-");
+      return (
+        <div>
+          <label style={lS}>Half-Year & Year <span style={{ color: "#EF4444" }}>*</span></label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <select value={hyH} onChange={(e) => setDatePeriod(`${hyYear}-${e.target.value}`)}
+              style={{ ...iS, flex: 1, width: "auto" }}>
+              <option value="H1">H1 — January to June</option>
+              <option value="H2">H2 — July to December</option>
+            </select>
+            <select value={hyYear} onChange={(e) => setDatePeriod(`${e.target.value}-${hyH}`)}
+              style={{ ...iS, width: 90 }}>
+              {years.map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+        </div>
+      );
+    }
+
+    if (reportType === "yearly") return (
+      <div>
+        <label style={lS}>Year <span style={{ color: "#EF4444" }}>*</span></label>
+        <select value={datePeriod} onChange={(e) => setDatePeriod(e.target.value)} style={iS}>
+          {years.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+    );
+
+    return null;
+  };
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -490,131 +543,46 @@ function SendDSRModal({ onClose }) {
         exit={{    opacity: 0, scale: 0.96, y: 14  }}
         transition={{ duration: 0.18 }}
         style={{
-          position: "relative", width: "100%", maxWidth: 520,
-          maxHeight: "90vh", overflowY: "auto",
+          position: "relative", width: "100%", maxWidth: 460,
           background: "var(--surface)", borderRadius: 16,
           border: "1px solid var(--border)",
           boxShadow: "0 24px 60px rgba(0,0,0,0.28)",
           padding: "26px 28px",
         }}
-        className="custom-scroll"
       >
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 22 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em" }}>Send DSR Report</h2>
-            <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text-muted)" }}>Generate and email the Daily Sales Report to selected recipients</p>
+            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em" }}>Send Sales Report</h2>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text-muted)" }}>Select recipient, report type, and period</p>
           </div>
           <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", flexShrink: 0 }}>
             <X size={14} />
           </button>
         </div>
 
-        {/* Report Date */}
-        <div style={{ marginBottom: 18 }}>
-          <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--text-2)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Report Date</label>
-          <input
-            type="date" value={reportDate} max={format(new Date(), "yyyy-MM-dd")}
-            onChange={(e) => setReportDate(e.target.value)}
-            style={{ width: "100%", padding: "8px 12px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 13, boxSizing: "border-box" }}
-          />
+        {/* Send To */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={lS}>Send To <span style={{ color: "#EF4444" }}>*</span></label>
+          <select value={recipientType} onChange={(e) => setRecipientType(e.target.value)}
+            style={{ ...iS, color: recipientType ? "var(--text)" : "var(--text-muted)" }}>
+            <option value="" disabled>Select recipient…</option>
+            <option value="super_admin">Super Admin</option>
+            <option value="sales_head">Sales Head</option>
+          </select>
         </div>
 
-        {/* Recipient Dropdown */}
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-            <label style={{ fontSize: 11, fontWeight: 700, color: "var(--text-2)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Recipients</label>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setRecipients(allOptions)} style={{ fontSize: 11, color: "#6366F1", background: "none", border: "none", cursor: "pointer", fontWeight: 600, padding: 0 }}>Select All</button>
-              {recipients.length > 0 && <button onClick={() => setRecipients([])} style={{ fontSize: 11, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>Clear</button>}
-            </div>
-          </div>
-
-          <div ref={dropRef} style={{ position: "relative" }}>
-            <button
-              onClick={() => setDropdownOpen((v) => !v)}
-              style={{ width: "100%", padding: "8px 12px", borderRadius: 9, border: `1px solid ${dropdownOpen ? "rgba(99,102,241,0.45)" : "var(--border)"}`, background: "var(--surface-2)", color: recipients.length ? "var(--text)" : "var(--text-muted)", fontSize: 13, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", boxSizing: "border-box" }}
-            >
-              <span>{recipients.length === 0 ? "Search and select recipients…" : `${recipients.length} recipient${recipients.length !== 1 ? "s" : ""} selected`}</span>
-              <ChevronDown size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-            </button>
-
-            <AnimatePresence>
-              {dropdownOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: 4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 4, scale: 0.98 }} transition={{ duration: 0.12 }}
-                  style={{ position: "absolute", top: "calc(100% + 5px)", left: 0, right: 0, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 11, boxShadow: "var(--shadow-lg)", zIndex: 100, maxHeight: 250, display: "flex", flexDirection: "column" }}
-                >
-                  <div style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
-                    <div style={{ position: "relative" }}>
-                      <Search size={11} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-                      <input
-                        value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search recipients…"
-                        style={{ width: "100%", paddingLeft: 26, paddingRight: 8, paddingTop: 6, paddingBottom: 6, border: "1px solid var(--border)", borderRadius: 7, background: "var(--surface-2)", color: "var(--text)", fontSize: 12, boxSizing: "border-box" }}
-                      />
-                    </div>
-                  </div>
-                  <div style={{ overflowY: "auto", flex: 1 }} className="custom-scroll">
-                    {fetchingOpts ? (
-                      <div style={{ padding: "18px 12px", textAlign: "center", fontSize: 12, color: "var(--text-muted)" }}>Loading…</div>
-                    ) : filteredOptions.length === 0 ? (
-                      <div style={{ padding: "18px 12px", textAlign: "center", fontSize: 12, color: "var(--text-muted)" }}>No recipients found</div>
-                    ) : filteredOptions.map((opt) => {
-                      const checked = !!recipients.find((r) => r.email === opt.email);
-                      return (
-                        <button key={opt.email} onClick={() => toggleRecipient(opt)}
-                          style={{ width: "100%", textAlign: "left", padding: "9px 12px", border: "none", background: checked ? "rgba(99,102,241,0.07)" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
-                          <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${checked ? "#6366F1" : "var(--border)"}`, background: checked ? "#6366F1" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                            {checked && <span style={{ color: "#fff", fontSize: 9, fontWeight: 900, lineHeight: 1 }}>✓</span>}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{opt.name}</div>
-                            <div style={{ fontSize: 10.5, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{opt.email} · {roleLabel(opt.role)}</div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+        {/* Report Type */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={lS}>Report Type <span style={{ color: "#EF4444" }}>*</span></label>
+          <select value={reportType} onChange={(e) => setReportType(e.target.value)} style={iS}>
+            {REPORT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
         </div>
 
-        {/* Selected recipient chips */}
-        {recipients.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14, padding: "10px 12px", background: "rgba(99,102,241,0.04)", borderRadius: 9, border: "1px solid rgba(99,102,241,0.15)" }}>
-            {recipients.map((r) => (
-              <div key={r.email} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 8px 3px 10px", borderRadius: 99, background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", fontSize: 11.5, color: "var(--text)" }}>
-                <span style={{ fontWeight: 500, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name !== r.email ? r.name : r.email}</span>
-                <button onClick={() => setRecipients((p) => p.filter((x) => x.email !== r.email))} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, borderRadius: "50%", background: "rgba(99,102,241,0.25)", border: "none", cursor: "pointer", color: "#6366F1", padding: 0, flexShrink: 0 }}>
-                  <X size={8} strokeWidth={2.5} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Custom email */}
-        <div style={{ marginBottom: 18 }}>
-          <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--text-2)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Add Custom Email (Optional)</label>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input
-              value={customEmail} onChange={(e) => setCustomEmail(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addCustomEmail()}
-              placeholder="name@company.com"
-              style={{ flex: 1, padding: "8px 12px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 13 }}
-            />
-            <button onClick={addCustomEmail} style={{ padding: "8px 14px", borderRadius: 9, border: "1px solid rgba(99,102,241,0.3)", background: "rgba(99,102,241,0.08)", color: "#6366F1", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-              Add
-            </button>
-          </div>
-        </div>
-
-        {/* Info strip */}
-        <div style={{ padding: "10px 14px", background: "rgba(59,130,246,0.05)", border: "1px solid rgba(59,130,246,0.15)", borderRadius: 9, marginBottom: 22, fontSize: 12, color: "var(--text-2)", lineHeight: 1.6 }}>
-          <b>Report Type:</b> Daily Sales Report (DSR) &nbsp;·&nbsp; <b>Date:</b> {reportDate} &nbsp;·&nbsp; <b>Data:</b> All Sales Head &amp; Inside Sales activity
+        {/* Dynamic Date Picker */}
+        <div style={{ marginBottom: 26 }}>
+          {renderDatePicker()}
         </div>
 
         {/* Actions */}
@@ -623,11 +591,8 @@ function SendDSRModal({ onClose }) {
             style={{ padding: "9px 20px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
             Cancel
           </button>
-          <button
-            onClick={handleSend}
-            disabled={isLoading || recipients.length === 0}
-            style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#6366F1", color: "#fff", fontSize: 13, fontWeight: 700, cursor: isLoading || recipients.length === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 8, opacity: recipients.length === 0 ? 0.55 : 1, transition: "opacity 0.15s" }}
-          >
+          <button onClick={handleSend} disabled={isLoading || !recipientType}
+            style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#6366F1", color: "#fff", fontSize: 13, fontWeight: 700, cursor: isLoading || !recipientType ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 8, opacity: !recipientType ? 0.55 : 1, transition: "opacity 0.15s" }}>
             {isLoading ? <><Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} /> Sending…</> : <><Send size={14} /> Send DSR</>}
           </button>
         </div>
