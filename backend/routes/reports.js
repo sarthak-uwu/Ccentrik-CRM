@@ -42,16 +42,44 @@ router.get("/recipients", authenticate, authorize("owner", "sales_head"), async 
 });
 
 // ─── POST /api/reports/send-dsr ───────────────────────────────────────────────
-// Accepts { selectedEmails: [...], reportType, datePeriod }
-// Validates emails are ONLY owner/sales_head, generates PDF, sends with attachment
+// Accepts { selectedEmails, datePreset, customStart?, customEnd?,
+//           selectedEmployeeIds?, reportType?, datePeriod? }
 router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (req, res) => {
-  const { selectedEmails, reportType, datePeriod } = req.body;
+  const {
+    selectedEmails,
+    selectedEmployeeIds,       // optional: filter report to specific employee IDs
+    datePreset,                // preferred: "today","yesterday","last_7","this_week", etc.
+    customStart,               // for datePreset="custom" or reportType="custom"
+    customEnd,
+    reportType: rawReportType, // fallback for old callers
+    datePeriod: rawDatePeriod,
+  } = req.body;
 
-  const VALID_REPORT = ["daily", "weekly", "monthly", "quarterly", "half_yearly", "yearly"];
+  // Resolve reportType + datePeriod from datePreset, or fall back to legacy fields
+  let reportType = rawReportType;
+  let datePeriod = rawDatePeriod;
+  let resolvedCustomStart = customStart;
+  let resolvedCustomEnd   = customEnd;
+
+  if (datePreset) {
+    try {
+      const r = resolvePreset(datePreset, customStart, customEnd);
+      reportType          = r.reportType;
+      datePeriod          = r.datePeriod;
+      resolvedCustomStart = r.customStart;
+      resolvedCustomEnd   = r.customEnd;
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+  }
+
+  const VALID_REPORT = ["daily", "weekly", "monthly", "quarterly", "half_yearly", "yearly", "custom"];
   if (!reportType || !VALID_REPORT.includes(reportType))
-    return res.status(400).json({ error: "Invalid reportType." });
-  if (!datePeriod)
+    return res.status(400).json({ error: "Invalid or missing reportType / datePreset." });
+  if (reportType !== "custom" && !datePeriod)
     return res.status(400).json({ error: "datePeriod is required." });
+  if (reportType === "custom" && (!resolvedCustomStart || !resolvedCustomEnd))
+    return res.status(400).json({ error: "customStart and customEnd are required for custom date range." });
   if (!Array.isArray(selectedEmails) || !selectedEmails.length)
     return res.status(400).json({ error: "selectedEmails must be a non-empty array." });
 
@@ -81,12 +109,16 @@ router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (
   // Compute date range
   let periodRange;
   try {
-    periodRange = computeDateRange(reportType, datePeriod);
+    periodRange = computeDateRange(reportType, datePeriod, { customStart: resolvedCustomStart, customEnd: resolvedCustomEnd });
   } catch (e) {
     return res.status(400).json({ error: e.message });
   }
   const { start: dayStart, end: dayEnd, label: reportDateLabel, subject: subjectLabel } = periodRange;
   const logDateStr = dayStart.split("T")[0];
+
+  // Capture sender IP and user-agent for audit
+  const senderIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || null;
+  const userAgent = (req.headers["user-agent"] || "").slice(0, 300) || null;
 
   // Insert pending audit log
   const { data: logEntry } = await supabase
@@ -98,6 +130,8 @@ router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (
       report_type:     reportType,
       delivery_status: "pending",
       recipient_count: uniqueEmails.length,
+      ...(senderIp  ? { sender_ip: senderIp }    : {}),
+      ...(userAgent ? { user_agent: userAgent }   : {}),
     })
     .select("id")
     .single();
@@ -105,13 +139,47 @@ router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (
   const logId = logEntry?.id;
 
   try {
-    const data = await generateTSRData(dayStart, dayEnd);
+    let data = await generateTSRData(dayStart, dayEnd);
 
     if (!data) {
       if (logId) await supabase.from("dsr_email_logs")
         .update({ delivery_status: "failed", error_message: "No staff data found for this period." })
         .eq("id", logId);
       return res.status(422).json({ error: "No sales staff data available for the selected period." });
+    }
+
+    // Filter to specific employees if requested
+    if (Array.isArray(selectedEmployeeIds) && selectedEmployeeIds.length > 0) {
+      const empSet = new Set(selectedEmployeeIds);
+      const filteredStaff = data.staff.filter(s => empSet.has(s.id));
+      if (filteredStaff.length > 0) {
+        const filteredUserStats = {};
+        filteredStaff.forEach(s => { filteredUserStats[s.id] = data.userStats[s.id]; });
+        const v = Object.values(filteredUserStats);
+        const sum = (key) => v.reduce((acc, u) => acc + (u[key] || 0), 0);
+        data = {
+          ...data,
+          staff: filteredStaff,
+          userStats: filteredUserStats,
+          totals: {
+            salesHeads:         filteredStaff.filter(s => s.role === "sales_head").length,
+            insideSales:        filteredStaff.filter(s => s.role === "inside_sales").length,
+            totalStaff:         filteredStaff.length,
+            leadsToday:         sum("leadsToday"),
+            calls:              sum("calls"),
+            emails:             sum("emails"),
+            meetings:           sum("meetings"),
+            followUpsCompleted: sum("followUpsCompleted"),
+            followUpsScheduled: sum("followUpsScheduled"),
+            tasks:              sum("tasks"),
+            activities:         sum("activities"),
+            dealsCreated:       sum("dealsCreated"),
+            dealsWon:           sum("dealsWon"),
+            dealsLost:          sum("dealsLost"),
+            revenueWon:         sum("revenueWon"),
+          },
+        };
+      }
     }
 
     // Generate PDF
@@ -234,11 +302,61 @@ router.post("/dsr-config", authenticate, authorize("owner"), async (req, res) =>
   }
 });
 
+// ─── Map frontend datePreset to reportType + datePeriod ──────────────────────
+function resolvePreset(preset, customStart, customEnd) {
+  const now  = new Date();
+  const pad  = (n) => String(n).padStart(2, "0");
+  const dStr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const today     = dStr(now);
+  const yesterday = dStr(new Date(now.getTime() - 86400000));
+
+  // Monday of current week
+  const getMonday = (d) => {
+    const day = d.getDay() || 7;
+    const m = new Date(d);
+    m.setDate(d.getDate() - (day - 1));
+    return m;
+  };
+
+  switch (preset) {
+    case "today":         return { reportType: "daily",     datePeriod: today };
+    case "yesterday":     return { reportType: "daily",     datePeriod: yesterday };
+    case "last_7": {
+      const s = dStr(new Date(now.getTime() - 6 * 86400000));
+      return { reportType: "custom", customStart: s, customEnd: today };
+    }
+    case "this_week":     return { reportType: "weekly",    datePeriod: dStr(getMonday(now)) };
+    case "last_week":     return { reportType: "weekly",    datePeriod: dStr(getMonday(new Date(now.getTime() - 7 * 86400000))) };
+    case "this_month":    return { reportType: "monthly",   datePeriod: `${now.getFullYear()}-${pad(now.getMonth() + 1)}` };
+    case "last_month": {
+      const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      return { reportType: "monthly", datePeriod: `${d.getFullYear()}-${pad(d.getMonth() + 1)}` };
+    }
+    case "this_quarter": {
+      const q = Math.floor(now.getMonth() / 3) + 1;
+      return { reportType: "quarterly", datePeriod: `${now.getFullYear()}-Q${q}` };
+    }
+    case "last_quarter": {
+      const tq = Math.floor(now.getMonth() / 3) + 1;
+      const pq = tq === 1 ? 4 : tq - 1;
+      const py = tq === 1 ? now.getFullYear() - 1 : now.getFullYear();
+      return { reportType: "quarterly", datePeriod: `${py}-Q${pq}` };
+    }
+    case "current_year":  return { reportType: "yearly", datePeriod: String(now.getFullYear()) };
+    case "previous_year": return { reportType: "yearly", datePeriod: String(now.getFullYear() - 1) };
+    case "custom": {
+      if (!customStart || !customEnd) throw new Error("customStart and customEnd are required for custom range.");
+      return { reportType: "custom", customStart, customEnd };
+    }
+    default: throw new Error(`Unknown datePreset: ${preset}`);
+  }
+}
+
 // ─── Compute date range for a given report type + period string ───────────────
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-function computeDateRange(reportType, datePeriod) {
+function computeDateRange(reportType, datePeriod, opts = {}) {
   switch (reportType) {
     case "daily": {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(datePeriod)) throw new Error("Invalid date for daily report (expected YYYY-MM-DD).");
@@ -314,6 +432,20 @@ function computeDateRange(reportType, datePeriod) {
         end:     new Date(`${datePeriod}-12-31T23:59:59+05:30`).toISOString(),
         label,
         subject: "Yearly Sales Report",
+      };
+    }
+    case "custom": {
+      const { customStart, customEnd } = opts;
+      if (!customStart || !customEnd) throw new Error("customStart and customEnd required for custom date range.");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(customStart) || !/^\d{4}-\d{2}-\d{2}$/.test(customEnd))
+        throw new Error("Invalid customStart or customEnd (expected YYYY-MM-DD).");
+      if (customStart > customEnd) throw new Error("customStart must not be after customEnd.");
+      const label = `${customStart} to ${customEnd}`;
+      return {
+        start:   new Date(`${customStart}T00:00:00+05:30`).toISOString(),
+        end:     new Date(`${customEnd}T23:59:59+05:30`).toISOString(),
+        label,
+        subject: "Sales Report",
       };
     }
     default:

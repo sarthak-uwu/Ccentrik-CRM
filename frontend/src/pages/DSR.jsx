@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback, Fragment } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../supabaseClient";
@@ -395,32 +395,82 @@ function DSRActivityCard({ act, cfg, timestampFmt, selectedUser }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   SEND DSR MODAL  —  multi-select individual recipients + PDF attachment
+   SEND DSR MODAL  —  multi-step: Date → Employees → Recipients → Preview
 ═══════════════════════════════════════════════════════════════════════ */
-function SendDSRModal({ onClose }) {
-  const { user }                          = useAuth();
-  const dropdownRef                       = useRef(null);
-  const [recipients, setRecipients]       = useState([]);
-  const [selected, setSelected]           = useState([]); // email strings
-  const [searchQuery, setSearchQuery]     = useState("");
-  const [dropdownOpen, setDropdownOpen]   = useState(false);
-  const [reportType, setReportType]       = useState("daily");
-  const [datePeriod, setDatePeriod]       = useState(format(new Date(), "yyyy-MM-dd"));
-  const [isLoading, setIsLoading]         = useState(false);
+function SendDSRModal({ onClose, viewableEmployees = [] }) {
+  const { user, profile }       = useAuth();
+  const normRoleModal           = (profile?.role || "").toLowerCase().replace(/[- ]/g, "_");
+  const isOwnerOrHeadModal      = ["owner", "sales_head"].includes(normRoleModal);
 
-  const currentYear = getYear(new Date());
-  const years = Array.from({ length: 6 }, (_, i) => currentYear - i);
+  // step: "date" | "employees" | "recipients" | "preview" | "sending" | "done" | "error"
+  const [step, setStep]                   = useState("date");
 
-  const REPORT_TYPES = [
-    { value: "daily",       label: "Daily Report" },
-    { value: "weekly",      label: "Weekly Report" },
-    { value: "monthly",     label: "Monthly Report" },
-    { value: "quarterly",   label: "Quarterly Report" },
-    { value: "half_yearly", label: "Half-Yearly Report" },
-    { value: "yearly",      label: "Yearly Report" },
+  // Date selection
+  const now = new Date();
+  const curY = getYear(now);
+  const curQ = getQuarter(now);
+  const prevQ = curQ === 1 ? 4 : curQ - 1;
+  const prevQY = curQ === 1 ? curY - 1 : curY;
+
+  const DATE_PRESETS = [
+    { key: "today",         label: "Today",            sub: format(now, "MMM d") },
+    { key: "yesterday",     label: "Yesterday",        sub: format(subDays(now, 1), "MMM d") },
+    { key: "last_7",        label: "Last 7 Days",      sub: `${format(subDays(now, 6), "MMM d")} – ${format(now, "MMM d")}` },
+    { key: "this_week",     label: "This Week",        sub: format(startOfWeek(now, { weekStartsOn: 1 }), "MMM d") + " onwards" },
+    { key: "last_week",     label: "Last Week",        sub: format(startOfWeek(subWeeks(now, 1), { weekStartsOn: 1 }), "MMM d") },
+    { key: "this_month",    label: "This Month",       sub: format(now, "MMMM yyyy") },
+    { key: "last_month",    label: "Last Month",       sub: format(subMonths(now, 1), "MMMM yyyy") },
+    { key: "this_quarter",  label: `Q${curQ} ${curY}`,  sub: "This Quarter" },
+    { key: "last_quarter",  label: `Q${prevQ} ${prevQY}`, sub: "Last Quarter" },
+    { key: "current_year",  label: `Year ${curY}`,     sub: "Current Year" },
+    { key: "previous_year", label: `Year ${curY - 1}`, sub: "Previous Year" },
+    { key: "custom",        label: "Custom Range",     sub: "Pick dates" },
   ];
 
-  // Fetch allowed recipients (owner + sales_head only)
+  const [datePreset, setDatePreset]       = useState("today");
+  const [customStart, setCustomStart]     = useState(format(subDays(now, 6), "yyyy-MM-dd"));
+  const [customEnd, setCustomEnd]         = useState(format(now, "yyyy-MM-dd"));
+
+  // Employee selection (owner/sales_head only)
+  const [empSearch, setEmpSearch]         = useState("");
+  const [selectedEmpIds, setSelectedEmpIds] = useState([]);
+
+  // Recipients
+  const [recipients, setRecipients]       = useState([]);
+  const [selectedEmails, setSelectedEmails] = useState([]);
+  const [recipSearch, setRecipSearch]     = useState("");
+
+  // Sending
+  const [loadingStep, setLoadingStep]     = useState(0);
+  const [result, setResult]               = useState(null);
+
+  const LOADING_MSGS = [
+    "Fetching sales data…",
+    "Generating PDF report…",
+    "Composing email…",
+    "Sending…",
+  ];
+
+  // Steps — employees step only for owner/sales_head
+  const steps = useMemo(() =>
+    isOwnerOrHeadModal
+      ? ["date", "employees", "recipients", "preview"]
+      : ["date", "recipients", "preview"],
+    [isOwnerOrHeadModal]
+  );
+  const STEP_LABELS = { date: "Date Range", employees: "Employees", recipients: "Recipients", preview: "Preview" };
+  const stepIndex = steps.indexOf(step);
+
+  const goNext = () => {
+    const i = stepIndex + 1;
+    if (i < steps.length) setStep(steps[i]);
+  };
+  const goBack = () => {
+    const i = stepIndex - 1;
+    if (i >= 0) setStep(steps[i]);
+  };
+
+  // Fetch recipients on mount
   useEffect(() => {
     (async () => {
       try {
@@ -431,232 +481,436 @@ function SendDSRModal({ onClose }) {
     })();
   }, [user]);
 
-  // Close dropdown on outside click
-  useEffect(() => {
-    const h = (e) => { if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setDropdownOpen(false); };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, []);
+  // Derived
+  const filteredEmps = useMemo(() => {
+    if (!empSearch.trim()) return viewableEmployees;
+    const q = empSearch.toLowerCase();
+    return viewableEmployees.filter(u =>
+      (u.full_name || "").toLowerCase().includes(q) ||
+      (u.email || "").toLowerCase().includes(q) ||
+      (u.role || "").toLowerCase().includes(q)
+    );
+  }, [viewableEmployees, empSearch]);
 
-  // Reset datePeriod when report type changes
-  useEffect(() => {
-    const now = new Date();
-    if      (reportType === "daily")       setDatePeriod(format(now, "yyyy-MM-dd"));
-    else if (reportType === "weekly")      setDatePeriod(format(now, "yyyy-MM-dd"));
-    else if (reportType === "monthly")     setDatePeriod(format(now, "yyyy-MM"));
-    else if (reportType === "quarterly")   setDatePeriod(`${getYear(now)}-Q${getQuarter(now)}`);
-    else if (reportType === "half_yearly") setDatePeriod(`${getYear(now)}-${getMonth(now) < 6 ? "H1" : "H2"}`);
-    else if (reportType === "yearly")      setDatePeriod(String(getYear(now)));
-  }, [reportType]);
+  const filteredRecipients = useMemo(() => {
+    const q = recipSearch.toLowerCase();
+    return recipients.filter(r =>
+      !selectedEmails.includes(r.email) &&
+      (q === "" || (r.name || "").toLowerCase().includes(q) || (r.email || "").toLowerCase().includes(q))
+    );
+  }, [recipients, selectedEmails, recipSearch]);
 
-  const rlabel = (r) => r === "owner" ? "Super Admin" : "Sales Head";
-  const filtered = recipients.filter((r) => !selected.includes(r.email) && r.label.toLowerCase().includes(searchQuery.toLowerCase()));
+  const selectedPreset    = DATE_PRESETS.find(p => p.key === datePreset);
+  const selectedEmpNames  = viewableEmployees.filter(u => selectedEmpIds.includes(u.id)).map(u => u.full_name || u.email);
+  const selectedRcpNames  = recipients.filter(r => selectedEmails.includes(r.email)).map(r => r.name);
 
-  const addRecipient    = (email) => { if (!selected.includes(email)) setSelected(s => [...s, email]); setSearchQuery(""); setDropdownOpen(false); };
-  const removeRecipient = (email) => setSelected(s => s.filter(e => e !== email));
-  const byEmail         = (email) => recipients.find(r => r.email === email);
+  const rlabel    = r => r === "owner" ? "Super Admin" : r === "sales_head" ? "Sales Head" : (r || "").replace(/_/g, " ");
+  const roleClr   = r => r === "owner" ? "#6366F1" : r === "sales_head" ? "#10B981" : "#3B82F6";
 
+  const dateValid = datePreset !== "custom" || (customStart && customEnd && customStart <= customEnd);
+
+  // Send handler
   const handleSend = async () => {
-    if (!selected.length) { toast.error("Please select at least one recipient"); return; }
-    setIsLoading(true);
+    setStep("sending");
+    setLoadingStep(0);
+    const t1 = setTimeout(() => setLoadingStep(1), 900);
+    const t2 = setTimeout(() => setLoadingStep(2), 2000);
+    const t3 = setTimeout(() => setLoadingStep(3), 3200);
     try {
       const token = await user.getIdToken();
-      const res = await fetch(`${API}/api/reports/send-dsr`, {
-        method:  "POST",
+      const body = {
+        selectedEmails,
+        selectedEmployeeIds: selectedEmpIds,
+        datePreset,
+        ...(datePreset === "custom" ? { customStart, customEnd } : {}),
+      };
+      const res  = await fetch(`${API}/api/reports/send-dsr`, {
+        method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body:    JSON.stringify({ selectedEmails: selected, reportType, datePeriod }),
+        body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || data.details || "Send failed");
-      toast.success(`DSR sent to ${data.sent_to} recipient${data.sent_to !== 1 ? "s" : ""} with PDF attached`);
-      onClose();
+      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
+      setLoadingStep(3);
+      await new Promise(r => setTimeout(r, 350));
+      if (!res.ok) {
+        setResult({ success: false, error: data.error || data.details || "Send failed" });
+        setStep("error");
+      } else {
+        setResult({ success: true, sent_to: data.sent_to });
+        setStep("done");
+      }
     } catch (err) {
-      toast.error(err.message || "Failed to send DSR");
-    } finally {
-      setIsLoading(false);
+      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
+      setResult({ success: false, error: err.message || "Network error" });
+      setStep("error");
     }
   };
 
-  const iS = { padding: "9px 12px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 13, width: "100%", boxSizing: "border-box" };
-  const lS = { display: "block", fontSize: 11, fontWeight: 700, color: "var(--text-2)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" };
-
-  const renderDatePicker = () => {
-    if (reportType === "daily") return (
-      <div>
-        <label style={lS}>Report Date <span style={{ color: "#EF4444" }}>*</span></label>
-        <input type="date" value={datePeriod} max={format(new Date(), "yyyy-MM-dd")}
-          onChange={(e) => setDatePeriod(e.target.value)} style={iS} />
-      </div>
-    );
-    if (reportType === "weekly") return (
-      <div>
-        <label style={lS}>Any Date in the Target Week <span style={{ color: "#EF4444" }}>*</span></label>
-        <input type="date" value={datePeriod} max={format(new Date(), "yyyy-MM-dd")}
-          onChange={(e) => setDatePeriod(e.target.value)} style={iS} />
-        <p style={{ margin: "5px 0 0", fontSize: 11, color: "var(--text-muted)" }}>The full Monday – Sunday week containing this date will be used.</p>
-      </div>
-    );
-    if (reportType === "monthly") return (
-      <div>
-        <label style={lS}>Month <span style={{ color: "#EF4444" }}>*</span></label>
-        <input type="month" value={datePeriod} max={format(new Date(), "yyyy-MM")}
-          onChange={(e) => setDatePeriod(e.target.value)} style={iS} />
-      </div>
-    );
-    if (reportType === "quarterly") {
-      const [qYear = String(currentYear), qNum = "Q2"] = datePeriod.split("-");
-      return (
-        <div>
-          <label style={lS}>Quarter & Year <span style={{ color: "#EF4444" }}>*</span></label>
-          <div style={{ display: "flex", gap: 8 }}>
-            <select value={qNum} onChange={(e) => setDatePeriod(`${qYear}-${e.target.value}`)} style={{ ...iS, flex: 1, width: "auto" }}>
-              <option value="Q1">Q1 — January to March</option>
-              <option value="Q2">Q2 — April to June</option>
-              <option value="Q3">Q3 — July to September</option>
-              <option value="Q4">Q4 — October to December</option>
-            </select>
-            <select value={qYear} onChange={(e) => setDatePeriod(`${e.target.value}-${qNum}`)} style={{ ...iS, width: 90 }}>
-              {years.map((y) => <option key={y} value={y}>{y}</option>)}
-            </select>
-          </div>
-        </div>
-      );
-    }
-    if (reportType === "half_yearly") {
-      const [hyYear = String(currentYear), hyH = "H1"] = datePeriod.split("-");
-      return (
-        <div>
-          <label style={lS}>Half-Year & Year <span style={{ color: "#EF4444" }}>*</span></label>
-          <div style={{ display: "flex", gap: 8 }}>
-            <select value={hyH} onChange={(e) => setDatePeriod(`${hyYear}-${e.target.value}`)} style={{ ...iS, flex: 1, width: "auto" }}>
-              <option value="H1">H1 — January to June</option>
-              <option value="H2">H2 — July to December</option>
-            </select>
-            <select value={hyYear} onChange={(e) => setDatePeriod(`${e.target.value}-${hyH}`)} style={{ ...iS, width: 90 }}>
-              {years.map((y) => <option key={y} value={y}>{y}</option>)}
-            </select>
-          </div>
-        </div>
-      );
-    }
-    if (reportType === "yearly") return (
-      <div>
-        <label style={lS}>Year <span style={{ color: "#EF4444" }}>*</span></label>
-        <select value={datePeriod} onChange={(e) => setDatePeriod(e.target.value)} style={iS}>
-          {years.map((y) => <option key={y} value={y}>{y}</option>)}
-        </select>
-      </div>
-    );
-    return null;
-  };
+  const isSpecialStep = ["sending", "done", "error"].includes(step);
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)" }} onClick={onClose} />
+    <div style={{ position: "fixed", inset: 0, zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(5px)" }} onClick={() => { if (!isSpecialStep) onClose(); }} />
       <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: 14 }}
+        initial={{ opacity: 0, scale: 0.94, y: 18 }}
         animate={{ opacity: 1, scale: 1,    y: 0  }}
-        exit={{    opacity: 0, scale: 0.96, y: 14  }}
-        transition={{ duration: 0.18 }}
-        style={{ position: "relative", width: "100%", maxWidth: 480, background: "var(--surface)", borderRadius: 16, border: "1px solid var(--border)", boxShadow: "0 24px 60px rgba(0,0,0,0.28)", padding: "26px 28px", maxHeight: "90vh", overflowY: "auto" }}
+        exit={{    opacity: 0, scale: 0.94, y: 18  }}
+        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        style={{ position: "relative", width: "100%", maxWidth: 520, background: "var(--surface)", borderRadius: 20, border: "1px solid var(--border)", boxShadow: "0 32px 80px rgba(0,0,0,0.35)", overflow: "hidden", maxHeight: "92vh", display: "flex", flexDirection: "column" }}
       >
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em" }}>Generate & Send DSR</h2>
-            <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text-muted)" }}>Select recipients, report type, and period</p>
-          </div>
-          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", flexShrink: 0 }}>
-            <X size={14} />
-          </button>
-        </div>
+        {/* Rainbow accent bar */}
+        <div style={{ height: 3, background: "linear-gradient(90deg,#6366F1,#8B5CF6,#EC4899)", flexShrink: 0 }} />
 
-        {/* Recipients multi-select */}
-        <div style={{ marginBottom: 16 }}>
-          <label style={lS}>Send To <span style={{ color: "#EF4444" }}>*</span></label>
+        {/* Header + step indicator */}
+        {!isSpecialStep && (
+          <div style={{ padding: "20px 24px 0", flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em" }}>Generate & Send DSR</h2>
+                <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>Daily Sales Report — PDF + Email</p>
+              </div>
+              <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", flexShrink: 0 }}>
+                <X size={14} />
+              </button>
+            </div>
 
-          {/* Chips */}
-          {selected.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-              {selected.map((email) => {
-                const r = byEmail(email);
-                return (
-                  <div key={email} style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 8px 4px 10px", background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.3)", borderRadius: 20, fontSize: 12, fontWeight: 600, color: "#6366F1" }}>
-                    <span>{r ? r.name : email}</span>
-                    <button onClick={() => removeRecipient(email)} style={{ width: 16, height: 16, borderRadius: "50%", border: "none", background: "rgba(99,102,241,0.2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, color: "#6366F1" }}>
-                      <X size={9} />
-                    </button>
+            {/* Step pills */}
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
+              {steps.map((s, i) => (
+                <Fragment key={s}>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                    <div style={{ width: 26, height: 26, borderRadius: "50%", background: s === step ? "#6366F1" : i < stepIndex ? "#10B981" : "var(--surface-2)", border: `2px solid ${s === step ? "#6366F1" : i < stepIndex ? "#10B981" : "var(--border)"}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: s === step || i < stepIndex ? "#fff" : "var(--text-muted)", transition: "all 0.2s" }}>
+                      {i < stepIndex ? "✓" : i + 1}
+                    </div>
+                    <span style={{ fontSize: 9.5, fontWeight: 600, color: s === step ? "#6366F1" : "var(--text-muted)", whiteSpace: "nowrap" }}>{STEP_LABELS[s]}</span>
                   </div>
-                );
-              })}
+                  {i < steps.length - 1 && (
+                    <div style={{ flex: 1, height: 2, background: i < stepIndex ? "#10B981" : "var(--border)", margin: "0 5px", marginBottom: 18, transition: "background 0.25s" }} />
+                  )}
+                </Fragment>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Scrollable body */}
+        <div style={{ overflowY: "auto", flex: 1, padding: isSpecialStep ? 0 : "0 24px 20px" }} className="custom-scroll">
+
+          {/* ── Date step ── */}
+          {step === "date" && (
+            <div>
+              <p style={{ margin: "0 0 12px", fontSize: 12.5, fontWeight: 600, color: "var(--text-2)" }}>Select the date range for this report</p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 7 }}>
+                {DATE_PRESETS.map(p => (
+                  <button key={p.key} onClick={() => setDatePreset(p.key)}
+                    style={{ padding: "9px 8px", borderRadius: 10, border: `1.5px solid ${datePreset === p.key ? (p.key === "custom" ? "#8B5CF6" : "#6366F1") : "var(--border)"}`, background: datePreset === p.key ? (p.key === "custom" ? "rgba(139,92,246,0.1)" : "rgba(99,102,241,0.09)") : "var(--surface-2)", cursor: "pointer", textAlign: "left", transition: "all 0.14s" }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: datePreset === p.key ? (p.key === "custom" ? "#8B5CF6" : "#6366F1") : "var(--text)" }}>{p.label}</div>
+                    <div style={{ fontSize: 9.5, color: "var(--text-muted)", marginTop: 2 }}>{p.sub}</div>
+                  </button>
+                ))}
+              </div>
+
+              {datePreset === "custom" && (
+                <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: "block", fontSize: 10.5, fontWeight: 700, color: "var(--text-2)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.05em" }}>From</label>
+                    <input type="date" value={customStart} max={customEnd || format(now, "yyyy-MM-dd")}
+                      onChange={e => setCustomStart(e.target.value)}
+                      style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 13, width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: "block", fontSize: 10.5, fontWeight: 700, color: "var(--text-2)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.05em" }}>To</label>
+                    <input type="date" value={customEnd} min={customStart} max={format(now, "yyyy-MM-dd")}
+                      onChange={e => setCustomEnd(e.target.value)}
+                      style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 13, width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                </div>
+              )}
+              {datePreset === "custom" && customStart && customEnd && customStart > customEnd && (
+                <p style={{ fontSize: 11.5, color: "#EF4444", margin: "8px 0 0" }}>Start date must be before end date</p>
+              )}
             </div>
           )}
 
-          {/* Search + dropdown */}
-          <div ref={dropdownRef} style={{ position: "relative" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, ...iS, padding: "8px 10px", cursor: "text" }} onClick={() => setDropdownOpen(true)}>
-              <Search size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-              <input
-                placeholder={selected.length ? "Add another recipient…" : "Search Super Admins & Sales Heads…"}
-                value={searchQuery}
-                onChange={(e) => { setSearchQuery(e.target.value); setDropdownOpen(true); }}
-                onFocus={() => setDropdownOpen(true)}
-                style={{ border: "none", outline: "none", background: "transparent", color: "var(--text)", fontSize: 13, flex: 1, minWidth: 0 }}
-              />
-            </div>
-            {dropdownOpen && (
-              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20, marginTop: 4, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.18)", maxHeight: 200, overflowY: "auto" }}>
-                {recipients.length === 0 ? (
-                  <div style={{ padding: "12px 14px", fontSize: 12, color: "var(--text-muted)" }}>Loading recipients…</div>
-                ) : filtered.length === 0 ? (
-                  <div style={{ padding: "12px 14px", fontSize: 12, color: "var(--text-muted)" }}>{searchQuery ? "No matching recipients" : "All recipients already selected"}</div>
-                ) : (
-                  filtered.map((r) => (
-                    <div key={r.email} onClick={() => addRecipient(r.email)}
-                      style={{ padding: "10px 14px", cursor: "pointer", fontSize: 13, color: "var(--text)", display: "flex", alignItems: "center", justifyContent: "space-between", transition: "background 0.1s" }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = "var(--surface-2)"}
-                      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
-                      <div>
-                        <div style={{ fontWeight: 600 }}>{r.name}</div>
-                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.email}</div>
+          {/* ── Employees step (owner/sales_head only) ── */}
+          {step === "employees" && (
+            <div>
+              <p style={{ margin: "0 0 12px", fontSize: 12.5, fontWeight: 600, color: "var(--text-2)" }}>Choose whose data to include in the report</p>
+
+              {/* All team */}
+              <button onClick={() => setSelectedEmpIds([])}
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 10, border: `1.5px solid ${selectedEmpIds.length === 0 ? "#6366F1" : "var(--border)"}`, background: selectedEmpIds.length === 0 ? "rgba(99,102,241,0.08)" : "var(--surface-2)", cursor: "pointer", marginBottom: 9, textAlign: "left", transition: "all 0.14s" }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(99,102,241,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Users size={15} style={{ color: "#6366F1" }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: selectedEmpIds.length === 0 ? "#6366F1" : "var(--text)" }}>Entire Team</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{viewableEmployees.length} accessible employees</div>
+                </div>
+                {selectedEmpIds.length === 0 && <span style={{ fontSize: 12, color: "#6366F1", fontWeight: 800 }}>✓</span>}
+              </button>
+
+              {/* Search */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 9, marginBottom: 7 }}>
+                <Search size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                <input value={empSearch} onChange={e => setEmpSearch(e.target.value)} placeholder="Search by name, role…"
+                  style={{ border: "none", outline: "none", background: "transparent", color: "var(--text)", fontSize: 12.5, flex: 1, minWidth: 0 }} />
+                {empSearch && <button onClick={() => setEmpSearch("")} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 0 }}><X size={11} /></button>}
+              </div>
+
+              {/* List */}
+              <div style={{ maxHeight: 220, overflowY: "auto" }} className="custom-scroll">
+                {filteredEmps.map(u => {
+                  const on = selectedEmpIds.includes(u.id);
+                  const rc = roleClr(u.role);
+                  return (
+                    <button key={u.id} onClick={() => setSelectedEmpIds(prev => on ? prev.filter(id => id !== u.id) : [...prev, u.id])}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 11px", borderRadius: 8, border: `1px solid ${on ? rc + "33" : "var(--border)"}`, background: on ? rc + "0d" : "transparent", cursor: "pointer", marginBottom: 5, textAlign: "left", transition: "all 0.12s" }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 8, background: rc + "1a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: rc, flexShrink: 0 }}>
+                        {(u.full_name || "?").charAt(0).toUpperCase()}
                       </div>
-                      <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: r.role === "owner" ? "rgba(99,102,241,0.12)" : "rgba(16,185,129,0.12)", color: r.role === "owner" ? "#6366F1" : "#10B981", flexShrink: 0 }}>{rlabel(r.role)}</span>
-                    </div>
-                  ))
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.full_name}</div>
+                        <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{rlabel(u.role)}</div>
+                      </div>
+                      {on && <div style={{ width: 18, height: 18, borderRadius: "50%", background: rc, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "#fff", flexShrink: 0 }}>✓</div>}
+                    </button>
+                  );
+                })}
+                {filteredEmps.length === 0 && (
+                  <div style={{ textAlign: "center", padding: "20px 0", fontSize: 12, color: "var(--text-muted)" }}>
+                    {empSearch ? "No employees match your search" : "No accessible employees"}
+                  </div>
                 )}
               </div>
+
+              {selectedEmpIds.length > 0 && (
+                <p style={{ margin: "8px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>
+                  {selectedEmpIds.length} employee{selectedEmpIds.length !== 1 ? "s" : ""} selected
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* ── Recipients step ── */}
+          {step === "recipients" && (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <p style={{ margin: 0, fontSize: 12.5, fontWeight: 600, color: "var(--text-2)" }}>Who should receive this report?</p>
+                {recipients.length > 0 && (
+                  <button onClick={() => setSelectedEmails(recipients.map(r => r.email))}
+                    style={{ fontSize: 11, fontWeight: 700, color: "#6366F1", background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.2)", borderRadius: 6, padding: "3px 8px", cursor: "pointer" }}>
+                    Select All
+                  </button>
+                )}
+              </div>
+
+              {/* Chips */}
+              {selectedEmails.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 9 }}>
+                  {selectedEmails.map(email => {
+                    const r = recipients.find(x => x.email === email);
+                    return (
+                      <div key={email} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px 3px 10px", background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: 20, fontSize: 11.5, fontWeight: 600, color: "#6366F1" }}>
+                        <span>{r ? r.name : email}</span>
+                        <button onClick={() => setSelectedEmails(s => s.filter(e => e !== email))}
+                          style={{ width: 14, height: 14, borderRadius: "50%", border: "none", background: "rgba(99,102,241,0.2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, color: "#6366F1" }}>
+                          <X size={8} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Search */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 9, marginBottom: 7 }}>
+                <Search size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                <input value={recipSearch} onChange={e => setRecipSearch(e.target.value)}
+                  placeholder="Search Super Admins & Sales Heads…"
+                  style={{ border: "none", outline: "none", background: "transparent", color: "var(--text)", fontSize: 12.5, flex: 1, minWidth: 0 }} />
+              </div>
+
+              {/* Recipient list */}
+              <div style={{ maxHeight: 260, overflowY: "auto" }} className="custom-scroll">
+                {recipients.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "24px 0" }}>
+                    <Loader2 size={20} style={{ animation: "spin 0.8s linear infinite", color: "#6366F1", margin: "0 auto 8px" }} />
+                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading recipients…</div>
+                  </div>
+                ) : filteredRecipients.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "16px 0", fontSize: 12, color: "var(--text-muted)" }}>
+                    {recipSearch ? "No recipients match your search" : "All recipients already selected"}
+                  </div>
+                ) : (
+                  filteredRecipients.map(r => {
+                    const rc = roleClr(r.role);
+                    return (
+                      <button key={r.email} onClick={() => setSelectedEmails(s => [...s, r.email])}
+                        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 9, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", marginBottom: 5, textAlign: "left", transition: "background 0.1s" }}
+                        onMouseEnter={e => e.currentTarget.style.background = "var(--surface-2)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <div style={{ width: 32, height: 32, borderRadius: 9, background: rc + "18", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: rc, flexShrink: 0 }}>
+                          {(r.name || "?").charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{r.name}</div>
+                          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.email}</div>
+                        </div>
+                        <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: rc + "15", color: rc, whiteSpace: "nowrap", flexShrink: 0 }}>
+                          {rlabel(r.role)}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Preview step ── */}
+          {step === "preview" && (
+            <div>
+              <p style={{ margin: "0 0 14px", fontSize: 12.5, fontWeight: 600, color: "var(--text-2)" }}>Review before sending</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                <div style={{ padding: "12px 14px", background: "var(--surface-2)", borderRadius: 11, border: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>Date Range</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>{selectedPreset?.label}</div>
+                  {datePreset === "custom" && <div style={{ fontSize: 11.5, color: "var(--text-2)", marginTop: 3 }}>{customStart} → {customEnd}</div>}
+                </div>
+
+                {isOwnerOrHeadModal && (
+                  <div style={{ padding: "12px 14px", background: "var(--surface-2)", borderRadius: 11, border: "1px solid var(--border)" }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>Employees Included</div>
+                    {selectedEmpIds.length === 0 ? (
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>Entire Team ({viewableEmployees.length} employees)</div>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{selectedEmpIds.length} employee{selectedEmpIds.length !== 1 ? "s" : ""}</div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>{selectedEmpNames.join(", ")}</div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <div style={{ padding: "12px 14px", background: "var(--surface-2)", borderRadius: 11, border: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>Send To</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{selectedEmails.length} recipient{selectedEmails.length !== 1 ? "s" : ""}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>{selectedRcpNames.join(", ")}</div>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "10px 12px", background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.18)", borderRadius: 9, fontSize: 12, color: "var(--text-2)" }}>
+                  <FileText size={13} style={{ color: "#6366F1", flexShrink: 0 }} />
+                  <span>A professional A4 PDF will be generated and attached to the email.</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Sending ── */}
+          {step === "sending" && (
+            <div style={{ padding: "44px 24px", display: "flex", flexDirection: "column", alignItems: "center", gap: 22 }}>
+              <div style={{ position: "relative", width: 68, height: 68 }}>
+                <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.1, repeat: Infinity, ease: "linear" }}
+                  style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "3px solid transparent", borderTopColor: "#6366F1", borderRightColor: "#8B5CF6" }} />
+                <div style={{ position: "absolute", inset: 9, borderRadius: "50%", background: "rgba(99,102,241,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Send size={19} style={{ color: "#6366F1" }} />
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 9, width: "100%", maxWidth: 290 }}>
+                {LOADING_MSGS.map((msg, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, opacity: i <= loadingStep ? 1 : 0.3, transition: "opacity 0.35s" }}>
+                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: i < loadingStep ? "#10B981" : i === loadingStep ? "#6366F1" : "var(--border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "background 0.3s" }}>
+                      {i < loadingStep ? (
+                        <span style={{ fontSize: 9, color: "#fff" }}>✓</span>
+                      ) : i === loadingStep ? (
+                        <motion.div animate={{ rotate: 360 }} transition={{ duration: 0.7, repeat: Infinity, ease: "linear" }}
+                          style={{ width: 9, height: 9, borderRadius: "50%", border: "2px solid transparent", borderTopColor: "#fff" }} />
+                      ) : (
+                        <span style={{ fontSize: 9, color: "var(--text-muted)", fontWeight: 700 }}>{i + 1}</span>
+                      )}
+                    </div>
+                    <span style={{ fontSize: 12.5, fontWeight: i === loadingStep ? 700 : 500, color: i === loadingStep ? "var(--text)" : "var(--text-muted)" }}>{msg}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Success ── */}
+          {step === "done" && (
+            <div style={{ padding: "44px 24px", display: "flex", flexDirection: "column", alignItems: "center", gap: 16, textAlign: "center" }}>
+              <motion.div initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 200, damping: 18 }}
+                style={{ width: 68, height: 68, borderRadius: "50%", background: "rgba(16,185,129,0.12)", border: "2px solid rgba(16,185,129,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <CheckCircle2 size={30} style={{ color: "#10B981" }} />
+              </motion.div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "var(--text)" }}>Report Sent!</h3>
+                <p style={{ margin: "5px 0 0", fontSize: 12.5, color: "var(--text-muted)" }}>
+                  Delivered to {result?.sent_to} recipient{result?.sent_to !== 1 ? "s" : ""} with PDF attached
+                </p>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-2)", padding: "8px 14px", background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 9 }}>
+                ✓ PDF generated &nbsp;·&nbsp; ✓ Email delivered &nbsp;·&nbsp; ✓ Audit logged
+              </div>
+              <button onClick={onClose} style={{ padding: "9px 28px", borderRadius: 10, border: "none", background: "#10B981", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", marginTop: 4 }}>
+                Done
+              </button>
+            </div>
+          )}
+
+          {/* ── Error ── */}
+          {step === "error" && (
+            <div style={{ padding: "44px 24px", display: "flex", flexDirection: "column", alignItems: "center", gap: 16, textAlign: "center" }}>
+              <motion.div initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 200, damping: 18 }}
+                style={{ width: 68, height: 68, borderRadius: "50%", background: "rgba(239,68,68,0.1)", border: "2px solid rgba(239,68,68,0.22)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <AlertCircle size={30} style={{ color: "#EF4444" }} />
+              </motion.div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: "var(--text)" }}>Send Failed</h3>
+                <p style={{ margin: "5px 0 0", fontSize: 12.5, color: "var(--text-muted)", maxWidth: 320 }}>{result?.error}</p>
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setStep("preview")} style={{ padding: "9px 18px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  Back
+                </button>
+                <button onClick={handleSend} style={{ padding: "9px 20px", borderRadius: 10, border: "none", background: "#EF4444", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                  Retry
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer nav */}
+        {!isSpecialStep && (
+          <div style={{ padding: "14px 24px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+            {stepIndex > 0 ? (
+              <button onClick={goBack} style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 15px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                <ChevronLeft size={13} /> Back
+              </button>
+            ) : (
+              <button onClick={onClose} style={{ padding: "8px 15px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                Cancel
+              </button>
+            )}
+
+            {step === "preview" ? (
+              <button onClick={handleSend} disabled={!selectedEmails.length}
+                style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 22px", borderRadius: 10, border: "none", background: "#6366F1", color: "#fff", fontSize: 13, fontWeight: 700, cursor: !selectedEmails.length ? "not-allowed" : "pointer", opacity: !selectedEmails.length ? 0.5 : 1 }}>
+                <Send size={13} /> Send DSR
+              </button>
+            ) : (
+              <button onClick={goNext}
+                disabled={!dateValid && step === "date" || (step === "recipients" && selectedEmails.length === 0)}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 22px", borderRadius: 10, border: "none", background: "#6366F1", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: ((!dateValid && step === "date") || (step === "recipients" && selectedEmails.length === 0)) ? 0.5 : 1 }}>
+                Next <ChevronRight size={13} />
+              </button>
             )}
           </div>
-        </div>
-
-        {/* Report Type */}
-        <div style={{ marginBottom: 16 }}>
-          <label style={lS}>Report Type <span style={{ color: "#EF4444" }}>*</span></label>
-          <select value={reportType} onChange={(e) => setReportType(e.target.value)} style={iS}>
-            {REPORT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-        </div>
-
-        {/* Dynamic Date Picker */}
-        <div style={{ marginBottom: 16 }}>{renderDatePicker()}</div>
-
-        {/* PDF info strip */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.18)", borderRadius: 9, marginBottom: 22, fontSize: 12, color: "var(--text-2)" }}>
-          <FileText size={13} style={{ color: "#6366F1", flexShrink: 0 }} />
-          <span>A professional A4 PDF report will be generated and attached to the email.</span>
-        </div>
-
-        {/* Actions */}
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button onClick={onClose} disabled={isLoading}
-            style={{ padding: "9px 20px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-            Cancel
-          </button>
-          <button onClick={handleSend} disabled={isLoading || !selected.length}
-            style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#6366F1", color: "#fff", fontSize: 13, fontWeight: 700, cursor: isLoading || !selected.length ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 8, opacity: !selected.length ? 0.55 : 1, transition: "opacity 0.15s" }}>
-            {isLoading ? <><Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} /> Generating…</> : <><Send size={14} /> Generate &amp; Send</>}
-          </button>
-        </div>
+        )}
       </motion.div>
     </div>
   );
@@ -1993,7 +2247,7 @@ export default function DSRPage() {
 
       {/* ── Send DSR Modal ── */}
       <AnimatePresence>
-        {dsrModalOpen && <SendDSRModal onClose={() => setDsrModalOpen(false)} />}
+        {dsrModalOpen && <SendDSRModal onClose={() => setDsrModalOpen(false)} viewableEmployees={viewableUsers} />}
       </AnimatePresence>
 
       {/* ── DSR Config Modal (owner only) ── */}
