@@ -1,6 +1,7 @@
 const cron = require("node-cron");
 const { supabase } = require("../config/db");
 const { sendNotificationEmail, sendMail, sendMeetingReminderEmail } = require("../config/mail");
+const { generateTSRData, buildTSRHtml, buildTSRText } = require("./dsrReport");
 
 function startCronJobs() {
   // Daily at 9:00 AM UTC — follow-up reminders
@@ -104,12 +105,22 @@ function startCronJobs() {
     }
   });
 
+  // Daily at 14:30 UTC (8:00 PM IST) — automated DSR to Super Admin
+  cron.schedule("30 14 * * *", async () => {
+    console.log("[CRON] Running daily DSR report...");
+    try {
+      await sendAutomatedDSR();
+    } catch (err) {
+      console.error("[CRON] DSR report error:", err.message);
+    }
+  });
+
   // Meeting reminders — runs every 5 minutes to catch 15-min, 1-hour, and 24-hour windows
   cron.schedule("*/5 * * * *", async () => {
     try { await sendMeetingReminders(); } catch (err) { console.error("[CRON] Meeting reminders error:", err.message); }
   });
 
-  console.log("[CRON] Scheduled: follow-up reminders (9 AM UTC), stale leads alert (8 AM UTC), security report (14:30 UTC / 8 PM IST), meeting reminders (every 5 min)");
+  console.log("[CRON] Scheduled: follow-up reminders (9 AM UTC), stale leads alert (8 AM UTC), security report (14:30 UTC / 8 PM IST), DSR report (14:30 UTC / 8 PM IST), meeting reminders (every 5 min)");
 }
 
 async function sendDailySecurityReport() {
@@ -336,6 +347,51 @@ async function sendMeetingReminders() {
       }
     }
   }
+}
+
+// ─── Automated DSR ────────────────────────────────────────────────────────────
+async function sendAutomatedDSR() {
+  // Date range: today 00:00 → 20:00 IST
+  const now          = new Date();
+  const istOffsetMs  = 5.5 * 60 * 60 * 1000;
+  const todayIST     = new Date(now.getTime() + istOffsetMs);
+  const dateStr      = todayIST.toISOString().split("T")[0];
+  const dayStart     = new Date(`${dateStr}T00:00:00+05:30`).toISOString();
+  const dayEnd       = new Date(`${dateStr}T20:00:00+05:30`).toISOString();
+
+  const reportDate = todayIST.toLocaleDateString("en-IN", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+  });
+
+  let data;
+  try {
+    data = await generateTSRData(dayStart, dayEnd);
+  } catch (err) {
+    console.error("[CRON] DSR data fetch error:", err.message);
+    return;
+  }
+
+  if (!data) {
+    console.log("[CRON] DSR: no sales staff found, skipping.");
+    return;
+  }
+
+  // Send to Super Admin; fall back to configured email
+  const reportTo = data.ownerEmail
+    || process.env.SECURITY_REPORT_TEST_EMAIL
+    || "sarthak.tyagi@ccentrik.com";
+
+  const html = buildTSRHtml(data.staff, data.userStats, data.totals, reportDate);
+  const text = buildTSRText(data.staff, data.userStats, data.totals, reportDate);
+
+  await sendMail({
+    to:      reportTo,
+    subject: `Ccentrik Daily Sales Report — ${reportDate}`,
+    html,
+    text,
+  });
+
+  console.log(`[CRON] DSR sent to ${reportTo}. Staff: ${data.totals.totalStaff}, Activities: ${data.totals.activities}, Deals Won: ${data.totals.dealsWon}`);
 }
 
 module.exports = { startCronJobs };

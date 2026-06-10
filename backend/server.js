@@ -108,6 +108,7 @@ app.use("/api/ai",         require("./routes/ai"));
 app.use("/api/meetings",   require("./routes/meetings"));
 app.use("/api/targets",    require("./routes/targets"));
 app.use("/api/email",      require("./routes/email"));
+app.use("/api/reports",    require("./routes/reports"));
 
 // Diagnostic: test SMTP delivery — tries MAIL_USER/MAIL_PASS then GMAIL_USER/GMAIL_PASS
 app.post("/api/test-email", async (req, res) => {
@@ -146,7 +147,142 @@ app.post("/api/test-email", async (req, res) => {
   }
 
   const anySuccess = results.some((r) => r.success);
-  res.status(anySuccess ? 200 : 500).json({ anySuccess, results });
+
+  // Also test Resend
+  let resendResult = null;
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const { Resend } = require("resend");
+      const r = new Resend(process.env.RESEND_API_KEY);
+      const fromAddr = process.env.RESEND_FROM || process.env.GMAIL_USER || process.env.MAIL_USER || "sarthak.tyagi@ccentrik.com";
+      const sent = await r.emails.send({
+        from: `Ccentrik CRM <${fromAddr}>`,
+        to: [to],
+        subject: "Ccentrik CRM — Resend Test",
+        html: `<p>Resend working from <strong>${fromAddr}</strong>.</p>`,
+        text: `Resend working from ${fromAddr}.`,
+      });
+      resendResult = sent.error
+        ? { success: false, from: fromAddr, error: sent.error.message || JSON.stringify(sent.error) }
+        : { success: true, from: fromAddr, id: sent.data?.id };
+    } catch (err) {
+      resendResult = { success: false, error: err.message };
+    }
+  } else {
+    resendResult = { success: false, error: "RESEND_API_KEY not set" };
+  }
+
+  res.status(anySuccess || resendResult?.success ? 200 : 500).json({ anySmtpSuccess: anySuccess, smtpResults: results, resend: resendResult });
+});
+
+// GET /api/debug-mail — open directly in browser to diagnose real email errors
+app.get("/api/debug-mail", async (req, res) => {
+  const { supabase } = require("./config/db");
+  const { Resend }   = require("resend");
+  const result = { gmailAccounts: null, resend: null, env: {} };
+
+  result.env = {
+    GMAIL_USER:     process.env.GMAIL_USER     || "NOT SET",
+    MAIL_USER:      process.env.MAIL_USER      || "NOT SET",
+    RESEND_API_KEY: process.env.RESEND_API_KEY ? "SET" : "NOT SET",
+    RESEND_FROM:    process.env.RESEND_FROM    || "NOT SET",
+  };
+
+  // Compare profiles.id vs email_accounts.user_id for sarthak.tyagi
+  try {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id, email, full_name")
+      .eq("email", "sarthak.tyagi@ccentrik.com")
+      .maybeSingle();
+    const { data: ea } = await supabase
+      .from("email_accounts")
+      .select("id, email, user_id")
+      .eq("email", "sarthak.tyagi@ccentrik.com")
+      .eq("provider", "gmail")
+      .maybeSingle();
+    result.idCheck = {
+      profiles_id:        profile?.id || "NOT FOUND",
+      email_accounts_user_id: ea?.user_id || "NOT FOUND",
+      match:              profile?.id === ea?.user_id,
+    };
+  } catch (e) { result.idCheck = { error: e.message }; }
+
+  try {
+    const { data: accounts } = await supabase
+      .from("email_accounts")
+      .select("id, email, user_id, is_active, token_expiry, refresh_token")
+      .eq("is_active", true)
+      .eq("provider", "gmail")
+      .limit(5);
+    result.gmailAccounts = (accounts || []).map(a => ({
+      email:             a.email,
+      user_id:           a.user_id,
+      has_refresh_token: !!a.refresh_token,
+      token_expiry:      a.token_expiry,
+      token_expired:     a.token_expiry ? new Date(a.token_expiry) < new Date() : "unknown",
+    }));
+  } catch (e) { result.gmailAccounts = { error: e.message }; }
+
+  // Test Gmail API send using sarthak.tyagi account specifically (or first active)
+  try {
+    const testEmail = req.query.email || "sarthak.tyagi@ccentrik.com";
+    let query = supabase
+      .from("email_accounts")
+      .select("id, email, access_token, refresh_token, token_expiry")
+      .eq("is_active", true)
+      .eq("provider", "gmail");
+    if (testEmail) query = query.eq("email", testEmail);
+    const { data: accs } = await query.limit(1);
+    if (accs?.length) {
+      const acc = accs[0];
+      let token = acc.access_token;
+      // refresh if expired
+      if (!acc.token_expiry || new Date(acc.token_expiry) <= new Date(Date.now() + 60000)) {
+        try {
+          const tr = await fetch("https://oauth2.googleapis.com/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({ client_id: process.env.GMAIL_CLIENT_ID, client_secret: process.env.GMAIL_CLIENT_SECRET, refresh_token: acc.refresh_token, grant_type: "refresh_token" }),
+          });
+          const td = await tr.json();
+          token = td.access_token || token;
+        } catch {}
+      }
+      // Build simple test MIME
+      const mime = [`From: Debug <${acc.email}>`, `To: sarthaktyagi120@gmail.com`, `Subject: Gmail API Test`, `MIME-Version: 1.0`, `Content-Type: text/plain`, ``, `Gmail API test from debug endpoint`].join("\r\n");
+      const raw  = Buffer.from(mime).toString("base64url");
+      const gr   = await fetch("https://www.googleapis.com/gmail/v1/users/me/messages/send", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ raw }),
+      });
+      const gd = await gr.json().catch(() => ({}));
+      result.gmailApiTest = gr.ok ? { success: true, from: acc.email, id: gd.id } : { success: false, from: acc.email, status: gr.status, error: gd.error?.message || JSON.stringify(gd.error) };
+    } else {
+      result.gmailApiTest = { success: false, error: "No active Gmail accounts in email_accounts table" };
+    }
+  } catch (e) { result.gmailApiTest = { success: false, error: e.message }; }
+
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const r = new Resend(process.env.RESEND_API_KEY);
+      const fromAddr = process.env.RESEND_FROM || process.env.GMAIL_USER || process.env.MAIL_USER || "sarthak.tyagi@ccentrik.com";
+      const sent = await r.emails.send({
+        from: `Ccentrik Debug <${fromAddr}>`,
+        to:   ["sarthaktyagi120@gmail.com"],
+        subject: "Debug Email Test",
+        html: "<p>debug</p>", text: "debug",
+      });
+      result.resend = sent.error
+        ? { success: false, from: fromAddr, error: JSON.stringify(sent.error) }
+        : { success: true,  from: fromAddr, id: sent.data?.id };
+    } catch (e) { result.resend = { success: false, error: e.message }; }
+  } else {
+    result.resend = { success: false, error: "RESEND_API_KEY not set" };
+  }
+
+  res.json(result);
 });
 
 // Global error handler
