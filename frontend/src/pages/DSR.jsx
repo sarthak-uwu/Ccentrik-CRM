@@ -10,7 +10,7 @@ import {
   BarChart2, Clock, AlertCircle, ChevronLeft, ChevronRight, Calendar,
   Users, Target, ArrowRight, Award, Download, Printer,
   LayoutGrid, CalendarDays, PieChart, Activity, X, Search,
-  DollarSign, Star, BarChart3, Bell, Send, Loader2,
+  DollarSign, Star, BarChart3, Bell, Send, Loader2, Settings,
 } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
@@ -395,14 +395,18 @@ function DSRActivityCard({ act, cfg, timestampFmt, selectedUser }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   SEND DSR MODAL
+   SEND DSR MODAL  —  multi-select individual recipients + PDF attachment
 ═══════════════════════════════════════════════════════════════════════ */
 function SendDSRModal({ onClose }) {
-  const { user }                            = useAuth();
-  const [recipientType, setRecipientType]  = useState("");
-  const [reportType, setReportType]        = useState("daily");
-  const [datePeriod, setDatePeriod]        = useState(format(new Date(), "yyyy-MM-dd"));
-  const [isLoading, setIsLoading]          = useState(false);
+  const { user }                          = useAuth();
+  const dropdownRef                       = useRef(null);
+  const [recipients, setRecipients]       = useState([]);
+  const [selected, setSelected]           = useState([]); // email strings
+  const [searchQuery, setSearchQuery]     = useState("");
+  const [dropdownOpen, setDropdownOpen]   = useState(false);
+  const [reportType, setReportType]       = useState("daily");
+  const [datePeriod, setDatePeriod]       = useState(format(new Date(), "yyyy-MM-dd"));
+  const [isLoading, setIsLoading]         = useState(false);
 
   const currentYear = getYear(new Date());
   const years = Array.from({ length: 6 }, (_, i) => currentYear - i);
@@ -416,30 +420,55 @@ function SendDSRModal({ onClose }) {
     { value: "yearly",      label: "Yearly Report" },
   ];
 
-  // Reset datePeriod to a sensible default when report type changes
+  // Fetch allowed recipients (owner + sales_head only)
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch(`${API}/api/reports/recipients`, { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok) setRecipients(await res.json());
+      } catch {}
+    })();
+  }, [user]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const h = (e) => { if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setDropdownOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  // Reset datePeriod when report type changes
   useEffect(() => {
     const now = new Date();
-    if      (reportType === "daily")        setDatePeriod(format(now, "yyyy-MM-dd"));
-    else if (reportType === "weekly")       setDatePeriod(format(now, "yyyy-MM-dd"));
-    else if (reportType === "monthly")      setDatePeriod(format(now, "yyyy-MM"));
-    else if (reportType === "quarterly")    setDatePeriod(`${getYear(now)}-Q${getQuarter(now)}`);
-    else if (reportType === "half_yearly")  setDatePeriod(`${getYear(now)}-${getMonth(now) < 6 ? "H1" : "H2"}`);
-    else if (reportType === "yearly")       setDatePeriod(String(getYear(now)));
+    if      (reportType === "daily")       setDatePeriod(format(now, "yyyy-MM-dd"));
+    else if (reportType === "weekly")      setDatePeriod(format(now, "yyyy-MM-dd"));
+    else if (reportType === "monthly")     setDatePeriod(format(now, "yyyy-MM"));
+    else if (reportType === "quarterly")   setDatePeriod(`${getYear(now)}-Q${getQuarter(now)}`);
+    else if (reportType === "half_yearly") setDatePeriod(`${getYear(now)}-${getMonth(now) < 6 ? "H1" : "H2"}`);
+    else if (reportType === "yearly")      setDatePeriod(String(getYear(now)));
   }, [reportType]);
 
+  const rlabel = (r) => r === "owner" ? "Super Admin" : "Sales Head";
+  const filtered = recipients.filter((r) => !selected.includes(r.email) && r.label.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  const addRecipient    = (email) => { if (!selected.includes(email)) setSelected(s => [...s, email]); setSearchQuery(""); setDropdownOpen(false); };
+  const removeRecipient = (email) => setSelected(s => s.filter(e => e !== email));
+  const byEmail         = (email) => recipients.find(r => r.email === email);
+
   const handleSend = async () => {
-    if (!recipientType) { toast.error("Please select a recipient"); return; }
+    if (!selected.length) { toast.error("Please select at least one recipient"); return; }
     setIsLoading(true);
     try {
       const token = await user.getIdToken();
-      const res   = await fetch(`${API}/api/reports/send-dsr`, {
+      const res = await fetch(`${API}/api/reports/send-dsr`, {
         method:  "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body:    JSON.stringify({ recipientType, reportType, datePeriod }),
+        body:    JSON.stringify({ selectedEmails: selected, reportType, datePeriod }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || data.details || "Send failed");
-      toast.success(`DSR sent to ${data.sent_to} recipient${data.sent_to !== 1 ? "s" : ""}`);
+      toast.success(`DSR sent to ${data.sent_to} recipient${data.sent_to !== 1 ? "s" : ""} with PDF attached`);
       onClose();
     } catch (err) {
       toast.error(err.message || "Failed to send DSR");
@@ -459,7 +488,6 @@ function SendDSRModal({ onClose }) {
           onChange={(e) => setDatePeriod(e.target.value)} style={iS} />
       </div>
     );
-
     if (reportType === "weekly") return (
       <div>
         <label style={lS}>Any Date in the Target Week <span style={{ color: "#EF4444" }}>*</span></label>
@@ -468,7 +496,6 @@ function SendDSRModal({ onClose }) {
         <p style={{ margin: "5px 0 0", fontSize: 11, color: "var(--text-muted)" }}>The full Monday – Sunday week containing this date will be used.</p>
       </div>
     );
-
     if (reportType === "monthly") return (
       <div>
         <label style={lS}>Month <span style={{ color: "#EF4444" }}>*</span></label>
@@ -476,49 +503,42 @@ function SendDSRModal({ onClose }) {
           onChange={(e) => setDatePeriod(e.target.value)} style={iS} />
       </div>
     );
-
     if (reportType === "quarterly") {
       const [qYear = String(currentYear), qNum = "Q2"] = datePeriod.split("-");
       return (
         <div>
           <label style={lS}>Quarter & Year <span style={{ color: "#EF4444" }}>*</span></label>
           <div style={{ display: "flex", gap: 8 }}>
-            <select value={qNum} onChange={(e) => setDatePeriod(`${qYear}-${e.target.value}`)}
-              style={{ ...iS, flex: 1, width: "auto" }}>
+            <select value={qNum} onChange={(e) => setDatePeriod(`${qYear}-${e.target.value}`)} style={{ ...iS, flex: 1, width: "auto" }}>
               <option value="Q1">Q1 — January to March</option>
               <option value="Q2">Q2 — April to June</option>
               <option value="Q3">Q3 — July to September</option>
               <option value="Q4">Q4 — October to December</option>
             </select>
-            <select value={qYear} onChange={(e) => setDatePeriod(`${e.target.value}-${qNum}`)}
-              style={{ ...iS, width: 90 }}>
+            <select value={qYear} onChange={(e) => setDatePeriod(`${e.target.value}-${qNum}`)} style={{ ...iS, width: 90 }}>
               {years.map((y) => <option key={y} value={y}>{y}</option>)}
             </select>
           </div>
         </div>
       );
     }
-
     if (reportType === "half_yearly") {
       const [hyYear = String(currentYear), hyH = "H1"] = datePeriod.split("-");
       return (
         <div>
           <label style={lS}>Half-Year & Year <span style={{ color: "#EF4444" }}>*</span></label>
           <div style={{ display: "flex", gap: 8 }}>
-            <select value={hyH} onChange={(e) => setDatePeriod(`${hyYear}-${e.target.value}`)}
-              style={{ ...iS, flex: 1, width: "auto" }}>
+            <select value={hyH} onChange={(e) => setDatePeriod(`${hyYear}-${e.target.value}`)} style={{ ...iS, flex: 1, width: "auto" }}>
               <option value="H1">H1 — January to June</option>
               <option value="H2">H2 — July to December</option>
             </select>
-            <select value={hyYear} onChange={(e) => setDatePeriod(`${e.target.value}-${hyH}`)}
-              style={{ ...iS, width: 90 }}>
+            <select value={hyYear} onChange={(e) => setDatePeriod(`${e.target.value}-${hyH}`)} style={{ ...iS, width: 90 }}>
               {years.map((y) => <option key={y} value={y}>{y}</option>)}
             </select>
           </div>
         </div>
       );
     }
-
     if (reportType === "yearly") return (
       <div>
         <label style={lS}>Year <span style={{ color: "#EF4444" }}>*</span></label>
@@ -527,49 +547,86 @@ function SendDSRModal({ onClose }) {
         </select>
       </div>
     );
-
     return null;
   };
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      {/* Backdrop */}
       <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)" }} onClick={onClose} />
-
-      {/* Panel */}
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 14 }}
         animate={{ opacity: 1, scale: 1,    y: 0  }}
         exit={{    opacity: 0, scale: 0.96, y: 14  }}
         transition={{ duration: 0.18 }}
-        style={{
-          position: "relative", width: "100%", maxWidth: 460,
-          background: "var(--surface)", borderRadius: 16,
-          border: "1px solid var(--border)",
-          boxShadow: "0 24px 60px rgba(0,0,0,0.28)",
-          padding: "26px 28px",
-        }}
+        style={{ position: "relative", width: "100%", maxWidth: 480, background: "var(--surface)", borderRadius: 16, border: "1px solid var(--border)", boxShadow: "0 24px 60px rgba(0,0,0,0.28)", padding: "26px 28px", maxHeight: "90vh", overflowY: "auto" }}
       >
         {/* Header */}
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em" }}>Send Sales Report</h2>
-            <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text-muted)" }}>Select recipient, report type, and period</p>
+            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em" }}>Generate & Send DSR</h2>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text-muted)" }}>Select recipients, report type, and period</p>
           </div>
           <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", flexShrink: 0 }}>
             <X size={14} />
           </button>
         </div>
 
-        {/* Send To */}
+        {/* Recipients multi-select */}
         <div style={{ marginBottom: 16 }}>
           <label style={lS}>Send To <span style={{ color: "#EF4444" }}>*</span></label>
-          <select value={recipientType} onChange={(e) => setRecipientType(e.target.value)}
-            style={{ ...iS, color: recipientType ? "var(--text)" : "var(--text-muted)" }}>
-            <option value="" disabled>Select recipient…</option>
-            <option value="super_admin">Super Admin</option>
-            <option value="sales_head">Sales Head</option>
-          </select>
+
+          {/* Chips */}
+          {selected.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+              {selected.map((email) => {
+                const r = byEmail(email);
+                return (
+                  <div key={email} style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 8px 4px 10px", background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.3)", borderRadius: 20, fontSize: 12, fontWeight: 600, color: "#6366F1" }}>
+                    <span>{r ? r.name : email}</span>
+                    <button onClick={() => removeRecipient(email)} style={{ width: 16, height: 16, borderRadius: "50%", border: "none", background: "rgba(99,102,241,0.2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, color: "#6366F1" }}>
+                      <X size={9} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Search + dropdown */}
+          <div ref={dropdownRef} style={{ position: "relative" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, ...iS, padding: "8px 10px", cursor: "text" }} onClick={() => setDropdownOpen(true)}>
+              <Search size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+              <input
+                placeholder={selected.length ? "Add another recipient…" : "Search Super Admins & Sales Heads…"}
+                value={searchQuery}
+                onChange={(e) => { setSearchQuery(e.target.value); setDropdownOpen(true); }}
+                onFocus={() => setDropdownOpen(true)}
+                style={{ border: "none", outline: "none", background: "transparent", color: "var(--text)", fontSize: 13, flex: 1, minWidth: 0 }}
+              />
+            </div>
+            {dropdownOpen && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20, marginTop: 4, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.18)", maxHeight: 200, overflowY: "auto" }}>
+                {recipients.length === 0 ? (
+                  <div style={{ padding: "12px 14px", fontSize: 12, color: "var(--text-muted)" }}>Loading recipients…</div>
+                ) : filtered.length === 0 ? (
+                  <div style={{ padding: "12px 14px", fontSize: 12, color: "var(--text-muted)" }}>{searchQuery ? "No matching recipients" : "All recipients already selected"}</div>
+                ) : (
+                  filtered.map((r) => (
+                    <div key={r.email} onClick={() => addRecipient(r.email)}
+                      style={{ padding: "10px 14px", cursor: "pointer", fontSize: 13, color: "var(--text)", display: "flex", alignItems: "center", justifyContent: "space-between", transition: "background 0.1s" }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = "var(--surface-2)"}
+                      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{r.name}</div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.email}</div>
+                      </div>
+                      <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: r.role === "owner" ? "rgba(99,102,241,0.12)" : "rgba(16,185,129,0.12)", color: r.role === "owner" ? "#6366F1" : "#10B981", flexShrink: 0 }}>{rlabel(r.role)}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Report Type */}
@@ -581,8 +638,12 @@ function SendDSRModal({ onClose }) {
         </div>
 
         {/* Dynamic Date Picker */}
-        <div style={{ marginBottom: 26 }}>
-          {renderDatePicker()}
+        <div style={{ marginBottom: 16 }}>{renderDatePicker()}</div>
+
+        {/* PDF info strip */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.18)", borderRadius: 9, marginBottom: 22, fontSize: 12, color: "var(--text-2)" }}>
+          <FileText size={13} style={{ color: "#6366F1", flexShrink: 0 }} />
+          <span>A professional A4 PDF report will be generated and attached to the email.</span>
         </div>
 
         {/* Actions */}
@@ -591,9 +652,145 @@ function SendDSRModal({ onClose }) {
             style={{ padding: "9px 20px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
             Cancel
           </button>
-          <button onClick={handleSend} disabled={isLoading || !recipientType}
-            style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#6366F1", color: "#fff", fontSize: 13, fontWeight: 700, cursor: isLoading || !recipientType ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 8, opacity: !recipientType ? 0.55 : 1, transition: "opacity 0.15s" }}>
-            {isLoading ? <><Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} /> Sending…</> : <><Send size={14} /> Send DSR</>}
+          <button onClick={handleSend} disabled={isLoading || !selected.length}
+            style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#6366F1", color: "#fff", fontSize: 13, fontWeight: 700, cursor: isLoading || !selected.length ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 8, opacity: !selected.length ? 0.55 : 1, transition: "opacity 0.15s" }}>
+            {isLoading ? <><Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} /> Generating…</> : <><Send size={14} /> Generate &amp; Send</>}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DSR CONFIG MODAL  —  configure auto 8 PM DSR recipients (owner only)
+═══════════════════════════════════════════════════════════════════════ */
+function DSRConfigModal({ onClose }) {
+  const { user }                          = useAuth();
+  const [allUsers, setAllUsers]           = useState([]);
+  const [selectedIds, setSelectedIds]     = useState(new Set());
+  const [isLoading, setIsLoading]         = useState(false);
+  const [isSaving, setIsSaving]           = useState(false);
+
+  const rlabel = (r) => r === "owner" ? "Super Admin" : "Sales Head";
+
+  useEffect(() => {
+    (async () => {
+      setIsLoading(true);
+      try {
+        const token = await user.getIdToken();
+        const [usersRes, configRes] = await Promise.all([
+          fetch(`${API}/api/reports/recipients`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API}/api/reports/dsr-config`,  { headers: { Authorization: `Bearer ${token}` } }),
+        ]);
+        const [users, config] = await Promise.all([usersRes.json(), configRes.json()]);
+        setAllUsers(Array.isArray(users) ? users : []);
+        setSelectedIds(new Set((Array.isArray(config) ? config : []).map(c => c.id)));
+      } catch {
+        toast.error("Failed to load DSR config");
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+  }, [user]);
+
+  const toggle = (id) => setSelectedIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`${API}/api/reports/dsr-config`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body:    JSON.stringify({ userIds: [...selectedIds] }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Save failed");
+      toast.success(`Auto-DSR configured for ${data.configured_count} recipient${data.configured_count !== 1 ? "s" : ""}`);
+      onClose();
+    } catch (err) {
+      toast.error(err.message || "Failed to save config");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const owners     = allUsers.filter(u => u.role === "owner");
+  const salesHeads = allUsers.filter(u => u.role === "sales_head");
+
+  const checkboxRow = (u, accentColor) => (
+    <label key={u.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 9, border: `1px solid ${selectedIds.has(u.id) ? `${accentColor}55` : "var(--border)"}`, background: selectedIds.has(u.id) ? `${accentColor}0d` : "var(--surface-2)", marginBottom: 7, cursor: "pointer", transition: "all 0.15s" }}>
+      <input type="checkbox" checked={selectedIds.has(u.id)} onChange={() => toggle(u.id)} style={{ width: 15, height: 15, accentColor, cursor: "pointer", flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</div>
+        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{u.email}</div>
+      </div>
+    </label>
+  );
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)" }} onClick={onClose} />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 14 }}
+        animate={{ opacity: 1, scale: 1,    y: 0  }}
+        exit={{    opacity: 0, scale: 0.96, y: 14  }}
+        transition={{ duration: 0.18 }}
+        style={{ position: "relative", width: "100%", maxWidth: 460, background: "var(--surface)", borderRadius: 16, border: "1px solid var(--border)", boxShadow: "0 24px 60px rgba(0,0,0,0.28)", padding: "26px 28px", maxHeight: "90vh", overflowY: "auto" }}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 8 }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em" }}>Auto DSR Recipients</h2>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text-muted)" }}>Configure who receives the automated 8 PM daily report</p>
+          </div>
+          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", flexShrink: 0 }}>
+            <X size={14} />
+          </button>
+        </div>
+
+        <p style={{ margin: "0 0 20px", fontSize: 12, color: "var(--text-2)", padding: "8px 12px", background: "rgba(99,102,241,0.06)", borderRadius: 8, border: "1px solid rgba(99,102,241,0.15)" }}>
+          If no recipients are configured, the automated DSR falls back to all Super Admins.
+        </p>
+
+        {isLoading ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 36 }}>
+            <Loader2 size={22} style={{ animation: "spin 0.8s linear infinite", color: "#6366F1" }} />
+          </div>
+        ) : (
+          <>
+            {owners.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#6366F1", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>Super Admins</div>
+                {owners.map(u => checkboxRow(u, "#6366F1"))}
+              </div>
+            )}
+            {salesHeads.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#10B981", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>Sales Heads</div>
+                {salesHeads.map(u => checkboxRow(u, "#10B981"))}
+              </div>
+            )}
+            {allUsers.length === 0 && (
+              <div style={{ textAlign: "center", padding: "28px 0", fontSize: 13, color: "var(--text-muted)" }}>No Super Admins or Sales Heads found</div>
+            )}
+          </>
+        )}
+
+        {/* Actions */}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
+          <button onClick={onClose} disabled={isSaving}
+            style={{ padding: "9px 20px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            Cancel
+          </button>
+          <button onClick={handleSave} disabled={isSaving || isLoading}
+            style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#6366F1", color: "#fff", fontSize: 13, fontWeight: 700, cursor: isSaving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 8 }}>
+            {isSaving ? <><Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} /> Saving…</> : "Save Configuration"}
           </button>
         </div>
       </motion.div>
@@ -613,8 +810,10 @@ export default function DSRPage() {
   const normRole      = (profile?.role || "").toLowerCase().replace(/[- ]/g, "_");
   const isManager     = ["owner", "sales_head", "sales_manager"].includes(normRole);
   const isOwnerOrHead = ["owner", "sales_head"].includes(normRole);
+  const isOwner       = normRole === "owner";
 
   const [dsrModalOpen, setDsrModalOpen]     = useState(false);
+  const [dsrConfigOpen, setDsrConfigOpen]   = useState(false);
   const [activeTab, setActiveTab]           = useState("overview");
   const [range, setRange]                   = useState("daily");
   const [selectedDate, setSelectedDate]     = useState(new Date());
@@ -966,6 +1165,15 @@ export default function DSRPage() {
               style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 9, border: "1px solid rgba(99,102,241,0.35)", background: "rgba(99,102,241,0.08)", color: "#6366F1", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
             >
               <Send size={13} /> Send DSR
+            </button>
+          )}
+          {isOwner && (
+            <button
+              onClick={() => setDsrConfigOpen(true)}
+              title="Configure auto DSR recipients"
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)", fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}
+            >
+              <Settings size={13} /> Configure
             </button>
           )}
 
@@ -1677,6 +1885,11 @@ export default function DSRPage() {
       {/* ── Send DSR Modal ── */}
       <AnimatePresence>
         {dsrModalOpen && <SendDSRModal onClose={() => setDsrModalOpen(false)} />}
+      </AnimatePresence>
+
+      {/* ── DSR Config Modal (owner only) ── */}
+      <AnimatePresence>
+        {dsrConfigOpen && <DSRConfigModal onClose={() => setDsrConfigOpen(false)} />}
       </AnimatePresence>
     </div>
   );

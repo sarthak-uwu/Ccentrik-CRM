@@ -351,13 +351,15 @@ async function sendMeetingReminders() {
 
 // ─── Automated DSR ────────────────────────────────────────────────────────────
 async function sendAutomatedDSR() {
+  const { generateDSRPdf } = require("./dsrPdf");
+
   // Date range: today 00:00 → 20:00 IST
-  const now          = new Date();
-  const istOffsetMs  = 5.5 * 60 * 60 * 1000;
-  const todayIST     = new Date(now.getTime() + istOffsetMs);
-  const dateStr      = todayIST.toISOString().split("T")[0];
-  const dayStart     = new Date(`${dateStr}T00:00:00+05:30`).toISOString();
-  const dayEnd       = new Date(`${dateStr}T20:00:00+05:30`).toISOString();
+  const now         = new Date();
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+  const todayIST    = new Date(now.getTime() + istOffsetMs);
+  const dateStr     = todayIST.toISOString().split("T")[0];
+  const dayStart    = new Date(`${dateStr}T00:00:00+05:30`).toISOString();
+  const dayEnd      = new Date(`${dateStr}T20:00:00+05:30`).toISOString();
 
   const reportDate = todayIST.toLocaleDateString("en-IN", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
@@ -376,22 +378,81 @@ async function sendAutomatedDSR() {
     return;
   }
 
-  // Send to Super Admin; fall back to configured email
-  const reportTo = data.ownerEmail
-    || process.env.SECURITY_REPORT_TEST_EMAIL
-    || "sarthak.tyagi@ccentrik.com";
+  // 1. Fetch configured recipients (only owner + sales_head allowed)
+  let reportTo = [];
+  try {
+    const { data: configRows } = await supabase
+      .from("dsr_recipient_config")
+      .select("user_id, profile:profiles!dsr_recipient_config_user_id_fkey(email, role)");
+
+    if (configRows?.length) {
+      reportTo = configRows
+        .filter((r) => ["owner", "sales_head"].includes(r.profile?.role))
+        .map((r) => r.profile?.email)
+        .filter(Boolean);
+    }
+  } catch (err) {
+    console.error("[CRON] DSR config fetch error:", err.message);
+  }
+
+  // 2. Fall back to all owner-role users if no config set
+  if (!reportTo.length) {
+    try {
+      const { data: owners } = await supabase
+        .from("profiles")
+        .select("email")
+        .eq("role", "owner")
+        .not("status", "in", '("deleted","inactive")')
+        .not("email", "is", null);
+      reportTo = (owners || []).map((p) => p.email).filter(Boolean);
+    } catch (err) {
+      console.error("[CRON] DSR owner fallback error:", err.message);
+    }
+  }
+
+  // 3. Last resort fallback
+  if (!reportTo.length) {
+    reportTo = [
+      data.ownerEmail
+      || process.env.SECURITY_REPORT_TEST_EMAIL
+      || "sarthak.tyagi@ccentrik.com",
+    ].filter(Boolean);
+  }
+
+  // 4. Generate PDF
+  let pdfBuffer = null;
+  try {
+    pdfBuffer = await generateDSRPdf({
+      staff:           data.staff,
+      userStats:       data.userStats,
+      totals:          data.totals,
+      reportDateLabel: reportDate,
+      reportType:      "Daily",
+      generatedAt:     now.toISOString(),
+    });
+  } catch (err) {
+    console.error("[CRON] DSR PDF generation error:", err.message);
+  }
 
   const html = buildTSRHtml(data.staff, data.userStats, data.totals, reportDate);
   const text = buildTSRText(data.staff, data.userStats, data.totals, reportDate);
 
+  // 5. Send email (with PDF if generated, without if generation failed)
   await sendMail({
     to:      reportTo,
     subject: `Ccentrik Daily Sales Report — ${reportDate}`,
     html,
     text,
+    ...(pdfBuffer ? {
+      attachments: [{
+        filename:    `DSR-Daily-${dateStr}.pdf`,
+        content:     pdfBuffer,
+        contentType: "application/pdf",
+      }],
+    } : {}),
   });
 
-  console.log(`[CRON] DSR sent to ${reportTo}. Staff: ${data.totals.totalStaff}, Activities: ${data.totals.activities}, Deals Won: ${data.totals.dealsWon}`);
+  console.log(`[CRON] DSR sent to ${reportTo.length} recipient(s): ${reportTo.join(", ")}. Staff: ${data.totals.totalStaff}, Activities: ${data.totals.activities}, Deals Won: ${data.totals.dealsWon}`);
 }
 
 module.exports = { startCronJobs };

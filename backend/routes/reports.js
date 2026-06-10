@@ -4,16 +4,19 @@ const { supabase } = require("../config/db");
 const { authenticate, authorize } = require("../middleware/auth");
 const { sendMail } = require("../config/mail");
 const { generateTSRData, buildTSRHtml, buildTSRText } = require("../utils/dsrReport");
+const { generateDSRPdf } = require("../utils/dsrPdf");
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Roles allowed to receive DSR emails — enforced at every endpoint
+const DSR_ALLOWED_ROLES = ["owner", "sales_head"];
 
 // ─── GET /api/reports/recipients ─────────────────────────────────────────────
-// Returns all active CRM users as potential DSR recipients
+// Returns ONLY owner (Super Admin) and sales_head users — no other roles
 router.get("/recipients", authenticate, authorize("owner", "sales_head"), async (req, res) => {
   try {
     const { data: users, error } = await supabase
       .from("profiles")
       .select("id, full_name, email, role")
+      .in("role", DSR_ALLOWED_ROLES)
       .not("status", "in", '("deleted","inactive")')
       .not("email", "is", null)
       .order("role", { ascending: false })
@@ -21,12 +24,14 @@ router.get("/recipients", authenticate, authorize("owner", "sales_head"), async 
 
     if (error) return res.status(500).json({ error: error.message });
 
+    const roleLabel = (r) => r === "owner" ? "Super Admin" : "Sales Head";
+
     const recipients = (users || []).map((u) => ({
       id:    u.id,
       name:  u.full_name || u.email,
       email: u.email,
       role:  u.role,
-      label: `${u.full_name} (${(u.role || "").replace(/_/g, " ")})`,
+      label: `${u.full_name || u.email} (${roleLabel(u.role)})`,
     }));
 
     res.json(recipients);
@@ -37,36 +42,43 @@ router.get("/recipients", authenticate, authorize("owner", "sales_head"), async 
 });
 
 // ─── POST /api/reports/send-dsr ───────────────────────────────────────────────
-// Generates DSR for selected period and sends to resolved recipient role
+// Accepts { selectedEmails: [...], reportType, datePeriod }
+// Validates emails are ONLY owner/sales_head, generates PDF, sends with attachment
 router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (req, res) => {
-  const { recipientType, reportType, datePeriod } = req.body;
+  const { selectedEmails, reportType, datePeriod } = req.body;
 
-  // Validate inputs
-  const VALID_RECIPIENT = ["super_admin", "sales_head"];
-  const VALID_REPORT    = ["daily", "weekly", "monthly", "quarterly", "half_yearly", "yearly"];
-  if (!recipientType || !VALID_RECIPIENT.includes(recipientType))
-    return res.status(400).json({ error: "recipientType must be 'super_admin' or 'sales_head'." });
+  const VALID_REPORT = ["daily", "weekly", "monthly", "quarterly", "half_yearly", "yearly"];
   if (!reportType || !VALID_REPORT.includes(reportType))
     return res.status(400).json({ error: "Invalid reportType." });
   if (!datePeriod)
     return res.status(400).json({ error: "datePeriod is required." });
+  if (!Array.isArray(selectedEmails) || !selectedEmails.length)
+    return res.status(400).json({ error: "selectedEmails must be a non-empty array." });
 
-  // Resolve recipient emails from DB
-  const roleFilter = recipientType === "super_admin" ? "owner" : "sales_head";
-  const { data: recipientProfiles, error: rpErr } = await supabase
+  // Security: verify every submitted email belongs to owner or sales_head — reject otherwise
+  const { data: validProfiles, error: vpErr } = await supabase
     .from("profiles")
-    .select("email, full_name")
-    .eq("role", roleFilter)
+    .select("email, full_name, role")
+    .in("email", selectedEmails)
+    .in("role", DSR_ALLOWED_ROLES)
     .not("status", "in", '("deleted","inactive")')
     .not("email", "is", null);
 
-  if (rpErr) return res.status(500).json({ error: "Failed to resolve recipient emails." });
+  if (vpErr) return res.status(500).json({ error: "Failed to validate recipient emails." });
 
-  const uniqueEmails = [...new Set((recipientProfiles || []).map((p) => p.email).filter(Boolean))];
-  if (!uniqueEmails.length)
-    return res.status(404).json({ error: `No active ${roleFilter.replace("_", " ")} found in the system.` });
+  const approvedEmails = new Set((validProfiles || []).map((p) => p.email));
+  const forbidden = selectedEmails.filter((e) => !approvedEmails.has(e));
+  if (forbidden.length) {
+    console.warn(`[Reports] DSR send blocked — forbidden recipients: ${forbidden.join(", ")}`);
+    return res.status(403).json({
+      error: "One or more selected recipients are not authorised to receive DSR. Only Super Admin and Sales Head may receive reports.",
+      forbidden,
+    });
+  }
 
-  // Compute date range from report type + period string
+  const uniqueEmails = [...approvedEmails];
+
+  // Compute date range
   let periodRange;
   try {
     periodRange = computeDateRange(reportType, datePeriod);
@@ -76,7 +88,7 @@ router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (
   const { start: dayStart, end: dayEnd, label: reportDateLabel, subject: subjectLabel } = periodRange;
   const logDateStr = dayStart.split("T")[0];
 
-  // Insert pending log entry
+  // Insert pending audit log
   const { data: logEntry } = await supabase
     .from("dsr_email_logs")
     .insert({
@@ -96,35 +108,129 @@ router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (
     const data = await generateTSRData(dayStart, dayEnd);
 
     if (!data) {
-      await supabase.from("dsr_email_logs")
-        .update({ delivery_status: "failed", error_message: "No TSR staff data found for this period." })
+      if (logId) await supabase.from("dsr_email_logs")
+        .update({ delivery_status: "failed", error_message: "No staff data found for this period." })
         .eq("id", logId);
-      return res.status(422).json({ error: "No TSR staff data available for the selected period." });
+      return res.status(422).json({ error: "No sales staff data available for the selected period." });
     }
+
+    // Generate PDF
+    const typeLabel = reportType.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    const pdfBuffer = await generateDSRPdf({
+      staff:           data.staff,
+      userStats:       data.userStats,
+      totals:          data.totals,
+      reportDateLabel,
+      reportType:      typeLabel,
+      generatedAt:     new Date().toISOString(),
+    });
 
     const html = buildTSRHtml(data.staff, data.userStats, data.totals, reportDateLabel, reportDateLabel);
     const text = buildTSRText(data.staff, data.userStats, data.totals, reportDateLabel, reportDateLabel);
+    const pdfFilename = `DSR-${typeLabel.replace(/\s/g, "-")}-${logDateStr}.pdf`;
 
     await sendMail({
       to:      uniqueEmails,
       subject: `Ccentrik ${subjectLabel} — ${reportDateLabel}`,
       html,
       text,
+      attachments: [{
+        filename:    pdfFilename,
+        content:     pdfBuffer,
+        contentType: "application/pdf",
+      }],
     });
 
-    await supabase.from("dsr_email_logs")
+    if (logId) await supabase.from("dsr_email_logs")
       .update({ delivery_status: "sent" })
       .eq("id", logId);
 
-    console.log(`[Reports] DSR (${reportType}) manually sent by ${req.profile.email} → ${uniqueEmails.length} recipients`);
+    console.log(`[Reports] DSR (${reportType}) sent by ${req.profile.email} → ${uniqueEmails.length} recipients`);
     res.json({ success: true, sent_to: uniqueEmails.length, log_id: logId });
 
   } catch (err) {
     console.error("[Reports] DSR send error:", err.message);
-    await supabase.from("dsr_email_logs")
+    if (logId) await supabase.from("dsr_email_logs")
       .update({ delivery_status: "failed", error_message: err.message?.slice(0, 500) })
       .eq("id", logId);
     res.status(500).json({ error: "Failed to send DSR report.", details: err.message });
+  }
+});
+
+// ─── GET /api/reports/dsr-config ─────────────────────────────────────────────
+// Owner only — returns configured automatic DSR recipients
+router.get("/dsr-config", authenticate, authorize("owner"), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("dsr_recipient_config")
+      .select("user_id, created_at, profile:profiles!dsr_recipient_config_user_id_fkey(id, full_name, email, role)")
+      .order("created_at", { ascending: true });
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const roleLabel = (r) => r === "owner" ? "Super Admin" : "Sales Head";
+
+    const recipients = (data || []).map((row) => ({
+      id:    row.profile?.id    || row.user_id,
+      name:  row.profile?.full_name || row.profile?.email || row.user_id,
+      email: row.profile?.email,
+      role:  row.profile?.role,
+      label: row.profile ? `${row.profile.full_name || row.profile.email} (${roleLabel(row.profile.role)})` : row.user_id,
+    }));
+
+    res.json(recipients);
+  } catch (err) {
+    console.error("[Reports] dsr-config GET error:", err.message);
+    res.status(500).json({ error: "Failed to fetch DSR config" });
+  }
+});
+
+// ─── POST /api/reports/dsr-config ─────────────────────────────────────────────
+// Owner only — replaces auto-DSR recipient list; validates all are owner/sales_head
+router.post("/dsr-config", authenticate, authorize("owner"), async (req, res) => {
+  const { userIds } = req.body;
+
+  if (!Array.isArray(userIds))
+    return res.status(400).json({ error: "userIds must be an array." });
+
+  // Empty array = clear all (valid — means "no configured recipients; fall back to all owners")
+  if (userIds.length > 0) {
+    // Security: confirm all submitted IDs are owner or sales_head
+    const { data: validUsers, error: vuErr } = await supabase
+      .from("profiles")
+      .select("id, role")
+      .in("id", userIds)
+      .in("role", DSR_ALLOWED_ROLES)
+      .not("status", "in", '("deleted","inactive")');
+
+    if (vuErr) return res.status(500).json({ error: "Failed to validate user IDs." });
+
+    const validSet = new Set((validUsers || []).map((u) => u.id));
+    const forbidden = userIds.filter((id) => !validSet.has(id));
+    if (forbidden.length) {
+      return res.status(403).json({
+        error: "One or more user IDs are not authorised to receive DSR. Only Super Admin and Sales Head are allowed.",
+        forbidden,
+      });
+    }
+  }
+
+  try {
+    // Delete all existing config rows
+    await supabase.from("dsr_recipient_config").delete().not("user_id", "is", null);
+
+    // Insert new rows if any
+    if (userIds.length > 0) {
+      const rows = userIds.map((id) => ({ user_id: id, added_by: req.profile.id }));
+      const { error: insErr } = await supabase.from("dsr_recipient_config").insert(rows);
+      if (insErr) return res.status(500).json({ error: insErr.message });
+    }
+
+    console.log(`[Reports] DSR config updated by ${req.profile.email} — ${userIds.length} recipients`);
+    res.json({ success: true, configured_count: userIds.length });
+  } catch (err) {
+    console.error("[Reports] dsr-config POST error:", err.message);
+    res.status(500).json({ error: "Failed to save DSR config" });
   }
 });
 
@@ -135,7 +241,6 @@ const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct"
 function computeDateRange(reportType, datePeriod) {
   switch (reportType) {
     case "daily": {
-      // datePeriod: "2026-06-10"
       if (!/^\d{4}-\d{2}-\d{2}$/.test(datePeriod)) throw new Error("Invalid date for daily report (expected YYYY-MM-DD).");
       const label = new Date(datePeriod + "T12:00:00Z").toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
       return {
@@ -146,10 +251,9 @@ function computeDateRange(reportType, datePeriod) {
       };
     }
     case "weekly": {
-      // datePeriod: any date string "2026-06-10" — we compute Monday–Sunday of that week
       if (!/^\d{4}-\d{2}-\d{2}$/.test(datePeriod)) throw new Error("Invalid date for weekly report (expected YYYY-MM-DD).");
       const d   = new Date(datePeriod + "T12:00:00Z");
-      const day = d.getUTCDay() || 7; // Mon=1 … Sun=7
+      const day = d.getUTCDay() || 7;
       const monday = new Date(d); monday.setUTCDate(d.getUTCDate() - (day - 1));
       const sunday  = new Date(monday); sunday.setUTCDate(monday.getUTCDate() + 6);
       const monStr = monday.toISOString().split("T")[0];
@@ -163,7 +267,6 @@ function computeDateRange(reportType, datePeriod) {
       };
     }
     case "monthly": {
-      // datePeriod: "2026-06"
       if (!/^\d{4}-\d{2}$/.test(datePeriod)) throw new Error("Invalid date for monthly report (expected YYYY-MM).");
       const [year, mon] = datePeriod.split("-").map(Number);
       const lastDay = new Date(year, mon, 0).getDate();
@@ -177,12 +280,11 @@ function computeDateRange(reportType, datePeriod) {
       };
     }
     case "quarterly": {
-      // datePeriod: "2026-Q2"
       if (!/^\d{4}-Q[1-4]$/.test(datePeriod)) throw new Error("Invalid period for quarterly report (expected YYYY-Q#).");
       const [year, q] = datePeriod.split("-");
       const qNum = parseInt(q[1]);
-      const sm   = (qNum - 1) * 3;           // start month index (0-based)
-      const em   = sm + 2;                    // end month index (0-based)
+      const sm   = (qNum - 1) * 3;
+      const em   = sm + 2;
       const endDay = new Date(parseInt(year), em + 1, 0).getDate();
       const label  = `Q${qNum} ${year} (${MONTH_NAMES[sm]} – ${MONTH_NAMES[em]} ${year})`;
       return {
@@ -193,7 +295,6 @@ function computeDateRange(reportType, datePeriod) {
       };
     }
     case "half_yearly": {
-      // datePeriod: "2026-H1" or "2026-H2"
       if (!/^\d{4}-H[12]$/.test(datePeriod)) throw new Error("Invalid period for half-yearly report (expected YYYY-H1 or YYYY-H2).");
       const [year, h] = datePeriod.split("-");
       const isH1  = h === "H1";
@@ -206,7 +307,6 @@ function computeDateRange(reportType, datePeriod) {
       };
     }
     case "yearly": {
-      // datePeriod: "2026"
       if (!/^\d{4}$/.test(datePeriod)) throw new Error("Invalid year for yearly report (expected YYYY).");
       const label = `Year ${datePeriod}`;
       return {
@@ -222,7 +322,6 @@ function computeDateRange(reportType, datePeriod) {
 }
 
 // ─── GET /api/reports/dsr-logs ────────────────────────────────────────────────
-// Returns recent DSR send log entries
 router.get("/dsr-logs", authenticate, authorize("owner", "sales_head"), async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
