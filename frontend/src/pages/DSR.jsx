@@ -820,6 +820,9 @@ export default function DSRPage() {
   const [targetUserId, setTargetUserId]     = useState(null);
   const [pickerOpen, setPickerOpen]         = useState(false);
   const [dateInputOpen, setDateInputOpen]   = useState(false);
+  const [empPickerOpen, setEmpPickerOpen]   = useState(false);
+  const [empSearch, setEmpSearch]           = useState("");
+  const empPickerRef                        = useRef(null);
   const [customStart, setCustomStart]       = useState(format(subDays(new Date(), 6), "yyyy-MM-dd"));
   const [customEnd, setCustomEnd]           = useState(format(new Date(), "yyyy-MM-dd"));
   const [calMonth, setCalMonth]             = useState(startOfMonth(new Date()));
@@ -830,8 +833,9 @@ export default function DSRPage() {
 
   useEffect(() => {
     const h = (e) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target)) setPickerOpen(false);
-      if (dateRef.current  && !dateRef.current.contains(e.target))  setDateInputOpen(false);
+      if (pickerRef.current    && !pickerRef.current.contains(e.target))    setPickerOpen(false);
+      if (dateRef.current      && !dateRef.current.contains(e.target))      setDateInputOpen(false);
+      if (empPickerRef.current && !empPickerRef.current.contains(e.target)) setEmpPickerOpen(false);
     };
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
@@ -858,11 +862,26 @@ export default function DSRPage() {
   /* ═══ QUERIES ═══ */
   const { data: allUsers = [] } = useQuery({
     queryKey: ["dsr-all-users"],
-    queryFn: async () => { const { data } = await supabase.from("profiles").select("id, full_name, role, avatar_url").order("full_name"); return data || []; },
+    queryFn: async () => { const { data } = await supabase.from("profiles").select("id, full_name, email, role, avatar_url").not("status", "in", '("deleted","inactive")').order("full_name"); return data || []; },
     enabled: isManager, staleTime: 120000,
   });
 
   const selectedUser = targetUserId ? allUsers.find((u) => u.id === targetUserId) : { full_name: profile?.full_name, role: profile?.role };
+
+  // Employees the current user may view: owner → all; sales_head → non-privileged staff only
+  const viewableUsers = useMemo(() => {
+    if (!isOwnerOrHead) return [];
+    const others = allUsers.filter(u => u.id !== profile?.id);
+    if (isOwner) return others;
+    // Sales Head can view inside_sales, sales_employee, sales_manager
+    return others.filter(u => ["inside_sales", "sales_employee", "sales_manager"].includes(u.role));
+  }, [isOwner, isOwnerOrHead, allUsers, profile?.id]);
+
+  const filteredViewableUsers = useMemo(() => {
+    if (!empSearch.trim()) return viewableUsers;
+    const q = empSearch.toLowerCase();
+    return viewableUsers.filter(u => (u.full_name || "").toLowerCase().includes(q) || (u.email || "").toLowerCase().includes(q) || (u.role || "").toLowerCase().includes(q));
+  }, [viewableUsers, empSearch]);
 
   const { data: acts = [], isFetching } = useQuery({
     queryKey: ["dsr-acts", userId, rangeStart, rangeEnd],
@@ -1186,40 +1205,130 @@ export default function DSRPage() {
             ))}
           </div>
 
-          {isManager && (
+          {/* compact fallback for non-owner/head managers (sales_manager) */}
+          {isManager && !isOwnerOrHead && (
             <div ref={pickerRef} style={{ position: "relative" }}>
               <button onClick={() => setPickerOpen((v) => !v)}
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", borderRadius: 9, border: `1px solid ${targetUserId ? "rgba(99,102,241,0.3)" : "var(--border)"}`, background: targetUserId ? "rgba(99,102,241,0.08)" : "var(--surface)", cursor: "pointer", fontSize: 12.5, color: "var(--text)", fontWeight: 500, whiteSpace: "nowrap" }}>
-                <User size={13} style={{ color: targetUserId ? "#6366F1" : "var(--text-muted)" }} />
-                {targetUserId ? (selectedUser?.full_name || "Unknown") : "My Report"}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface)", cursor: "pointer", fontSize: 12.5, color: "var(--text)", fontWeight: 500 }}>
+                <User size={13} style={{ color: "var(--text-muted)" }} />
+                My Report
                 <ChevronDown size={11} style={{ color: "var(--text-muted)" }} />
               </button>
-              <AnimatePresence>
-                {pickerOpen && (
-                  <motion.div initial={{ opacity: 0, y: 4, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 4, scale: 0.97 }} transition={{ duration: 0.13 }}
-                    style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: 6, zIndex: 60, minWidth: 210, maxHeight: 260, overflowY: "auto", boxShadow: "var(--shadow-lg)" }} className="custom-scroll">
-                    <button onClick={() => { setTargetUserId(null); setPickerOpen(false); }}
-                      style={{ width: "100%", textAlign: "left", padding: "8px 12px", borderRadius: 8, border: "none", cursor: "pointer", marginBottom: 2, background: !targetUserId ? "var(--accent)" : "transparent", color: !targetUserId ? "#fff" : "var(--text)", fontSize: 12.5, fontWeight: !targetUserId ? 700 : 500 }}>
-                      <div>My Report</div>
-                      <div style={{ fontSize: 10.5, opacity: 0.7 }}>{profile?.full_name}</div>
-                    </button>
-                    {allUsers.filter((u) => u.id !== profile?.id).length > 0 && (
-                      <div style={{ fontSize: 9.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", padding: "5px 12px 3px" }}>Team</div>
-                    )}
-                    {allUsers.filter((u) => u.id !== profile?.id).map((u) => (
-                      <button key={u.id} onClick={() => { setTargetUserId(u.id); setPickerOpen(false); }}
-                        style={{ width: "100%", textAlign: "left", padding: "8px 12px", borderRadius: 8, border: "none", cursor: "pointer", marginBottom: 1, background: targetUserId === u.id ? "var(--accent)" : "transparent", color: targetUserId === u.id ? "#fff" : "var(--text)", fontSize: 12.5 }}>
-                        <div style={{ fontWeight: 500 }}>{u.full_name}</div>
-                        <div style={{ fontSize: 10.5, opacity: 0.6, textTransform: "capitalize" }}>{u.role?.replace(/_/g, " ")}</div>
-                      </button>
-                    ))}
-                  </motion.div>
-                )}
-              </AnimatePresence>
             </div>
           )}
         </div>
       </div>
+
+      {/* ════ Employee Context Selector (Super Admin + Sales Head only) ════ */}
+      {isOwnerOrHead && (
+        <div style={{ marginBottom: 16, padding: "14px 18px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", boxShadow: "0 1px 6px rgba(0,0,0,0.06)" }}>
+
+          {/* Avatar + name + role of currently viewed employee */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 180 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: "#fff", background: !targetUserId ? "#6366F1" : selectedUser?.role === "sales_head" ? "#10B981" : selectedUser?.role === "owner" ? "#6366F1" : "#3B82F6" }}>
+              {((targetUserId ? selectedUser?.full_name : profile?.full_name) || "?").charAt(0).toUpperCase()}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {targetUserId ? (selectedUser?.full_name || "Unknown") : `${profile?.full_name || "Me"}`}
+                {!targetUserId && <span style={{ fontSize: 11, fontWeight: 500, color: "var(--text-muted)", marginLeft: 5 }}>(You)</span>}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "capitalize" }}>
+                {((targetUserId ? selectedUser?.role : profile?.role) || "").replace(/_/g, " ")}
+              </div>
+            </div>
+          </div>
+
+          {/* Separator */}
+          <div style={{ width: 1, height: 32, background: "var(--border)", flexShrink: 0 }} />
+
+          {/* Searchable employee picker */}
+          <div ref={empPickerRef} style={{ position: "relative", flex: 1, minWidth: 220, maxWidth: 340 }}>
+            <div
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 11px", background: "var(--surface-2)", border: `1px solid ${empPickerOpen ? "rgba(99,102,241,0.5)" : "var(--border)"}`, borderRadius: 10, cursor: "text", transition: "border-color 0.15s" }}
+              onClick={() => { setEmpPickerOpen(true); }}
+            >
+              <Search size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+              {empPickerOpen ? (
+                <input
+                  autoFocus
+                  value={empSearch}
+                  onChange={(e) => setEmpSearch(e.target.value)}
+                  placeholder="Search by name or role…"
+                  style={{ border: "none", outline: "none", background: "transparent", color: "var(--text)", fontSize: 13, flex: 1, minWidth: 0 }}
+                />
+              ) : (
+                <span style={{ fontSize: 13, color: "var(--text-2)", flex: 1, userSelect: "none" }}>
+                  {targetUserId ? "Change employee…" : "Select an employee to view their DSR…"}
+                </span>
+              )}
+              <ChevronDown size={12} style={{ color: "var(--text-muted)", flexShrink: 0, transform: empPickerOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+            </div>
+
+            {empPickerOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: 4, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.12 }}
+                style={{ position: "absolute", top: "calc(100% + 5px)", left: 0, right: 0, zIndex: 80, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, boxShadow: "0 12px 32px rgba(0,0,0,0.18)", maxHeight: 240, overflowY: "auto" }}
+                className="custom-scroll"
+              >
+                {/* My Report option */}
+                <button
+                  onClick={() => { setTargetUserId(null); setEmpSearch(""); setEmpPickerOpen(false); }}
+                  style={{ width: "100%", textAlign: "left", padding: "10px 14px", border: "none", borderBottom: "1px solid var(--border)", background: !targetUserId ? "rgba(99,102,241,0.07)" : "transparent", cursor: "pointer" }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600, color: !targetUserId ? "#6366F1" : "var(--text)" }}>My Report</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{profile?.full_name}</div>
+                </button>
+
+                {/* Employee list */}
+                {filteredViewableUsers.length === 0 ? (
+                  <div style={{ padding: "14px 16px", fontSize: 12.5, color: "var(--text-muted)", textAlign: "center" }}>
+                    {empSearch ? "No employees match your search" : "No employees accessible"}
+                  </div>
+                ) : (
+                  filteredViewableUsers.map((u) => {
+                    const roleColor = u.role === "sales_head" ? "#10B981" : u.role === "owner" ? "#6366F1" : "#3B82F6";
+                    return (
+                      <button key={u.id}
+                        onClick={() => { setTargetUserId(u.id); setEmpSearch(""); setEmpPickerOpen(false); }}
+                        style={{ width: "100%", textAlign: "left", padding: "10px 14px", border: "none", borderBottom: "1px solid var(--border)", background: targetUserId === u.id ? "rgba(99,102,241,0.07)" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}
+                        onMouseEnter={(e) => { if (targetUserId !== u.id) e.currentTarget.style.background = "var(--surface-2)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = targetUserId === u.id ? "rgba(99,102,241,0.07)" : "transparent"; }}
+                      >
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: targetUserId === u.id ? "#6366F1" : "var(--text)" }}>{u.full_name}</div>
+                          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{u.email || ""}</div>
+                        </div>
+                        <span style={{ fontSize: 10.5, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: `${roleColor}18`, color: roleColor, whiteSpace: "nowrap", flexShrink: 0 }}>
+                          {(u.role || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </motion.div>
+            )}
+          </div>
+
+          {/* Clear button — only when viewing someone else */}
+          {targetUserId && (
+            <button
+              onClick={() => { setTargetUserId(null); setEmpSearch(""); }}
+              style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap", flexShrink: 0 }}
+            >
+              <X size={12} /> My Report
+            </button>
+          )}
+
+          {/* Accessible count chip */}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 20, fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>
+            <Users size={11} />
+            {viewableUsers.length} employee{viewableUsers.length !== 1 ? "s" : ""}
+          </div>
+        </div>
+      )}
 
       {/* ════ Tabs ════ */}
       <div style={{ display: "flex", background: "var(--surface-2)", borderRadius: 11, padding: 4, border: "1px solid var(--border)", marginBottom: 18, width: "fit-content" }}>
