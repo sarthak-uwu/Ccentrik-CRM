@@ -4,6 +4,7 @@ const { supabase } = require("../config/db");
 const { authenticate, authorize } = require("../middleware/auth");
 const { sendMail } = require("../config/mail");
 const { generateTSRData, buildTSRHtml, buildTSRText } = require("../utils/dsrReport");
+const { generateStaffDSRData } = require("../utils/dsrReport");
 const { generateDSRPdf } = require("../utils/dsrPdf");
 
 // Roles allowed to receive DSR emails — enforced at every endpoint
@@ -116,10 +117,6 @@ router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (
   const { start: dayStart, end: dayEnd, label: reportDateLabel, subject: subjectLabel } = periodRange;
   const logDateStr = dayStart.split("T")[0];
 
-  // Capture sender IP and user-agent for audit
-  const senderIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || null;
-  const userAgent = (req.headers["user-agent"] || "").slice(0, 300) || null;
-
   // Insert pending audit log
   const { data: logEntry } = await supabase
     .from("dsr_email_logs")
@@ -130,8 +127,6 @@ router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (
       report_type:     reportType,
       delivery_status: "pending",
       recipient_count: uniqueEmails.length,
-      ...(senderIp  ? { sender_ip: senderIp }    : {}),
-      ...(userAgent ? { user_agent: userAgent }   : {}),
     })
     .select("id")
     .single();
@@ -139,7 +134,9 @@ router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (
   const logId = logEntry?.id;
 
   try {
+    console.log("[DSR] 1 generateTSRData", dayStart, dayEnd);
     let data = await generateTSRData(dayStart, dayEnd);
+    console.log("[DSR] 1 done staff:", data?.staff?.length ?? "null");
 
     if (!data) {
       if (logId) await supabase.from("dsr_email_logs")
@@ -182,7 +179,7 @@ router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (
       }
     }
 
-    // Generate PDF
+    console.log("[DSR] 2 generateDSRPdf");
     const typeLabel = reportType.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
     const pdfBuffer = await generateDSRPdf({
       staff:           data.staff,
@@ -192,11 +189,13 @@ router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (
       reportType:      typeLabel,
       generatedAt:     new Date().toISOString(),
     });
+    console.log("[DSR] 2 done pdf bytes:", pdfBuffer?.length);
 
     const html = buildTSRHtml(data.staff, data.userStats, data.totals, reportDateLabel, reportDateLabel);
     const text = buildTSRText(data.staff, data.userStats, data.totals, reportDateLabel, reportDateLabel);
     const pdfFilename = `DSR-${typeLabel.replace(/\s/g, "-")}-${logDateStr}.pdf`;
 
+    console.log("[DSR] 3 sendMail to", uniqueEmails.length, "recipients");
     await sendMail({
       to:      uniqueEmails,
       subject: `Ccentrik ${subjectLabel} — ${reportDateLabel}`,
@@ -204,10 +203,11 @@ router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (
       text,
       attachments: [{
         filename:    pdfFilename,
-        content:     pdfBuffer,
-        contentType: "application/pdf",
+        content:     pdfBuffer.toString("base64"),
+        content_type: "application/pdf",
       }],
     });
+    console.log("[DSR] 3 done");
 
     if (logId) await supabase.from("dsr_email_logs")
       .update({ delivery_status: "sent" })
@@ -218,10 +218,11 @@ router.post("/send-dsr", authenticate, authorize("owner", "sales_head"), async (
 
   } catch (err) {
     console.error("[Reports] DSR send error:", err.message);
+    console.error("[Reports] DSR send stack:", err.stack?.slice(0, 600));
     if (logId) await supabase.from("dsr_email_logs")
       .update({ delivery_status: "failed", error_message: err.message?.slice(0, 500) })
       .eq("id", logId);
-    res.status(500).json({ error: "Failed to send DSR report.", details: err.message });
+    res.status(500).json({ error: err.message || "Failed to send DSR report." });
   }
 });
 
@@ -452,6 +453,131 @@ function computeDateRange(reportType, datePeriod, opts = {}) {
       throw new Error(`Unknown reportType: ${reportType}`);
   }
 }
+
+// ─── GET /api/reports/auto-dsr-cron ──────────────────────────────────────────
+// Called daily by Vercel Cron at 14:30 UTC (8:00 PM IST).
+// Role-based email routing:
+//   • Field staff (sales_employee, inside_sales, sales_manager) → all sales_heads + all owners
+//   • Sales heads → owners only
+// Protected by CRON_SECRET env var (set in Vercel dashboard).
+router.get("/auto-dsr-cron", async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.headers.authorization !== `Bearer ${secret}`) {
+    console.warn("[AutoDSR] Unauthorized cron attempt from", req.ip);
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  console.log("[AutoDSR] Cron triggered at", new Date().toISOString());
+
+  try {
+    // Compute today's IST date range  (IST = UTC + 5h 30m)
+    const nowUtc      = new Date();
+    const istOffsetMs = 5.5 * 60 * 60 * 1000;
+    const nowIst      = new Date(nowUtc.getTime() + istOffsetMs);
+    const todayIST    = nowIst.toISOString().slice(0, 10);      // "YYYY-MM-DD"
+    const dayStart    = new Date(`${todayIST}T00:00:00+05:30`).toISOString();
+    const dayEnd      = new Date(`${todayIST}T23:59:59+05:30`).toISOString();
+    const dateLabel   = new Date(`${todayIST}T12:00:00Z`).toLocaleDateString("en-IN", {
+      weekday: "long", year: "numeric", month: "long", day: "numeric",
+    });
+
+    // Fetch all relevant profiles in one query
+    const { data: allProfiles, error: profErr } = await supabase
+      .from("profiles")
+      .select("id, full_name, email, role")
+      .in("role", ["owner", "sales_head", "sales_manager", "inside_sales", "sales_employee"])
+      .not("status", "in", '("deleted","inactive")')
+      .not("email", "is", null)
+      .order("role").order("full_name");
+
+    if (profErr) throw new Error("Profile fetch failed: " + profErr.message);
+
+    const owners      = (allProfiles || []).filter((p) => p.role === "owner");
+    const salesHeads  = (allProfiles || []).filter((p) => p.role === "sales_head");
+    const fieldStaff  = (allProfiles || []).filter((p) =>
+      ["sales_manager", "inside_sales", "sales_employee"].includes(p.role)
+    );
+
+    const ownerEmails     = owners.map((o) => o.email).filter(Boolean);
+    const salesHeadEmails = salesHeads.map((h) => h.email).filter(Boolean);
+    const results         = [];
+
+    const rangeLabel = "00:00 – 20:00 IST";
+
+    // ── A: Field staff DSR → Sales Heads + Super Admins ────────────────────
+    if (fieldStaff.length > 0) {
+      const fieldData = await generateStaffDSRData(dayStart, dayEnd, fieldStaff);
+      if (fieldData) {
+        const toEmails = [...new Set([...salesHeadEmails, ...ownerEmails])];
+        if (toEmails.length > 0) {
+          const html = buildTSRHtml(fieldData.staff, fieldData.userStats, fieldData.totals, dateLabel, rangeLabel);
+          const text = buildTSRText(fieldData.staff, fieldData.userStats, fieldData.totals, dateLabel, rangeLabel);
+          const attachments = [];
+          try {
+            const pdfBuffer = await generateDSRPdf({
+              staff: fieldData.staff, userStats: fieldData.userStats, totals: fieldData.totals,
+              reportDateLabel: dateLabel, reportType: "Daily", generatedAt: nowUtc.toISOString(),
+            });
+            attachments.push({ filename: `DSR-Daily-${todayIST}.pdf`, content: pdfBuffer.toString("base64"), content_type: "application/pdf" });
+          } catch (pdfErr) {
+            console.warn("[AutoDSR] PDF generation failed (field staff), sending without attachment:", pdfErr.message);
+          }
+          await sendMail({ to: toEmails, subject: `Ccentrik Daily Sales Report — ${dateLabel}`, html, text, attachments });
+          try {
+            await supabase.from("dsr_email_logs").insert({
+              recipients: toEmails, report_date: todayIST, report_type: "daily",
+              delivery_status: "sent", recipient_count: toEmails.length,
+            });
+          } catch (logErr) {
+            console.warn("[AutoDSR] Log insert failed:", logErr.message);
+          }
+          results.push({ type: "field_staff_dsr", recipients: toEmails.length, status: "sent" });
+          console.log(`[AutoDSR] Field staff DSR sent to ${toEmails.length} recipients`);
+        }
+      } else {
+        console.log("[AutoDSR] No field staff activity data for", todayIST);
+      }
+    }
+
+    // ── B: Sales Head DSR → Super Admins only ──────────────────────────────
+    if (salesHeads.length > 0 && ownerEmails.length > 0) {
+      const headData = await generateStaffDSRData(dayStart, dayEnd, salesHeads);
+      if (headData) {
+        const html = buildTSRHtml(headData.staff, headData.userStats, headData.totals, dateLabel, rangeLabel);
+        const text = buildTSRText(headData.staff, headData.userStats, headData.totals, dateLabel, rangeLabel);
+        const attachments = [];
+        try {
+          const pdfBuffer = await generateDSRPdf({
+            staff: headData.staff, userStats: headData.userStats, totals: headData.totals,
+            reportDateLabel: dateLabel, reportType: "Daily (Sales Heads)", generatedAt: nowUtc.toISOString(),
+          });
+          attachments.push({ filename: `DSR-SalesHead-${todayIST}.pdf`, content: pdfBuffer.toString("base64"), content_type: "application/pdf" });
+        } catch (pdfErr) {
+          console.warn("[AutoDSR] PDF generation failed (sales head), sending without attachment:", pdfErr.message);
+        }
+        await sendMail({ to: ownerEmails, subject: `Ccentrik Sales Head Daily Report — ${dateLabel}`, html, text, attachments });
+        try {
+          await supabase.from("dsr_email_logs").insert({
+            recipients: ownerEmails, report_date: todayIST, report_type: "daily",
+            delivery_status: "sent", recipient_count: ownerEmails.length,
+          });
+        } catch (logErr) {
+          console.warn("[AutoDSR] Log insert failed:", logErr.message);
+        }
+        results.push({ type: "sales_head_dsr", recipients: ownerEmails.length, status: "sent" });
+        console.log(`[AutoDSR] Sales Head DSR sent to ${ownerEmails.length} Super Admins`);
+      }
+    }
+
+    console.log("[AutoDSR] Completed:", JSON.stringify(results));
+    res.json({ success: true, date: todayIST, results });
+
+  } catch (err) {
+    console.error("[AutoDSR] Cron error:", err.message);
+    console.error("[AutoDSR] Stack:", err.stack?.slice(0, 600));
+    res.status(500).json({ error: err.message || "Auto DSR cron failed" });
+  }
+});
 
 // ─── GET /api/reports/dsr-logs ────────────────────────────────────────────────
 router.get("/dsr-logs", authenticate, authorize("owner", "sales_head"), async (req, res) => {

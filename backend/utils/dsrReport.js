@@ -426,4 +426,107 @@ This is an auto-generated report from the Ccentrik CRM System.
 — Ccentrik CRM`;
 }
 
-module.exports = { generateTSRData, buildTSRHtml, buildTSRText };
+// ─── Staff DSR data for auto-cron (accepts pre-filtered staff list) ────────────
+// dayStart/dayEnd: ISO strings; staffList: array of { id, full_name, email, role }
+async function generateStaffDSRData(dayStart, dayEnd, staffList) {
+  if (!staffList?.length) return null;
+
+  const staffIds = staffList.map((s) => s.id);
+
+  const [
+    { data: leadsToday    },
+    { data: actsToday     },
+    { data: tasksToday    },
+    { data: meetingsToday },
+    { data: dealsCreated  },
+    { data: dealsWon      },
+    { data: dealsLost     },
+    { data: followUpLeads },
+  ] = await Promise.all([
+    supabase.from("leads").select("id, assigned_to")
+      .gte("created_at", dayStart).lte("created_at", dayEnd).in("assigned_to", staffIds),
+    supabase.from("activities").select("id, type, created_by, status")
+      .gte("created_at", dayStart).lte("created_at", dayEnd).in("created_by", staffIds),
+    supabase.from("tasks").select("id, assigned_to")
+      .eq("status", "done").gte("updated_at", dayStart).lte("updated_at", dayEnd).in("assigned_to", staffIds),
+    supabase.from("meetings").select("id, created_by, status")
+      .gte("start_time", dayStart).lte("start_time", dayEnd).in("created_by", staffIds),
+    supabase.from("deals").select("id, assigned_to, value")
+      .gte("created_at", dayStart).lte("created_at", dayEnd).in("assigned_to", staffIds),
+    supabase.from("deals").select("id, assigned_to, value")
+      .gte("updated_at", dayStart).lte("updated_at", dayEnd)
+      .or("stage.eq.won,stage.eq.closed_won").in("assigned_to", staffIds),
+    supabase.from("deals").select("id, assigned_to")
+      .gte("updated_at", dayStart).lte("updated_at", dayEnd)
+      .or("stage.eq.lost,stage.eq.closed_lost").in("assigned_to", staffIds),
+    supabase.from("leads").select("id, assigned_to")
+      .gte("follow_up_date", dayStart).lte("follow_up_date", dayEnd).in("assigned_to", staffIds),
+  ]);
+
+  const userStats = {};
+  for (const s of staffList) {
+    userStats[s.id] = {
+      name: s.full_name || "Unknown", role: s.role, email: s.email,
+      leadsToday: 0, calls: 0, emails: 0, meetings: 0,
+      followUpsCompleted: 0, followUpsScheduled: 0,
+      tasks: 0, activities: 0,
+      dealsCreated: 0, dealsWon: 0, dealsLost: 0, revenueWon: 0, score: 0,
+    };
+  }
+
+  for (const l of (leadsToday    || [])) if (userStats[l.assigned_to]) userStats[l.assigned_to].leadsToday++;
+  for (const t of (tasksToday    || [])) if (userStats[t.assigned_to]) userStats[t.assigned_to].tasks++;
+  for (const m of (meetingsToday || [])) if (userStats[m.created_by])  userStats[m.created_by].meetings++;
+  for (const f of (followUpLeads || [])) if (userStats[f.assigned_to]) userStats[f.assigned_to].followUpsScheduled++;
+  for (const d of (dealsCreated  || [])) if (userStats[d.assigned_to]) userStats[d.assigned_to].dealsCreated++;
+  for (const d of (dealsWon      || [])) {
+    if (userStats[d.assigned_to]) {
+      userStats[d.assigned_to].dealsWon++;
+      userStats[d.assigned_to].revenueWon += parseFloat(d.value) || 0;
+    }
+  }
+  for (const d of (dealsLost || [])) if (userStats[d.assigned_to]) userStats[d.assigned_to].dealsLost++;
+  for (const a of (actsToday || [])) {
+    if (!a.created_by || !userStats[a.created_by]) continue;
+    const u = userStats[a.created_by];
+    u.activities++;
+    const t = (a.type || "").toLowerCase().replace(/[-\s]/g, "_");
+    if (CALL_TYPES.has(t))    u.calls++;
+    if (EMAIL_TYPES.has(t))   u.emails++;
+    if (MEETING_TYPES.has(t)) u.meetings++;
+    if (FU_TYPES.has(t))      u.followUpsCompleted++;
+  }
+
+  for (const uid of staffIds) {
+    const u = userStats[uid];
+    if (!u) continue;
+    u.score = Math.min(100, Math.round(
+      Math.min(u.activities * 6, 40) + Math.min(u.tasks * 6, 20) +
+      Math.min(u.dealsCreated * 8, 20) + Math.min(u.leadsToday * 5, 20),
+    ));
+  }
+
+  const vals   = Object.values(userStats);
+  const sum    = (k) => vals.reduce((s, u) => s + (u[k] || 0), 0);
+  const totals = {
+    salesHeads:         staffList.filter((s) => s.role === "sales_head").length,
+    insideSales:        staffList.filter((s) => s.role === "inside_sales").length,
+    totalStaff:         staffList.length,
+    leadsToday:         sum("leadsToday"),
+    calls:              sum("calls"),
+    emails:             sum("emails"),
+    meetings:           sum("meetings"),
+    followUpsCompleted: sum("followUpsCompleted"),
+    followUpsScheduled: sum("followUpsScheduled"),
+    tasks:              sum("tasks"),
+    activities:         sum("activities"),
+    dealsCreated:       sum("dealsCreated"),
+    dealsWon:           sum("dealsWon"),
+    dealsLost:          sum("dealsLost"),
+    revenueWon:         sum("revenueWon"),
+  };
+
+  return { staff: staffList, userStats, totals };
+}
+
+module.exports = { generateTSRData, generateStaffDSRData, buildTSRHtml, buildTSRText };

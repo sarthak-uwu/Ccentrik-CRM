@@ -10,10 +10,10 @@ import {
   BarChart2, Clock, AlertCircle, ChevronLeft, ChevronRight, Calendar,
   Users, Target, ArrowRight, Award, Download, Printer,
   LayoutGrid, CalendarDays, PieChart, Activity, X, Search,
-  DollarSign, Star, BarChart3, Bell, Send, Loader2, Settings,
+  DollarSign, Star, BarChart3, Bell, Send, Loader2, Settings, History,
 } from "lucide-react";
 
-const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
+const API = (import.meta.env.VITE_FIREBASE_FUNCTIONS_URL ?? import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
   CartesianGrid,
@@ -534,7 +534,7 @@ function SendDSRModal({ onClose, viewableEmployees = [] }) {
       setLoadingStep(3);
       await new Promise(r => setTimeout(r, 350));
       if (!res.ok) {
-        setResult({ success: false, error: data.error || data.details || "Send failed" });
+        setResult({ success: false, error: data.error || data.details || `HTTP ${res.status}` });
         setStep("error");
       } else {
         setResult({ success: true, sent_to: data.sent_to });
@@ -912,6 +912,132 @@ function SendDSRModal({ onClose, viewableEmployees = [] }) {
           </div>
         )}
       </motion.div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DSR EMAIL LOGS PANEL  —  recent email send history (owner + sales_head)
+═══════════════════════════════════════════════════════════════════════ */
+function DSREmailLogsPanel() {
+  const { user }                      = useAuth();
+  const [logs, setLogs]               = useState([]);
+  const [loading, setLoading]         = useState(false);
+  const [collapsed, setCollapsed]     = useState(false);
+
+  const fetchLogs = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const token = await user.getIdToken();
+      const res   = await fetch(`${API}/api/reports/dsr-logs?limit=20`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) setLogs(await res.json());
+    } catch {}
+    setLoading(false);
+  }, [user]);
+
+  useEffect(() => { fetchLogs(); }, [fetchLogs]);
+
+  const statusColor = (s) => s === "sent" ? "#10B981" : s === "failed" ? "#EF4444" : "#F59E0B";
+  const statusIcon  = (s) => s === "sent" ? <CheckCircle2 size={9} /> : s === "failed" ? <AlertCircle size={9} /> : <Clock size={9} />;
+  const statusLabel = (s) => s === "sent" ? "Sent" : s === "failed" ? "Failed" : "Pending";
+
+  return (
+    <div style={{ marginTop: 24, background: "var(--surface)", borderRadius: 14, border: "1px solid var(--border)", overflow: "hidden" }}>
+
+      {/* Header row */}
+      <div
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderBottom: collapsed ? "none" : "1px solid var(--border)", cursor: "pointer" }}
+        onClick={() => setCollapsed((v) => !v)}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(99,102,241,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <History size={14} style={{ color: "#6366F1" }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text)" }}>Email Send History</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Recent DSR email delivery log</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); fetchLogs(); }}
+            title="Refresh logs"
+            style={{ width: 26, height: 26, borderRadius: 7, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", flexShrink: 0 }}
+          >
+            <RefreshCw size={11} style={{ animation: loading ? "spin 0.8s linear infinite" : "none" }} />
+          </button>
+          <ChevronDown size={14} style={{ color: "var(--text-muted)", transform: collapsed ? "rotate(-90deg)" : "none", transition: "transform 0.2s", flexShrink: 0 }} />
+        </div>
+      </div>
+
+      {!collapsed && (
+        <div style={{ overflowX: "auto" }}>
+          {loading && logs.length === 0 ? (
+            <div style={{ padding: "28px 18px", textAlign: "center" }}>
+              <Loader2 size={20} style={{ animation: "spin 0.8s linear infinite", color: "#6366F1", margin: "0 auto 8px", display: "block" }} />
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading logs…</div>
+            </div>
+          ) : logs.length === 0 ? (
+            <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: "var(--text-muted)" }}>
+              No email logs yet — send a DSR to see history here.
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+              <thead>
+                <tr style={{ background: "var(--surface-2)" }}>
+                  {["Report Date", "Type", "Recipients", "Status", "Sent By", "Time"].map((h) => (
+                    <th key={h} style={{ padding: "8px 14px", textAlign: "left", fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap", borderBottom: "1px solid var(--border)" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((log, i) => (
+                  <tr key={log.id || i}
+                    style={{ borderBottom: "1px solid var(--border)", transition: "background 0.1s" }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface-2)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <td style={{ padding: "9px 14px", fontSize: 12, color: "var(--text)", whiteSpace: "nowrap" }}>
+                      {log.report_date || "—"}
+                    </td>
+                    <td style={{ padding: "9px 14px" }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", textTransform: "capitalize", whiteSpace: "nowrap" }}>
+                        {(log.report_type || "daily").replace(/_/g, " ")}
+                      </span>
+                    </td>
+                    <td style={{ padding: "9px 14px", fontSize: 12, color: "var(--text-2)", maxWidth: 260 }}>
+                      <span style={{ fontWeight: 700, color: "var(--text)" }}>{log.recipient_count || (log.recipients?.length ?? 0)}</span>
+                      {Array.isArray(log.recipients) && log.recipients.length > 0 && (
+                        <span style={{ fontSize: 10.5, color: "var(--text-muted)", marginLeft: 6 }} title={log.recipients.join(", ")}>
+                          {log.recipients.slice(0, 2).join(", ")}{log.recipients.length > 2 ? ` +${log.recipients.length - 2} more` : ""}
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ padding: "9px 14px" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: `${statusColor(log.delivery_status)}18`, color: statusColor(log.delivery_status), whiteSpace: "nowrap" }}>
+                        {statusIcon(log.delivery_status)}
+                        {statusLabel(log.delivery_status)}
+                      </span>
+                    </td>
+                    <td style={{ padding: "9px 14px", fontSize: 11.5, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                      {log.sent_by_profile?.full_name
+                        ? <span>{log.sent_by_profile.full_name}</span>
+                        : <span style={{ fontStyle: "italic", color: "var(--text-muted)" }}>System (Auto)</span>
+                      }
+                    </td>
+                    <td style={{ padding: "9px 14px", fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                      {log.sent_at ? format(new Date(log.sent_at), "MMM d, h:mm a") : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2244,6 +2370,9 @@ export default function DSRPage() {
           )}
         </>
       )}
+
+      {/* ── Email Logs Panel (owner + sales_head) ── */}
+      {isOwnerOrHead && <DSREmailLogsPanel />}
 
       {/* ── Send DSR Modal ── */}
       <AnimatePresence>
