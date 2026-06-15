@@ -111,21 +111,40 @@ function warningBox(text) {
 }
 
 const sendMail = async ({ to, subject, html, text, replyTo, attachments }) => {
-  if (!resend) {
-    console.warn("[sendMail] RESEND_API_KEY not set — email skipped:", subject);
-    return { skipped: true };
+  // Try Resend first if configured
+  if (resend) {
+    try {
+      const result = await resend.emails.send({
+        from:    FROM,
+        to:      Array.isArray(to) ? to : [to],
+        subject,
+        html,
+        text,
+        ...(replyTo     ? { reply_to: replyTo } : {}),
+        ...(attachments ? { attachments }        : {}),
+      });
+      if (result.error) throw new Error(result.error.message || "Resend send failed");
+      return result;
+    } catch (resendErr) {
+      console.warn("[sendMail] Resend failed:", resendErr.message, "— falling back to Gmail SMTP");
+    }
   }
-  const result = await resend.emails.send({
-    from:    FROM,
-    to:      Array.isArray(to) ? to : [to],
-    subject,
-    html,
-    text,
-    ...(replyTo      ? { reply_to: replyTo }   : {}),
-    ...(attachments  ? { attachments }          : {}),
-  });
-  if (result.error) throw new Error(result.error.message || "Resend send failed");
-  return result;
+
+  // Fall back to Gmail / SMTP transport
+  if (globalTransport) {
+    return globalTransport.sendMail({
+      from:    FROM,
+      to:      Array.isArray(to) ? to : [to],
+      subject,
+      html,
+      text,
+      ...(replyTo     ? { replyTo }     : {}),
+      ...(attachments ? { attachments } : {}),
+    });
+  }
+
+  console.warn("[sendMail] No email transport configured — email skipped:", subject);
+  return { skipped: true };
 };
 
 // ─── Welcome / Invitation ─────────────────────────────────────────────────────
