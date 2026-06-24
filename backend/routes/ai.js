@@ -1,16 +1,16 @@
 const express = require("express");
 const router  = express.Router();
-const Groq    = require("groq-sdk");
 const { supabase }     = require("../config/db");
 const { authenticate } = require("../middleware/auth");
 
-const GROQ_MODEL      = "llama-3.3-70b-versatile";
-const MAX_ITERATIONS  = 6;
+const OR_MODEL       = "meta-llama/llama-3.3-70b-instruct:free";
+const OR_BASE_URL    = "https://openrouter.ai/api/v1/chat/completions";
+const MAX_ITERATIONS = 6;
 
 // Per-user conversation history (in-memory; resets on cold start)
 const conversationHistory = {};
 
-// ── Tool definitions ──────────────────────────────────────────────────────────
+// ── Tool definitions (OpenAI-compatible) ──────────────────────────────────────
 const CRM_TOOLS = [
   {
     type: "function",
@@ -20,10 +20,10 @@ const CRM_TOOLS = [
       parameters: {
         type: "object",
         properties: {
-          temperature: { type: "string", enum: ["hot", "warm", "cold"], description: "Filter by temperature" },
-          stage:       { type: "string", description: "Filter by stage: new, contacted, qualified, proposal, negotiation, won, lost" },
+          temperature:   { type: "string", enum: ["hot", "warm", "cold"], description: "Filter by temperature" },
+          stage:         { type: "string", description: "Filter by stage: new, contacted, qualified, proposal, negotiation, won, lost" },
           follow_up_due: { type: "boolean", description: "Only leads with follow-up due in next 3 days" },
-          limit:       { type: "number", description: "Max results (default 20, max 50)" },
+          limit:         { type: "number", description: "Max results (default 20, max 50)" },
         },
       },
     },
@@ -172,6 +172,34 @@ async function executeTool(name, args, profile) {
   return { error: `Unknown tool: ${name}` };
 }
 
+// ── OpenRouter completion helper ───────────────────────────────────────────────
+async function callOpenRouter(apiKey, messages) {
+  const res = await fetch(OR_BASE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type":  "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+      "HTTP-Referer":  "https://ccentrik-crm.web.app",
+      "X-Title":       "Ccentrik CRM",
+    },
+    body: JSON.stringify({
+      model:       OR_MODEL,
+      messages,
+      tools:       CRM_TOOLS,
+      tool_choice: "auto",
+      temperature: 0.35,
+      max_tokens:  2048,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error?.message || `OpenRouter error ${res.status}`);
+  }
+
+  return res.json();
+}
+
 // ── System prompt ─────────────────────────────────────────────────────────────
 function buildSystemPrompt(profile, pageContext) {
   const date = new Date().toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -232,10 +260,8 @@ router.post("/chat", authenticate, async (req, res) => {
   const { message, pageContext } = req.body;
   if (!message) return res.status(400).json({ error: "Message is required" });
 
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey || apiKey === "your-groq-api-key-here") {
-    return res.status(503).json({ error: "Groq API key not configured." });
-  }
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: "OpenRouter API key not configured." });
 
   const userId = req.profile.id;
   if (!conversationHistory[userId]) conversationHistory[userId] = [];
@@ -253,8 +279,6 @@ router.post("/chat", authenticate, async (req, res) => {
   };
 
   try {
-    const groq = new Groq({ apiKey });
-
     const messages = [
       { role: "system", content: buildSystemPrompt(req.profile, pageContext || null) },
       ...conversationHistory[userId].slice(-12),
@@ -265,16 +289,8 @@ router.post("/chat", authenticate, async (req, res) => {
     let finalContent = "";
 
     for (let i = 0; i < MAX_ITERATIONS; i++) {
-      const response = await groq.chat.completions.create({
-        model: GROQ_MODEL,
-        messages,
-        tools: CRM_TOOLS,
-        tool_choice: "auto",
-        temperature: 0.35,
-        max_tokens: 2048,
-      });
-
-      const choice = response.choices[0];
+      const data   = await callOpenRouter(apiKey, messages);
+      const choice = data.choices[0];
 
       if (choice.finish_reason === "tool_calls") {
         const toolCalls = choice.message.tool_calls;
@@ -309,7 +325,7 @@ router.post("/chat", authenticate, async (req, res) => {
     }
 
     // Persist conversation
-    conversationHistory[userId].push({ role: "user", content: message });
+    conversationHistory[userId].push({ role: "user",      content: message });
     conversationHistory[userId].push({ role: "assistant", content: finalContent });
     if (conversationHistory[userId].length > 20) {
       conversationHistory[userId] = conversationHistory[userId].slice(-20);
