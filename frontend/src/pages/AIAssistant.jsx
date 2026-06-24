@@ -573,7 +573,7 @@ export default function AIAssistant() {
         onError: (err) => {
           const msg = err?.message || "Unknown error";
           const fallback = /rate.limit|429|quota/i.test(msg)
-            ? "**Rate limit hit.** Groq free tier: 14,400 requests/day. Wait a moment and retry."
+            ? "**Rate limit hit.** Gemini API quota exceeded. Wait a moment and retry."
             : /401|unauthorized|not authenticated/i.test(msg)
               ? "**Session expired.** Please refresh the page and sign in again."
               : `**Error:** ${msg}`;
@@ -617,7 +617,7 @@ export default function AIAssistant() {
               <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 400 }}>AI Executive Assistant</span>
               <span className="badge badge-purple" style={{ fontSize: 9.5 }}>BETA</span>
               <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "#10B981", fontWeight: 600 }}>
-                <span className="live-indicator" /> Llama 3.3 · Agent
+                <span className="live-indicator" /> Gemini 1.5 · Agent
               </span>
             </div>
             <motion.div
@@ -768,7 +768,7 @@ export default function AIAssistant() {
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
             <Activity size={10} style={{ color: "var(--text-muted)" }} />
             <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-              Powered by <strong style={{ color: "var(--accent)" }}>ARIA Agent</strong> · Llama 3.3 on Groq · {isMuted ? "Chat mode" : <span style={{ color: "#10B981", fontWeight: 600 }}>Voice mode ON</span>} · Enter to send · Actions require approval
+              Powered by <strong style={{ color: "var(--accent)" }}>ARIA Agent</strong> · Gemini 1.5 Flash · {isMuted ? "Chat mode" : <span style={{ color: "#10B981", fontWeight: 600 }}>Voice mode ON</span>} · Enter to send · Actions require approval
             </span>
           </div>
         </div>

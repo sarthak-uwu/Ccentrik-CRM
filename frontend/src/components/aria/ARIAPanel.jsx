@@ -395,7 +395,7 @@ export default function ARIAPanel() {
                   <span style={{ fontSize: 14, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.03em" }}>ARIA</span>
                   <span style={{ fontSize: 10, color: "#10B981", fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}>
                     <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#10B981", animation: "pulse 2s ease-in-out infinite", display: "inline-block" }} />
-                    Agent · Llama 3.3
+                    Agent · Gemini 1.5
                   </span>
                 </div>
                 <div style={{ fontSize: 11, color: aiState === "thinking" ? "#A78BFA" : "var(--text-muted)", marginTop: 1, transition: "color 0.2s" }}>
