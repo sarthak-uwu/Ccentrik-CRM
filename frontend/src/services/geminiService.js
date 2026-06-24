@@ -102,15 +102,20 @@ export async function streamGeminiResponse({
     },
   });
 
+  // Retry up to 3 times on 503 (transient server overload)
+  const fetchWithRetry = async (attempts = 3) => {
+    for (let i = 0; i < attempts; i++) {
+      const res = await fetch(
+        `${GEMINI_BASE}:streamGenerateContent?alt=sse&key=${apiKey}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body }
+      );
+      if (res.status !== 503 || i === attempts - 1) return res;
+      await new Promise((r) => setTimeout(r, (i + 1) * 1500));
+    }
+  };
+
   try {
-    const res = await fetch(
-      `${GEMINI_BASE}:streamGenerateContent?alt=sse&key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      }
-    );
+    const res = await fetchWithRetry();
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
