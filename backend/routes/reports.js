@@ -713,18 +713,12 @@ router.get("/scheduler-cron", async (req, res) => {
         }
         if (!staffIds || staffIds.length === 0) continue;
 
-        // Fetch employee activity data
-        const employeeData = await generateEmployeeActivityData(start, end, staffIds);
-        if (!employeeData || employeeData.length === 0) {
+        // Fetch employee activity data — staffIds first, then date range
+        const { employeeData, staff: empStaff } = await generateEmployeeActivityData(staffIds, start, end);
+        if (!empStaff || empStaff.length === 0) {
           results.push({ user_id: cfg.user_id, status: "skipped", reason: "no_data" });
           continue;
         }
-
-        // Fetch staff profiles
-        const { data: staffProfiles } = await supabase
-          .from("profiles")
-          .select("id, full_name, email, role")
-          .in("id", staffIds);
 
         // Generate PDF
         const reportTypeLabel = cfg.report_type
@@ -732,7 +726,7 @@ router.get("/scheduler-cron", async (req, res) => {
           : "Daily";
         const pdfBuffer = await generateActivityPdf({
           employeeData,
-          staff:           staffProfiles || [],
+          staff:           empStaff,
           reportDateLabel: rangeLabel,
           reportType:      reportTypeLabel,
           generatedAt:     nowUtc.toISOString(),
