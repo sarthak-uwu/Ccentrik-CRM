@@ -319,7 +319,14 @@ router.post("/chat", authenticate, async (req, res) => {
     res.end();
   } catch (err) {
     console.error("ARIA agent error:", err.message);
-    send({ type: "error", message: err.message });
+    let userMsg = err.message || "An error occurred";
+    // Gemini API key / quota errors — don't expose raw 401/403 to frontend
+    if (/API.?key|PERMISSION_DENIED|INVALID_ARGUMENT|quota|resource.?exhausted/i.test(userMsg)) {
+      userMsg = "AI service error: invalid or missing API key. Please contact support.";
+    } else if (/401|403/i.test(userMsg) && /google|gemini|generative/i.test(userMsg)) {
+      userMsg = "AI service error: API authentication failed. Please contact support.";
+    }
+    send({ type: "error", message: userMsg });
     res.write("data: [DONE]\n\n");
     res.end();
   }

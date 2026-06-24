@@ -302,9 +302,11 @@ export default function ARIAPanel() {
           const msg = err?.message || "Unknown error";
           const fallback = /rate.limit|429/i.test(msg)
             ? "**Rate limit reached.** Please wait a moment and retry."
-            : /401|unauthorized/i.test(msg)
-              ? "**Session expired.** Please refresh the page."
-              : `**Error:** ${msg}`;
+            : /AI service error/i.test(msg)
+              ? `**${msg}**`
+              : /401|unauthorized/i.test(msg)
+                ? "**Session expired.** Please refresh the page."
+                : `**Error:** ${msg}`;
           setMessages((prev) => prev.map((m) => m.id === streamId ? { ...m, content: fallback, streaming: false } : m));
         },
       });

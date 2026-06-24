@@ -574,9 +574,11 @@ export default function AIAssistant() {
           const msg = err?.message || "Unknown error";
           const fallback = /rate.limit|429|quota/i.test(msg)
             ? "**Rate limit hit.** Gemini API quota exceeded. Wait a moment and retry."
-            : /401|unauthorized|not authenticated/i.test(msg)
-              ? "**Session expired.** Please refresh the page and sign in again."
-              : `**Error:** ${msg}`;
+            : /AI service error/i.test(msg)
+              ? `**${msg}**`
+              : /401|unauthorized|not authenticated/i.test(msg)
+                ? "**Session expired.** Please refresh the page and sign in again."
+                : `**Error:** ${msg}`;
           setMessages((prev) => prev.map((m) => m.id === streamId ? { ...m, content: fallback, streaming: false } : m));
         },
       });
