@@ -265,7 +265,7 @@ router.post("/chat", authenticate, async (req, res) => {
         // Execute all tool calls in parallel
         const results = await Promise.all(
           toolCalls.map(async (tc) => {
-            const args   = JSON.parse(tc.function.arguments || "{}");
+            const args   = JSON.parse(tc.function.arguments || "{}") || {};
             const result = await executeTool(tc.function.name, args, req.profile);
             return { role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) };
           })
