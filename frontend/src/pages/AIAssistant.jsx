@@ -11,7 +11,8 @@ import {
   IndianRupee, BriefcaseBusiness, ArrowRight, Lightbulb, Activity,
   Calendar, FileText, Check, X, Loader2, CheckCircle2,
 } from "lucide-react";
-import { streamGroqResponse } from "../services/groqService";
+import { streamARIA } from "../services/ariaService";
+import { auth } from "../firebase";
 import { useCurrency } from "../context/CurrencyContext";
 
 // ── Language config ───────────────────────────────────────────────────────────
@@ -549,37 +550,16 @@ export default function AIAssistant() {
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
     setAiState("thinking");
-    setThinkingStatus(THINKING_STATUSES[0]);
-
-    // Build CRM context
-    const [leadsRes, dealsRes, tasksRes] = await Promise.all([
-      supabase.from("leads").select("company_name, contact_name, temperature, stage, follow_up_date, source").order("created_at", { ascending: false }).limit(30),
-      supabase.from("deals").select("company_name, title, stage, value, updated_at, close_date").limit(30),
-      supabase.from("tasks").select("title, status, due_date, priority").limit(20),
-    ]);
-
-    const now = new Date().toISOString().slice(0, 10);
-    const crmContext = `Today: ${now} | User: ${profile?.full_name || "Sales Rep"} (${profile?.role || "employee"})
-LEADS (${(leadsRes.data||[]).length}): ${JSON.stringify((leadsRes.data||[]).slice(0, 20))}
-DEALS (${(dealsRes.data||[]).length}): ${JSON.stringify((dealsRes.data||[]).slice(0, 20))}
-TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slice(0, 15))}`;
-
-    const history = messages
-      .filter((m) => !["welcome", "welcome-new"].includes(m.id) && !m.id.endsWith("sys") && !m.id.endsWith("err"))
-      .slice(-6)
-      .map((m) => ({ role: m.role, content: m.content }));
-    history.push({ role: "user", content });
+    setThinkingStatus("Connecting to ARIA...");
 
     const streamId = Date.now() + "a";
     setMessages((prev) => [...prev, { id: streamId, role: "assistant", content: "", ts: new Date(), streaming: true }]);
 
     try {
-      await streamGroqResponse({
-        messages: history,
-        context: crmContext,
-        language: selectedLang.name,
-        userName: profile?.full_name,
-        userRole: profile?.role,
+      await streamARIA({
+        message: content,
+        getToken: () => auth.currentUser?.getIdToken(),
+        onStatus: (status) => setThinkingStatus(status),
         onToken: (_, fullText) => {
           const { cleanText } = parseAction(fullText);
           setMessages((prev) => prev.map((m) => m.id === streamId ? { ...m, content: cleanText } : m));
@@ -591,16 +571,12 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
           speakText(cleanText);
         },
         onError: (err) => {
-          const message = err?.message || "Unknown error";
-          const isKeyMissing = message === "GROQ_KEY_MISSING";
-          const isRateLimit  = /rate.limit|429|quota/i.test(message);
-
-          const fallback = isKeyMissing
-            ? "**AI key not configured.** Add `VITE_GROQ_API_KEY=...` to your `.env.production` file and rebuild.\n\nGet your free key at **console.groq.com**"
-            : isRateLimit
-              ? "**Rate limit hit.** Groq free tier allows 14,400 requests/day. Wait a moment and try again."
-              : `**Error:** ${message}`;
-
+          const msg = err?.message || "Unknown error";
+          const fallback = /rate.limit|429|quota/i.test(msg)
+            ? "**Rate limit hit.** Groq free tier: 14,400 requests/day. Wait a moment and retry."
+            : /401|unauthorized|not authenticated/i.test(msg)
+              ? "**Session expired.** Please refresh the page and sign in again."
+              : `**Error:** ${msg}`;
           setMessages((prev) => prev.map((m) => m.id === streamId ? { ...m, content: fallback, streaming: false } : m));
         },
       });
@@ -641,7 +617,7 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
               <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 400 }}>AI Executive Assistant</span>
               <span className="badge badge-purple" style={{ fontSize: 9.5 }}>BETA</span>
               <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "#10B981", fontWeight: 600 }}>
-                <span className="live-indicator" /> Llama 3.3
+                <span className="live-indicator" /> Llama 3.3 · Agent
               </span>
             </div>
             <motion.div
@@ -790,7 +766,7 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
             <Activity size={10} style={{ color: "var(--text-muted)" }} />
             <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-              Powered by <strong style={{ color: "var(--accent)" }}>Llama 3.3</strong> (Groq) · Enter to send · Shift+Enter for new line · Actions require approval
+              Powered by <strong style={{ color: "var(--accent)" }}>ARIA Agent</strong> · Llama 3.3 on Groq · Enter to send · Actions require approval
             </span>
           </div>
         </div>
