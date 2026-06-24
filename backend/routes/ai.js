@@ -1,75 +1,83 @@
 const express = require("express");
 const router  = express.Router();
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const Groq    = require("groq-sdk");
 const { supabase }     = require("../config/db");
 const { authenticate } = require("../middleware/auth");
 
-const GEMINI_MODEL    = "gemini-2.0-flash";
+const GROQ_MODEL      = "llama-3.3-70b-versatile";
 const MAX_ITERATIONS  = 6;
 
-// Per-user conversation history in Gemini format { role:"user"|"model", parts:[{text}] }
+// Per-user conversation history (in-memory; resets on cold start)
 const conversationHistory = {};
 
-// ── Tool definitions (Gemini functionDeclarations format) ─────────────────────
-const GEMINI_TOOLS = [
+// ── Tool definitions ──────────────────────────────────────────────────────────
+const CRM_TOOLS = [
   {
-    functionDeclarations: [
-      {
-        name: "get_leads",
-        description: "Query live leads from the CRM. Use whenever the user asks about leads, hot leads, follow-ups, pipeline contacts, or specific companies.",
-        parameters: {
-          type: "object",
-          properties: {
-            temperature:   { type: "string", description: "Filter by temperature: hot, warm, cold" },
-            stage:         { type: "string", description: "Filter by stage: new, contacted, qualified, proposal, negotiation, won, lost" },
-            follow_up_due: { type: "boolean", description: "Only leads with follow-up due in next 3 days" },
-            limit:         { type: "number", description: "Max results (default 20, max 50)" },
-          },
+    type: "function",
+    function: {
+      name: "get_leads",
+      description: "Query live leads from the CRM. Use whenever the user asks about leads, hot leads, follow-ups, pipeline contacts, or specific companies.",
+      parameters: {
+        type: "object",
+        properties: {
+          temperature: { type: "string", enum: ["hot", "warm", "cold"], description: "Filter by temperature" },
+          stage:       { type: "string", description: "Filter by stage: new, contacted, qualified, proposal, negotiation, won, lost" },
+          follow_up_due: { type: "boolean", description: "Only leads with follow-up due in next 3 days" },
+          limit:       { type: "number", description: "Max results (default 20, max 50)" },
         },
       },
-      {
-        name: "get_deals",
-        description: "Query live deals. Use for pipeline value, stale deals, open deals, won revenue, or deal-specific questions.",
-        parameters: {
-          type: "object",
-          properties: {
-            stage:      { type: "string", description: "Filter by stage" },
-            stale_days: { type: "number", description: "Only deals not updated in N days" },
-            limit:      { type: "number", description: "Max results (default 20)" },
-          },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_deals",
+      description: "Query live deals. Use for pipeline value, stale deals, open deals, won revenue, or deal-specific questions.",
+      parameters: {
+        type: "object",
+        properties: {
+          stage:      { type: "string", description: "Filter by stage" },
+          stale_days: { type: "number", description: "Only deals not updated in N days" },
+          limit:      { type: "number", description: "Max results (default 20)" },
         },
       },
-      {
-        name: "get_tasks",
-        description: "Get pending or overdue tasks.",
-        parameters: {
-          type: "object",
-          properties: {
-            overdue_only: { type: "boolean", description: "Only tasks past their due date" },
-            limit:        { type: "number", description: "Max results (default 15)" },
-          },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_tasks",
+      description: "Get pending or overdue tasks.",
+      parameters: {
+        type: "object",
+        properties: {
+          overdue_only: { type: "boolean", description: "Only tasks past their due date" },
+          limit:        { type: "number", description: "Max results (default 15)" },
         },
       },
-      {
-        name: "get_activities",
-        description: "Get recent sales activities — calls, emails, meetings, demos.",
-        parameters: {
-          type: "object",
-          properties: {
-            type:  { type: "string", description: "Filter by type: call, email, meeting, demo, note" },
-            limit: { type: "number", description: "Max results (default 10)" },
-          },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_activities",
+      description: "Get recent sales activities — calls, emails, meetings, demos.",
+      parameters: {
+        type: "object",
+        properties: {
+          type:  { type: "string", description: "Filter by type: call, email, meeting, demo, note" },
+          limit: { type: "number", description: "Max results (default 10)" },
         },
       },
-      {
-        name: "get_pipeline_summary",
-        description: "Full pipeline stats: stage counts, temperature breakdown, total pipeline value, won revenue, stale deal count, avg AI score. Use for summary or forecast questions.",
-        parameters: {
-          type: "object",
-          properties: {},
-        },
-      },
-    ],
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_pipeline_summary",
+      description: "Full pipeline stats: stage counts, temperature breakdown, total pipeline value, won revenue, stale deal count, avg AI score. Use for summary or forecast questions.",
+      parameters: { type: "object", properties: {} },
+    },
   },
 ];
 
@@ -224,9 +232,9 @@ router.post("/chat", authenticate, async (req, res) => {
   const { message, pageContext } = req.body;
   if (!message) return res.status(400).json({ error: "Message is required" });
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === "your-gemini-api-key-here") {
-    return res.status(503).json({ error: "Gemini API key not configured." });
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey || apiKey === "your-groq-api-key-here") {
+    return res.status(503).json({ error: "Groq API key not configured." });
   }
 
   const userId = req.profile.id;
@@ -245,58 +253,50 @@ router.post("/chat", authenticate, async (req, res) => {
   };
 
   try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: GEMINI_MODEL,
-      systemInstruction: buildSystemPrompt(req.profile, pageContext || null),
-      tools: GEMINI_TOOLS,
-    });
+    const groq = new Groq({ apiKey });
 
-    const chat = model.startChat({
-      history: conversationHistory[userId].slice(-20),
-      generationConfig: { temperature: 0.35, maxOutputTokens: 2048 },
-    });
+    const messages = [
+      { role: "system", content: buildSystemPrompt(req.profile, pageContext || null) },
+      ...conversationHistory[userId].slice(-12),
+      { role: "user", content: message },
+    ];
 
     // ── Agent loop ─────────────────────────────────────────────────────────────
     let finalContent = "";
-    let currentMessage = message;
-    let isFunctionResponse = false;
 
     for (let i = 0; i < MAX_ITERATIONS; i++) {
-      const result = isFunctionResponse
-        ? await chat.sendMessage(currentMessage)
-        : await chat.sendMessage(currentMessage);
+      const response = await groq.chat.completions.create({
+        model: GROQ_MODEL,
+        messages,
+        tools: CRM_TOOLS,
+        tool_choice: "auto",
+        temperature: 0.35,
+        max_tokens: 2048,
+      });
 
-      const response = result.response;
-      const functionCalls = response.functionCalls();
+      const choice = response.choices[0];
 
-      if (functionCalls && functionCalls.length > 0) {
-        // Notify frontend which tools are running
-        for (const fc of functionCalls) {
-          send({ type: "tool", name: fc.name });
+      if (choice.finish_reason === "tool_calls") {
+        const toolCalls = choice.message.tool_calls;
+        messages.push(choice.message);
+
+        for (const tc of toolCalls) {
+          send({ type: "tool", name: tc.function.name });
         }
 
-        // Execute all tool calls in parallel
-        const functionResults = await Promise.all(
-          functionCalls.map(async (fc) => {
-            const output = await executeTool(fc.name, fc.args || {}, req.profile);
-            return {
-              functionResponse: {
-                name: fc.name,
-                response: output,
-              },
-            };
+        const results = await Promise.all(
+          toolCalls.map(async (tc) => {
+            const args   = JSON.parse(tc.function.arguments || "{}") || {};
+            const result = await executeTool(tc.function.name, args, req.profile);
+            return { role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) };
           })
         );
 
-        // Feed results back — Gemini expects them as the next "user" turn
-        currentMessage = functionResults;
-        isFunctionResponse = true;
+        messages.push(...results);
         continue;
       }
 
-      // No more tool calls — we have the final answer
-      finalContent = response.text() || "";
+      finalContent = choice.message.content || "";
       break;
     }
 
@@ -308,9 +308,9 @@ router.post("/chat", authenticate, async (req, res) => {
       send({ type: "token", content: chunk });
     }
 
-    // Persist conversation in Gemini history format
-    conversationHistory[userId].push({ role: "user",  parts: [{ text: message }] });
-    conversationHistory[userId].push({ role: "model", parts: [{ text: finalContent }] });
+    // Persist conversation
+    conversationHistory[userId].push({ role: "user", content: message });
+    conversationHistory[userId].push({ role: "assistant", content: finalContent });
     if (conversationHistory[userId].length > 20) {
       conversationHistory[userId] = conversationHistory[userId].slice(-20);
     }
@@ -319,13 +319,9 @@ router.post("/chat", authenticate, async (req, res) => {
     res.end();
   } catch (err) {
     console.error("ARIA agent error:", err.message);
-    let userMsg = err.message || "An error occurred";
-    // Gemini API key / quota errors — don't expose raw 401/403 to frontend
-    if (/API.?key|PERMISSION_DENIED|INVALID_ARGUMENT|quota|resource.?exhausted/i.test(userMsg)) {
-      userMsg = "AI service error: invalid or missing API key. Please contact support.";
-    } else if (/401|403/i.test(userMsg) && /google|gemini|generative/i.test(userMsg)) {
-      userMsg = "AI service error: API authentication failed. Please contact support.";
-    }
+    const userMsg = /rate.limit|429|quota/i.test(err.message)
+      ? "Rate limit reached. Please wait a moment and try again."
+      : err.message;
     send({ type: "error", message: userMsg });
     res.write("data: [DONE]\n\n");
     res.end();
