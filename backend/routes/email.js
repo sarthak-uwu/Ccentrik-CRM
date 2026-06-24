@@ -185,17 +185,21 @@ router.get("/callback/gmail", async (req, res) => {
       return res.redirect(`${FRONTEND_URL}/settings?email_sync_error=domain_restricted`);
     }
 
-    await supabase.from("email_accounts").upsert({
-      user_id:       userId,
-      provider:      "gmail",
+    // Google only returns refresh_token on first authorization.
+    // Never overwrite an existing refresh_token with null — doing so breaks token refresh after expiry.
+    const accountPayload = {
+      user_id:      userId,
+      provider:     "gmail",
       email,
-      access_token:  tokens.access_token,
-      refresh_token: tokens.refresh_token || null,
-      token_expiry:  tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000).toISOString() : null,
-      history_id:    gmailProfile.historyId?.toString() || null,
-      last_sync_at:  new Date().toISOString(),
-      is_active:     true,
-    }, { onConflict: "user_id,email" });
+      access_token: tokens.access_token,
+      token_expiry: tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000).toISOString() : null,
+      history_id:   gmailProfile.historyId?.toString() || null,
+      last_sync_at: new Date().toISOString(),
+      is_active:    true,
+    };
+    if (tokens.refresh_token) accountPayload.refresh_token = tokens.refresh_token;
+
+    await supabase.from("email_accounts").upsert(accountPayload, { onConflict: "user_id,email" });
 
     res.redirect(`${FRONTEND_URL}/settings?email_sync_connected=gmail`);
   } catch (err) {
@@ -561,8 +565,15 @@ router.post("/send", authenticate, async (req, res) => {
   let token;
   try {
     token = await getValidToken(account);
-  } catch {
-    return res.status(400).json({ error: "Email account token expired. Please reconnect Gmail in Settings." });
+  } catch (tokenErr) {
+    console.error("Gmail token error for user", req.profile.id, ":", tokenErr.message);
+    const noRefresh = tokenErr.message === "No refresh token";
+    return res.status(400).json({
+      error: noRefresh
+        ? "Your Gmail session has expired and cannot be refreshed. Please disconnect and reconnect your Gmail account in Settings → Email Integration."
+        : `Gmail authentication error: ${tokenErr.message}. Please reconnect Gmail in Settings.`,
+      code: noRefresh ? "no_refresh_token" : "token_error",
+    });
   }
 
   // Get sender details
