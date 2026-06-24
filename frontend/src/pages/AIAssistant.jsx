@@ -11,7 +11,7 @@ import {
   IndianRupee, BriefcaseBusiness, ArrowRight, Lightbulb, Activity,
   Calendar, FileText, Check, X, Loader2, CheckCircle2,
 } from "lucide-react";
-import { streamGrokResponse } from "../services/grokService";
+import { streamGeminiResponse } from "../services/geminiService";
 import { useCurrency } from "../context/CurrencyContext";
 
 // ── Language config ───────────────────────────────────────────────────────────
@@ -37,11 +37,11 @@ const QUICK_PROMPTS = [
 ];
 
 const HINGLISH_PROMPTS = [
-  { flag: "🇮🇳", text: "Pipeline summary batao",       prompt: "Pipeline ka full summary do — leads, deals aur priorities." },
-  { flag: "🇮🇳", text: "Hot leads kaun se hain?",      prompt: "Aaj ke hot leads kaun kaun se hain aur kya action lena chahiye?" },
-  { flag: "🇮🇳", text: "Revenue kitna increase hua?",  prompt: "Is month revenue kitna increase hua hai? Ek summary do." },
-  { flag: "🇮🇳", text: "Follow-ups aaj ke kya hain?", prompt: "Aaj ke follow-ups list karo with contact details." },
-  { flag: "🇮🇳", text: "Stale deals kaun se hain?",    prompt: "Kaunse deals zyada dino se update nahi hue? Kya karna chahiye?" },
+  { flag: "🇮🇳", text: "Show Pipeline Summary",        prompt: "Give me a full pipeline summary — leads, deals and priorities." },
+  { flag: "🇮🇳", text: "Which are the Hot Leads?",     prompt: "Which are today's hot leads and what action should I take for each?" },
+  { flag: "🇮🇳", text: "How much has Revenue Increased?", prompt: "How much has revenue increased this month? Give me a summary." },
+  { flag: "🇮🇳", text: "What are Today's Follow-ups?", prompt: "List today's follow-ups with contact details." },
+  { flag: "🇮🇳", text: "Which Deals are Stale?",       prompt: "Which deals haven't been updated in a long time? What should I do about them?" },
 ];
 
 // ── Thinking status messages ──────────────────────────────────────────────────
@@ -76,7 +76,7 @@ function getDynamicGreeting(profile, insights) {
   } else {
     lines.push("Your pipeline looks healthy — no urgent items right now. Great work!");
   }
-  lines.push("What would you like to work on today?");
+  lines.push("How can I help you manage your sales and customer relationships today?");
   return lines.join("\n");
 }
 
@@ -574,7 +574,7 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
     setMessages((prev) => [...prev, { id: streamId, role: "assistant", content: "", ts: new Date(), streaming: true }]);
 
     try {
-      await streamGrokResponse({
+      await streamGeminiResponse({
         messages: history,
         context: crmContext,
         language: selectedLang.name,
@@ -591,14 +591,14 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
           speakText(cleanText);
         },
         onError: (err) => {
-          const message = err?.message || "Unknown xAI error";
-          const isKeyMissing = message === "XAI_KEY_MISSING";
-          const isBillingIssue = /credits|licenses|permission to execute|billing/i.test(message);
+          const message = err?.message || "Unknown Gemini error";
+          const isKeyMissing = message === "GEMINI_KEY_MISSING";
+          const isBillingIssue = /quota|billing|resource.has.been.exhausted|API key not valid/i.test(message);
 
           const fallback = isKeyMissing
-            ? "**AI key not configured.** Add `VITE_XAI_API_KEY=xai-...` to your `.env` file and restart.\n\nGet your key at **console.x.ai**"
+            ? "**AI key not configured.** Add `VITE_GEMINI_API_KEY=...` to your `.env.production` file and rebuild.\n\nGet your free key at **aistudio.google.com/app/apikey**"
             : isBillingIssue
-              ? "**xAI billing is not active for this team.** Add credits or a license in **console.x.ai**, then retry.\n\nIf the key was recently created, wait a few minutes and try again."
+              ? "**Gemini API quota exceeded or billing issue.** Check your quota at **console.cloud.google.com**, then retry.\n\nIf the key was recently created, wait a few minutes and try again."
               : `**Error:** ${message}`;
 
           setMessages((prev) => prev.map((m) => m.id === streamId ? { ...m, content: fallback, streaming: false } : m));
@@ -624,7 +624,7 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
   const statusText = aiState === "listening" ? "🎤 Listening..."
     : aiState === "thinking" ? thinkingStatus
     : aiState === "speaking" ? "🔊 Speaking..."
-    : "Multilingual · Hindi · Hinglish · English · and more";
+    : "Ask me anything about your leads, deals, pipeline, and tasks";
 
   return (
     <div style={{ display: "flex", height: "100%", overflow: "hidden", background: "var(--bg)" }}>
@@ -641,7 +641,7 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
               <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 400 }}>AI Executive Assistant</span>
               <span className="badge badge-purple" style={{ fontSize: 9.5 }}>BETA</span>
               <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "#10B981", fontWeight: 600 }}>
-                <span className="live-indicator" /> Grok 4.3
+                <span className="live-indicator" /> Gemini 1.5
               </span>
             </div>
             <motion.div
@@ -790,7 +790,7 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
             <Activity size={10} style={{ color: "var(--text-muted)" }} />
             <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-              Powered by <strong style={{ color: "var(--accent)" }}>Grok 4.3</strong> (xAI) · Enter to send · Shift+Enter for new line · Actions require approval
+              Powered by <strong style={{ color: "var(--accent)" }}>Gemini 1.5</strong> (Google) · Enter to send · Shift+Enter for new line · Actions require approval
             </span>
           </div>
         </div>

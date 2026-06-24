@@ -14,6 +14,50 @@ async function resolveHostProfile(profileId) {
   return data || {};
 }
 
+async function getGmailAccount(profileEmail) {
+  if (!profileEmail) return null;
+  const { data } = await supabase
+    .from("email_accounts")
+    .select("id, access_token, refresh_token, token_expiry")
+    .eq("provider", "gmail")
+    .eq("is_active", true)
+    .eq("email", profileEmail)
+    .limit(1);
+  return data?.[0] || null;
+}
+
+async function resolveGmailToken(profileId, profileEmail) {
+  const acc = await getGmailAccount(profileEmail);
+  if (!acc) return null;
+
+  // Token still valid
+  if (acc.token_expiry && new Date(acc.token_expiry) > new Date(Date.now() + 120000)) {
+    return acc.access_token;
+  }
+
+  // Refresh
+  if (!acc.refresh_token) return acc.access_token || null;
+  try {
+    const r = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id:     process.env.GMAIL_CLIENT_ID,
+        client_secret: process.env.GMAIL_CLIENT_SECRET,
+        refresh_token: acc.refresh_token,
+        grant_type:    "refresh_token",
+      }),
+    });
+    const data = await r.json();
+    if (!data.access_token) return acc.access_token || null;
+    const expiry = data.expires_in ? new Date(Date.now() + data.expires_in * 1000).toISOString() : null;
+    await supabase.from("email_accounts").update({ access_token: data.access_token, token_expiry: expiry }).eq("id", acc.id);
+    return data.access_token;
+  } catch {
+    return acc.access_token || null;
+  }
+}
+
 // POST /api/meetings/invite — branded email + iCal REQUEST (Gmail auto-syncs calendar event)
 router.post("/invite", authenticate, async (req, res) => {
   const {
@@ -26,7 +70,8 @@ router.post("/invite", authenticate, async (req, res) => {
     return res.status(400).json({ error: "customerEmail, title and startTime are required" });
   }
 
-  const hostProfile   = await resolveHostProfile(req.profile.id);
+  const hostProfile = await resolveHostProfile(req.profile.id);
+  const gmailAccessToken = await resolveGmailToken(req.profile.id, hostProfile.email).catch(() => null);
   const senderEmail   = hostProfile.email           || null;
   const senderPassword= hostProfile.mail_app_password || null;
   const resolvedName  = hostName || hostProfile.full_name || "Ccentrik Team";
@@ -53,6 +98,7 @@ router.post("/invite", authenticate, async (req, res) => {
       meetingId,
       sequence:      Number(sequence) || 0,
       allAttendees,
+      gmailAccessToken,
     });
     emailSent = true;
   } catch (err) {
@@ -60,7 +106,7 @@ router.post("/invite", authenticate, async (req, res) => {
     console.error("Meeting invite email failed:", emailError);
   }
 
-  res.json({ success: true, emailSent, emailError });
+  res.json({ success: true, emailSent, emailError, _debug: { profileId: req.profile.id, profileEmail: hostProfile.email, gmailTokenFound: !!gmailAccessToken } });
 });
 
 // GET /api/meetings/rsvp — public endpoint clicked from email Accept/Decline buttons

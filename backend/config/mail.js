@@ -110,27 +110,102 @@ function warningBox(text) {
   </table>`;
 }
 
-const sendMail = async ({ to, subject, html, text, replyTo, attachments }) => {
-  // Try Resend first if configured
-  if (resend) {
-    try {
-      const result = await resend.emails.send({
-        from:    FROM,
-        to:      Array.isArray(to) ? to : [to],
-        subject,
-        html,
-        text,
-        ...(replyTo     ? { reply_to: replyTo } : {}),
-        ...(attachments ? { attachments }        : {}),
-      });
-      if (result.error) throw new Error(result.error.message || "Resend send failed");
-      return result;
-    } catch (resendErr) {
-      console.warn("[sendMail] Resend failed:", resendErr.message, "— falling back to Gmail SMTP");
-    }
-  }
+// Convert Resend-format attachments ({ filename, content: base64, content_type })
+// to nodemailer format ({ filename, content: Buffer, contentType })
+const toNmAttachments = (atts) =>
+  (atts || []).map(a => ({
+    filename:    a.filename,
+    content:     typeof a.content === "string" ? Buffer.from(a.content, "base64") : a.content,
+    contentType: a.content_type || a.contentType || "application/octet-stream",
+  }));
 
-  // Fall back to Gmail / SMTP transport
+// ─── Gmail API sender (pure HTTPS — works on Vercel serverless) ───────────────
+// Requires env vars: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN
+async function sendViaGmailApi({ to, subject, html, text, replyTo, attachments }) {
+  const clientId     = process.env.GMAIL_CLIENT_ID;
+  const clientSecret = process.env.GMAIL_CLIENT_SECRET;
+  const refreshToken = process.env.GMAIL_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) return null; // not configured
+
+  // Exchange refresh token for access token
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method:  "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body:    new URLSearchParams({
+      client_id:     clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type:    "refresh_token",
+    }),
+  });
+  const tokenData = await tokenRes.json();
+  if (!tokenRes.ok) throw new Error(`Gmail token exchange failed: ${tokenData.error_description || tokenData.error}`);
+  const accessToken = tokenData.access_token;
+
+  // Build RFC 2822 MIME message
+  const recipients = Array.isArray(to) ? to : [to];
+  const boundary   = `----=_Part_${Date.now()}`;
+  const altBound   = `${boundary}_alt`;
+
+  const lines = [
+    `From: ${FROM}`,
+    `To: ${recipients.join(", ")}`,
+    `Subject: =?UTF-8?B?${Buffer.from(subject).toString("base64")}?=`,
+    ...(replyTo ? [`Reply-To: ${replyTo}`] : []),
+    `MIME-Version: 1.0`,
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    ``,
+    `--${boundary}`,
+    `Content-Type: multipart/alternative; boundary="${altBound}"`,
+    ``,
+    ...(text ? [
+      `--${altBound}`,
+      `Content-Type: text/plain; charset=UTF-8`,
+      `Content-Transfer-Encoding: 8bit`,
+      ``,
+      text,
+    ] : []),
+    `--${altBound}`,
+    `Content-Type: text/html; charset=UTF-8`,
+    `Content-Transfer-Encoding: 8bit`,
+    ``,
+    html || "",
+    `--${altBound}--`,
+  ];
+
+  for (const att of (attachments || [])) {
+    const b64 = typeof att.content === "string" ? att.content : Buffer.from(att.content).toString("base64");
+    lines.push(
+      `--${boundary}`,
+      `Content-Type: ${att.content_type || att.contentType || "application/octet-stream"}`,
+      `Content-Disposition: attachment; filename="${att.filename}"`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      b64
+    );
+  }
+  lines.push(`--${boundary}--`);
+
+  const raw = Buffer.from(lines.join("\r\n")).toString("base64url");
+
+  const sendRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+    method:  "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body:    JSON.stringify({ raw }),
+  });
+  if (!sendRes.ok) {
+    const err = await sendRes.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Gmail API send failed (${sendRes.status})`);
+  }
+  return sendRes.json();
+}
+
+const sendMail = async ({ to, subject, html, text, replyTo, attachments }) => {
+  // 1. Gmail API — pure HTTPS, works on Vercel, no domain verification needed
+  const gmailResult = await sendViaGmailApi({ to, subject, html, text, replyTo, attachments });
+  if (gmailResult) return gmailResult;
+
+  // 2. Gmail SMTP — works locally / on non-Vercel hosts (Vercel blocks outbound SMTP)
   if (globalTransport) {
     return globalTransport.sendMail({
       from:    FROM,
@@ -138,13 +213,12 @@ const sendMail = async ({ to, subject, html, text, replyTo, attachments }) => {
       subject,
       html,
       text,
-      ...(replyTo     ? { replyTo }     : {}),
-      ...(attachments ? { attachments } : {}),
+      ...(replyTo     ? { replyTo }                                  : {}),
+      ...(attachments ? { attachments: toNmAttachments(attachments) } : {}),
     });
   }
 
-  console.warn("[sendMail] No email transport configured — email skipped:", subject);
-  return { skipped: true };
+  throw new Error("No email transport configured. Add GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN to Vercel environment variables.");
 };
 
 // ─── Welcome / Invitation ─────────────────────────────────────────────────────
@@ -865,35 +939,47 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
       `--${b1}--`,
     ].join("\r\n");
     const raw = Buffer.from(mime).toString("base64url");
-    const resp = await fetch("https://www.googleapis.com/gmail/v1/users/me/messages/send", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${gmailAccessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ raw }),
-    });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Gmail API send failed (${resp.status})`);
+    try {
+      const resp = await fetch("https://www.googleapis.com/gmail/v1/users/me/messages/send", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${gmailAccessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ raw }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        console.warn("[sendMeetingInvite] Per-user Gmail API failed:", err.error?.message || resp.status, "— trying next transport");
+      } else {
+        return resp.json();
+      }
+    } catch (gmailErr) {
+      console.warn("[sendMeetingInvite] Per-user Gmail API error:", gmailErr.message, "— trying next transport");
     }
-    return resp.json();
   }
 
   // Resend fallback — Vercel blocks outbound SMTP; Resend uses HTTPS
   if (resend) {
-    const result = await resend.emails.send({
-      from:        FROM,
-      to:          Array.isArray(to) ? to : [to],
-      subject:     subjectLine,
-      html,
-      text,
-      ...(hostEmail ? { reply_to: hostEmail } : {}),
-      attachments: [{
-        filename:    "invite.ics",
-        content:     icsBuffer,
-        contentType: "text/calendar; method=REQUEST",
-      }],
-    });
-    if (result.error) throw new Error(result.error.message || "Resend send failed");
-    return result;
+    try {
+      const result = await resend.emails.send({
+        from:        FROM,
+        to:          Array.isArray(to) ? to : [to],
+        subject:     subjectLine,
+        html,
+        text,
+        ...(hostEmail ? { reply_to: hostEmail } : {}),
+        attachments: [{
+          filename:    "invite.ics",
+          content:     icsBuffer,
+          contentType: "text/calendar; method=REQUEST",
+        }],
+      });
+      if (result.error) {
+        console.warn("[sendMeetingInvite] Resend failed:", result.error.message, "— trying next transport");
+      } else {
+        return result;
+      }
+    } catch (resendErr) {
+      console.warn("[sendMeetingInvite] Resend error:", resendErr.message, "— trying next transport");
+    }
   }
 
   // SMTP fallback (local dev or non-Vercel hosting where SMTP is not blocked)
@@ -910,24 +996,45 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
   const fromDisplay     = `${hostName || FROM_NAME} <${effectiveSender}>`;
 
   if (transport) {
-    return transport.sendMail({
-      from:        fromDisplay,
-      to,
+    try {
+      return await transport.sendMail({
+        from:        fromDisplay,
+        to,
+        subject:     subjectLine,
+        html,
+        text,
+        ...(hostEmail ? { replyTo: hostEmail } : {}),
+        messageId:   `<${calUID.split("@")[0]}-${Date.now()}@ccentrik.com>`,
+        alternatives: [{
+          contentType: "text/calendar; method=REQUEST; charset=UTF-8",
+          content:     icsBuffer,
+        }],
+        attachments: [{
+          filename:    "invite.ics",
+          content:     icsBuffer,
+          contentType: "text/calendar; method=REQUEST; name=invite.ics",
+        }],
+      });
+    } catch (smtpErr) {
+      console.warn("[sendMeetingInvite] SMTP transport failed (likely blocked by host):", smtpErr.message);
+    }
+  }
+
+  // Final fallback: company Gmail API (GMAIL_REFRESH_TOKEN — pure HTTPS, works on Vercel)
+  try {
+    return await sendMail({
+      to:          Array.isArray(to) ? to : [to],
       subject:     subjectLine,
       html,
       text,
-      ...(hostEmail ? { replyTo: hostEmail } : {}),
-      messageId:   `<${calUID.split("@")[0]}-${Date.now()}@ccentrik.com>`,
-      alternatives: [{
-        contentType: "text/calendar; method=REQUEST; charset=UTF-8",
-        content:     icsBuffer,
-      }],
       attachments: [{
-        filename:    "invite.ics",
-        content:     icsBuffer,
-        contentType: "text/calendar; method=REQUEST; name=invite.ics",
+        filename:     "invite.ics",
+        content:      icsBuffer.toString("base64"),
+        content_type: "text/calendar; method=REQUEST; name=invite.ics",
       }],
     });
+  } catch (fallbackErr) {
+    console.warn("[sendMeetingInvite] Company Gmail API fallback failed:", fallbackErr.message);
   }
 
   console.warn("[sendMeetingInvite] No email transport available — invite skipped");

@@ -14,12 +14,14 @@ export default function EmailComposerModal({
   customerId = null,
   assignedTo = null,
   recordName = "",
+  defaultSubject = "",
+  autoCompose = false,
   onClose,
   onSent,
 }) {
   const { user, profile } = useAuth();
-  const [step, setStep] = useState("confirm");
-  const [subject, setSubject] = useState("");
+  const [step, setStep] = useState(autoCompose ? "compose" : "confirm");
+  const [subject, setSubject] = useState(defaultSubject);
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -53,7 +55,7 @@ export default function EmailComposerModal({
           customer_id: customerId || undefined,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (data.code === "insufficient_scope") {
           toast.error(
@@ -61,15 +63,20 @@ export default function EmailComposerModal({
             { duration: 7000 }
           );
         } else {
-          toast.error(data.error || "Failed to send email");
+          toast.error(data.error || `Server error (${res.status}). Please try again.`);
         }
         return;
       }
       toast.success("Email sent successfully!");
       onSent?.();
       onClose();
-    } catch {
-      toast.error("Network error. Please try again.");
+    } catch (err) {
+      if (err?.message?.includes("getIdToken") || err?.message?.includes("auth")) {
+        toast.error("Session expired. Please refresh the page and try again.");
+      } else {
+        toast.error("Could not reach the server. Check your connection or try again.");
+      }
+      console.error("[EmailComposer] send error:", err);
     } finally {
       setSending(false);
     }

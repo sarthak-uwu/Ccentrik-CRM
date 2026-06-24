@@ -1902,7 +1902,7 @@ export default function Deals() {
                               </td>
                             )}
                             <td style={{ whiteSpace: "nowrap" }}>
-                              <span style={{ fontSize: 11, fontWeight: 800, color: "var(--accent)", fontFamily: "monospace", background: "var(--accent-light)", padding: "2px 7px", borderRadius: 5, border: "1px solid rgba(37,99,235,0.2)" }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)", fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", letterSpacing: "0.01em" }}>
                                 {dealCode}
                               </span>
                             </td>
@@ -1921,7 +1921,7 @@ export default function Deals() {
                             {isVisible("industry") && (
                               <td>
                                 {industryLabel !== "—" ? (
-                                  <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 12, background: "var(--accent-light)", color: "var(--accent)", fontWeight: 600 }}>{industryLabel}</span>
+                                  <span style={{ fontSize: 12.5, color: "var(--text-2)", fontWeight: 500 }}>{industryLabel}</span>
                                 ) : <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>}
                               </td>
                             )}
@@ -1943,7 +1943,7 @@ export default function Deals() {
                               </td>
                             )}
                             {isVisible("source") && (
-                              <td>{srcLabel !== "—" ? <SourceBadge source={srcLabel} /> : <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>}</td>
+                              <td>{srcLabel !== "—" ? <SourceBadge source={srcLabel} plain /> : <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>}</td>
                             )}
                             {isVisible("website") && (
                               <td>
@@ -1984,12 +1984,7 @@ export default function Deals() {
                                 ) : !d.assigned_to ? (
                                   <span style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700, background: "rgba(239,68,68,0.1)", color: "#DC2626", border: "1px solid rgba(239,68,68,0.18)" }}>Unassigned</span>
                                 ) : (
-                                  <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                                    <div style={{ width: 20, height: 20, borderRadius: 5, background: "linear-gradient(135deg,#6366F1,#8B5CF6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8.5, fontWeight: 700, color: "#fff" }}>
-                                      {d.assigned_profile?.full_name?.charAt(0) ?? "?"}
-                                    </div>
-                                    <span style={{ fontSize: 12, color: "var(--text-2)" }}>{d.assigned_profile?.full_name ?? "Assigned"}</span>
-                                  </div>
+                                  <span style={{ fontSize: 12.5, color: "var(--text-2)", fontWeight: 500 }}>{d.assigned_profile?.full_name ?? "Assigned"}</span>
                                 )}
                               </td>
                             )}

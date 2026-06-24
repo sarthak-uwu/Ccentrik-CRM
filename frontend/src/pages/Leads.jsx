@@ -2266,7 +2266,7 @@ export default function Leads() {
                         {isVisible("id") && (
                           <td style={{ whiteSpace: "nowrap" }}>
                             {l.lead_code ? (
-                              <span style={{ fontSize: 11, fontWeight: 800, color: "var(--accent)", fontFamily: "monospace", background: "var(--accent-light)", padding: "2px 7px", borderRadius: 5, border: "1px solid rgba(37,99,235,0.2)" }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)", fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", letterSpacing: "0.01em" }}>
                                 {l.lead_code.replace(/^LEAD-?/i, "")}
                               </span>
                             ) : <span style={{ color: "var(--text-muted)", fontSize: 11 }}>—</span>}
@@ -2292,7 +2292,7 @@ export default function Leads() {
                         {isVisible("industry") && (
                           <td>
                             {extra.industry ? (
-                              <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 12, background: "var(--accent-light)", color: "var(--accent)", fontWeight: 600 }}>{extra.industry}</span>
+                              <span style={{ fontSize: 12.5, color: "var(--text-2)", fontWeight: 500 }}>{extra.industry}</span>
                             ) : <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>}
                           </td>
                         )}
@@ -2314,7 +2314,7 @@ export default function Leads() {
                         )}
                         {isVisible("source") && (
                           <td>
-                            {l.source ? <SourceBadge source={l.source} /> : <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>}
+                            {l.source ? <SourceBadge source={l.source} plain /> : <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>}
                           </td>
                         )}
                         {isVisible("website") && (
@@ -2367,10 +2367,7 @@ export default function Leads() {
                                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                                   {assignedName ? (
                                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                      <div style={{ width: 22, height: 22, borderRadius: 6, background: l.assigned_to === profile?.id ? "linear-gradient(135deg,#10B981,#059669)" : "linear-gradient(135deg,#6366F1,#8B5CF6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: "#fff", flexShrink: 0 }}>
-                                        {assignedName.charAt(0).toUpperCase()}
-                                      </div>
-                                      <span style={{ fontSize: 12, color: "var(--text-2)" }}>{assignedName}</span>
+                                      <span style={{ fontSize: 12.5, color: "var(--text-2)", fontWeight: 500 }}>{assignedName}</span>
                                     </div>
                                   ) : (
                                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700, background: "rgba(239,68,68,0.1)", color: "#DC2626", border: "1px solid rgba(239,68,68,0.2)" }}>

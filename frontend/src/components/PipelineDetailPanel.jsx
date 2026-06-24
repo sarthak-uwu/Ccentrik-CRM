@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
@@ -8,7 +9,6 @@ import { supabase } from "../supabaseClient";
 import { auth } from "../firebase";
 import toast from "react-hot-toast";
 import { SourceBadge } from "./SourceBadge";
-import EmailComposerModal from "./EmailComposerModal";
 
 const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
 import {
@@ -591,10 +591,11 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
   const infoMasked    = pipelineLocked && !isOwnerOrHead;
   const qc          = useQueryClient();
   const [activeTab, setActiveTab] = useState("details");
-  const [emailComposer, setEmailComposer] = useState(null); // { to, toName }
+  const navigate = useNavigate();
 
-  const openComposer = (to, toName = "") => setEmailComposer({ to, toName });
-  const closeComposer = () => setEmailComposer(null);
+  const openComposer = (to, toName = "") => navigate("/activities", {
+    state: { openEmail: { to, toName, recordId: entry?.id, recordType: "pipeline", recordName: [entry?.contact_name, entry?.company_name].filter(Boolean).join(" / ") } },
+  });
 
   const extra          = parseJSON(entry?.other_notes);
   const contactLocked  = !!extra.contact_locked;
@@ -698,17 +699,6 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
 
   return (
     <>
-    {emailComposer && (
-      <EmailComposerModal
-        to={emailComposer.to}
-        toName={emailComposer.toName}
-        pipelineId={entry?.id}
-        assignedTo={entry?.assigned_to}
-        recordName={[entry?.contact_name, entry?.company_name].filter(Boolean).join(" / ")}
-        onClose={closeComposer}
-        onSent={() => qc.invalidateQueries({ queryKey: ["unified-timeline-pipeline", entry?.id] })}
-      />
-    )}
     <AnimatePresence>
       <motion.div key="pipe-backdrop"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}

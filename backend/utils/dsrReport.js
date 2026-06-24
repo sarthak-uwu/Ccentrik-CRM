@@ -529,4 +529,119 @@ async function generateStaffDSRData(dayStart, dayEnd, staffList) {
   return { staff: staffList, userStats, totals };
 }
 
-module.exports = { generateTSRData, generateStaffDSRData, buildTSRHtml, buildTSRText };
+// ─── Per-employee individual activity data for PDF ────────────────────────────
+// Returns { employeeData: { [id]: { profile, activities, deals, newLeads, leadMap, stats, cat } }, staff }
+async function generateEmployeeActivityData(staffIds, dayStart, dayEnd) {
+  if (!staffIds?.length) return { employeeData: {}, staff: [] };
+
+  const [staffRes, actRes, dealsRes] = await Promise.all([
+    supabase.from("profiles")
+      .select("id, full_name, email, role")
+      .in("id", staffIds)
+      .order("full_name"),
+    supabase.from("activities")
+      .select("id, type, title, description, status, priority, due_date, lead_id, deal_id, created_by, created_at, metadata")
+      .gte("created_at", dayStart)
+      .lte("created_at", dayEnd)
+      .in("created_by", staffIds)
+      .order("created_at", { ascending: true }),
+    supabase.from("deals")
+      .select("id, name, value, stage, status, created_by, created_at")
+      .gte("created_at", dayStart)
+      .lte("created_at", dayEnd)
+      .in("created_by", staffIds),
+  ]);
+
+  const staff      = staffRes.data  || [];
+  const activities = actRes.data    || [];
+  const deals      = dealsRes.data  || [];
+
+  // Collect unique lead IDs referenced in activities
+  const leadIds = [...new Set(activities.filter(a => a.lead_id).map(a => a.lead_id))];
+  let leadMap = {};
+  if (leadIds.length > 0) {
+    const { data: lds } = await supabase.from("leads")
+      .select("id, full_name, company, phone, email, source, stage, designation")
+      .in("id", leadIds);
+    (lds || []).forEach(l => { leadMap[l.id] = l; });
+  }
+
+  // Leads created in period by these employees
+  const { data: newLeadsRaw } = await supabase.from("leads")
+    .select("id, full_name, company, phone, email, source, stage, designation, owner_id, created_at")
+    .gte("created_at", dayStart)
+    .lte("created_at", dayEnd)
+    .in("owner_id", staffIds);
+  const newLeadsByEmp = {};
+  (newLeadsRaw || []).forEach(l => {
+    if (!newLeadsByEmp[l.owner_id]) newLeadsByEmp[l.owner_id] = [];
+    newLeadsByEmp[l.owner_id].push(l);
+    leadMap[l.id] = l;
+  });
+
+  const t = (type) => (type || "").toLowerCase().replace(/[-\s]/g, "_");
+  const isCompleted = (s) => ["done","completed","complete"].includes((s||"").toLowerCase());
+  const isPending   = (s) => ["pending","todo","scheduled"].includes((s||"").toLowerCase());
+
+  const employeeData = {};
+  for (const s of staff) {
+    const empActs  = activities.filter(a => a.created_by === s.id);
+    const empDeals = deals.filter(d => d.created_by === s.id);
+    const empLeads = newLeadsByEmp[s.id] || [];
+
+    const cat = {
+      calls:       empActs.filter(a => CALL_TYPES.has(t(a.type))),
+      emails:      empActs.filter(a => EMAIL_TYPES.has(t(a.type))),
+      meetings:    empActs.filter(a => MEETING_TYPES.has(t(a.type))),
+      followUps:   empActs.filter(a => FU_TYPES.has(t(a.type))),
+      notes:       empActs.filter(a => t(a.type) === "note"),
+      tasks:       empActs.filter(a => ["task","task_created","reminder"].includes(t(a.type))),
+      whatsapp:    empActs.filter(a => ["whatsapp","whatsapp_message","whatsapp_follow_up"].includes(t(a.type))),
+      visits:      empActs.filter(a => ["visit","client_visit"].includes(t(a.type))),
+      linkedin:    empActs.filter(a => a.type && t(a.type).startsWith("linkedin")),
+      virtual:     empActs.filter(a => ["meeting_virtual","virtual_meeting"].includes(t(a.type))),
+      physical:    empActs.filter(a => ["meeting_person","in_person"].includes(t(a.type))),
+      followCalls: empActs.filter(a => ["follow_up_call"].includes(t(a.type))),
+      followEmails:empActs.filter(a => ["follow_up_email"].includes(t(a.type))),
+    };
+
+    const completed = empActs.filter(a => isCompleted(a.status)).length;
+    const pending   = empActs.filter(a => isPending(a.status)).length;
+    const overdue   = empActs.filter(a =>
+      a.due_date && new Date(a.due_date) < new Date(dayEnd) && !isCompleted(a.status)
+    ).length;
+
+    const dealsWon  = empDeals.filter(d => (d.status||"").toLowerCase() === "won");
+    const dealsLost = empDeals.filter(d => (d.status||"").toLowerCase() === "lost");
+    const revenue   = dealsWon.reduce((sum, d) => sum + (Number(d.value) || 0), 0);
+
+    const totalActs  = empActs.length;
+    const efficiency = totalActs > 0 ? Math.round((completed / totalActs) * 100) : 0;
+    const convRate   = empLeads.length > 0 ? Math.round((dealsWon.length / empLeads.length) * 100) : 0;
+
+    employeeData[s.id] = {
+      profile: s,
+      activities: empActs,
+      deals: empDeals,
+      newLeads: empLeads,
+      leadMap,
+      cat,
+      stats: {
+        total: totalActs, completed, pending, overdue,
+        calls: cat.calls.length, followCalls: cat.followCalls.length,
+        emails: cat.emails.length, followEmails: cat.followEmails.length,
+        meetings: cat.meetings.length, virtual: cat.virtual.length, physical: cat.physical.length,
+        followUps: cat.followUps.length, notes: cat.notes.length, tasks: cat.tasks.length,
+        whatsapp: cat.whatsapp.length, visits: cat.visits.length, linkedin: cat.linkedin.length,
+        dealsCreated: empDeals.length, dealsWon: dealsWon.length,
+        dealsLost: dealsLost.length, revenue,
+        newLeads: empLeads.length,
+        efficiency, convRate,
+      },
+    };
+  }
+
+  return { employeeData, staff };
+}
+
+module.exports = { generateTSRData, generateStaffDSRData, generateEmployeeActivityData, buildTSRHtml, buildTSRText };

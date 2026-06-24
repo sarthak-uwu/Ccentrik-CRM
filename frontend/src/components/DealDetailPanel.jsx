@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { ACTIVITY_TYPES } from "../constants/activityTypes";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -8,7 +9,6 @@ import { changeHistoryService } from "../services/changeHistoryService";
 import { supabase } from "../supabaseClient";
 import { auth } from "../firebase";
 import toast from "react-hot-toast";
-import EmailComposerModal from "./EmailComposerModal";
 
 const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
 import {
@@ -445,9 +445,11 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
   const { profile, isSalesHead } = useAuth();
   const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState("details");
-  const [emailComposer, setEmailComposer] = useState(null);
-  const openComposer  = (to, toName = "") => setEmailComposer({ to, toName });
-  const closeComposer = () => setEmailComposer(null);
+  const navigate = useNavigate();
+
+  const openComposer = (to, toName = "") => navigate("/activities", {
+    state: { openEmail: { to, toName, recordId: deal?.id, recordType: "deal", recordName: deal?.contact_name || deal?.title || deal?.company_name || "" } },
+  });
   const [calcOpen,   setCalcOpen]   = useState(false);
   const [calcAmount, setCalcAmount] = useState("");
   const [calcFrom,   setCalcFrom]   = useState("INR");
@@ -498,18 +500,6 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
 
   return (
     <>
-    {emailComposer && (
-      <EmailComposerModal
-        to={emailComposer.to}
-        toName={emailComposer.toName}
-        dealId={deal?.id}
-        leadId={linkedLead?.id}
-        assignedTo={deal?.assigned_to || linkedLead?.assigned_to}
-        recordName={deal?.contact_name || deal?.title || deal?.company_name || ""}
-        onClose={closeComposer}
-        onSent={() => qc.invalidateQueries({ queryKey: ["unified-timeline-deal", deal?.id] })}
-      />
-    )}
     <AnimatePresence>
       <motion.div key="deal-panel-backdrop"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}

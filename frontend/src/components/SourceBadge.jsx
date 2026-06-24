@@ -122,12 +122,18 @@ export const LEAD_SOURCES = [
   { key: "other",          label: "Others" },
 ];
 
-export function SourceBadge({ source }) {
+export function SourceBadge({ source, plain = false }) {
   if (!source) return <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>;
   const cfg = SOURCE_CONFIG[source];
   const color = cfg?.color || "#6B7280";
   const Icon = cfg?.icon;
   const label = SOURCE_LABELS[source] || source.replace(/_/g, " ");
+  if (plain) return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, color, whiteSpace: "nowrap" }}>
+      {Icon && <Icon size={13} />}
+      {label}
+    </span>
+  );
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", gap: 5,

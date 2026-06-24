@@ -8,7 +8,7 @@ ALTER TABLE email_sync_log ADD COLUMN IF NOT EXISTS reason TEXT;
 
 -- Extended CRM mapping (beyond leads → also customers and pipeline)
 ALTER TABLE email_sync_log ADD COLUMN IF NOT EXISTS customer_id UUID REFERENCES customers(id) ON DELETE SET NULL;
-ALTER TABLE email_sync_log ADD COLUMN IF NOT EXISTS pipeline_id UUID REFERENCES pipeline(id)  ON DELETE SET NULL;
+ALTER TABLE email_sync_log ADD COLUMN IF NOT EXISTS pipeline_id UUID; -- no FK: pipeline table may not exist in all envs
 
 -- Human-readable module and record name for the log table UI
 ALTER TABLE email_sync_log ADD COLUMN IF NOT EXISTS crm_module      TEXT; -- 'lead' | 'customer' | 'pipeline'

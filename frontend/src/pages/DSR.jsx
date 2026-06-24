@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect, useRef, useCallback, Fragment } from "react";
+import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback, Fragment } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../supabaseClient";
@@ -10,10 +11,10 @@ import {
   BarChart2, Clock, AlertCircle, ChevronLeft, ChevronRight, Calendar,
   Users, Target, ArrowRight, Award, Download, Printer,
   LayoutGrid, CalendarDays, PieChart, Activity, X, Search,
-  DollarSign, Star, BarChart3, Bell, Send, Loader2, Settings, History,
+  DollarSign, Star, BarChart3, Bell, Send, Loader2, Settings, History, Lock,
 } from "lucide-react";
 
-const API = (import.meta.env.VITE_FIREBASE_FUNCTIONS_URL ?? import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
+const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
   CartesianGrid,
@@ -395,82 +396,400 @@ function DSRActivityCard({ act, cfg, timestampFmt, selectedUser }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   DOWNLOAD DSR MODAL  —  employee + date selection → PDF download only
+═══════════════════════════════════════════════════════════════════════ */
+function DownloadDSRModal({ onClose, viewableEmployees = [], currentUser = null }) {
+  const { user } = useAuth();
+  const now = new Date();
+  const curYear = getYear(now);
+  const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const scrollRef = useRef(null);
+
+  // Role detection — inside_sales can only access their own data
+  const selfRole = (currentUser?.role || "").toLowerCase().replace(/[- ]/g, "_");
+  const isSelfOnly = !["owner", "sales_head"].includes(selfRole);
+
+  const [reportType,     setReportType]     = useState("daily");
+  const [dailyDate,      setDailyDate]      = useState(format(now, "yyyy-MM-dd"));
+  const [weekDate,       setWeekDate]       = useState(format(now, "yyyy-MM-dd"));
+  const [monthSel,       setMonthSel]       = useState({ year: curYear, month: getMonth(now) + 1 });
+  const [quarterSel,     setQuarterSel]     = useState({ year: curYear, quarter: getQuarter(now) });
+  const [halfSel,        setHalfSel]        = useState({ year: curYear, half: getMonth(now) < 6 ? 1 : 2 });
+  const [yearSel,        setYearSel]        = useState(curYear);
+  const [custStart,      setCustStart]      = useState(format(subDays(now, 6), "yyyy-MM-dd"));
+  const [custEnd,        setCustEnd]        = useState(format(now, "yyyy-MM-dd"));
+  const [empSearch,      setEmpSearch]      = useState("");
+  const [empOpen,        setEmpOpen]        = useState(false);
+  // inside_sales: always pre-select own ID; admins: start with none (= all)
+  const [selectedEmpIds, setSelectedEmpIds] = useState(isSelfOnly && currentUser?.id ? [currentUser.id] : []);
+  const [pdfLoading,     setPdfLoading]     = useState(false);
+
+  const years = Array.from({ length: 5 }, (_, i) => curYear - i);
+
+  const REPORT_TYPES = [
+    { key: "daily",       label: "Daily"        },
+    { key: "weekly",      label: "Weekly"       },
+    { key: "monthly",     label: "Monthly"      },
+    { key: "quarterly",   label: "Quarterly"    },
+    { key: "half_yearly", label: "Half-Yearly"  },
+    { key: "yearly",      label: "Yearly"       },
+    { key: "custom",      label: "Custom Range" },
+  ];
+
+  useLayoutEffect(() => {
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    const fn = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", fn);
+    return () => {
+      document.body.style.overflow = "";
+      document.documentElement.style.overflow = "";
+      window.removeEventListener("keydown", fn);
+    };
+  }, [onClose]);
+
+  const payloadDates = useMemo(() => {
+    switch (reportType) {
+      case "daily":   return { customStart: dailyDate, customEnd: dailyDate };
+      case "weekly": {
+        const d = parseISO(weekDate || format(now, "yyyy-MM-dd"));
+        return { customStart: format(startOfWeek(d, { weekStartsOn: 1 }), "yyyy-MM-dd"), customEnd: format(endOfWeek(d, { weekStartsOn: 1 }), "yyyy-MM-dd") };
+      }
+      case "monthly": {
+        const d = new Date(monthSel.year, monthSel.month - 1, 1);
+        return { customStart: format(startOfMonth(d), "yyyy-MM-dd"), customEnd: format(endOfMonth(d), "yyyy-MM-dd") };
+      }
+      case "quarterly": {
+        const d = new Date(quarterSel.year, (quarterSel.quarter - 1) * 3, 1);
+        return { customStart: format(startOfQuarter(d), "yyyy-MM-dd"), customEnd: format(endOfQuarter(d), "yyyy-MM-dd") };
+      }
+      case "half_yearly": {
+        const sm = halfSel.half === 1 ? 0 : 6;
+        const em = halfSel.half === 1 ? 5 : 11;
+        return { customStart: format(new Date(halfSel.year, sm, 1), "yyyy-MM-dd"), customEnd: format(endOfMonth(new Date(halfSel.year, em, 1)), "yyyy-MM-dd") };
+      }
+      case "yearly": return { customStart: `${yearSel}-01-01`, customEnd: `${yearSel}-12-31` };
+      default:        return { customStart: custStart, customEnd: custEnd };
+    }
+  }, [reportType, dailyDate, weekDate, monthSel, quarterSel, halfSel, yearSel, custStart, custEnd]);
+
+  const dateValid = reportType !== "custom" || (custStart && custEnd && custStart <= custEnd);
+
+  const filteredEmps = useMemo(() => {
+    const q = empSearch.toLowerCase();
+    return q === "" ? viewableEmployees : viewableEmployees.filter(u =>
+      (u.full_name || "").toLowerCase().includes(q) || (u.role || "").toLowerCase().includes(q)
+    );
+  }, [viewableEmployees, empSearch]);
+
+  const rlabel = r => r === "owner" ? "Super Admin" : r === "sales_head" ? "Sales Head" : r === "inside_sales" ? "Inside Sales" : (r || "").replace(/_/g, " ");
+  const rcolor = r => r === "owner" ? "#6366F1" : r === "sales_head" ? "#10B981" : "#3B82F6";
+  const selStyle = { width: "100%", padding: "10px 32px 10px 12px", borderRadius: 10, border: "1.5px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 13, cursor: "pointer", appearance: "none", WebkitAppearance: "none", outline: "none" };
+
+  const handleDownloadPdf = async () => {
+    if (!dateValid) return;
+    setPdfLoading(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`${API}/api/reports/download-pdf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ selectedEmployeeIds: selectedEmpIds, datePreset: "custom", ...payloadDates }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); toast.error(d.error || "PDF generation failed"); return; }
+      const { data: b64, filename } = await res.json();
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename || `DSR_${format(now, "yyyyMMdd")}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("PDF downloaded!");
+    } catch (err) { toast.error(err.message || "Download failed"); }
+    finally { setPdfLoading(false); }
+  };
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 99999, display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: "5vh", paddingBottom: "2vh" }}>
+      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(12px)" }} onClick={onClose} />
+      <motion.div
+        ref={scrollRef}
+        initial={{ opacity: 0, scale: 0.93, y: -16 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.93, y: -16 }}
+        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+        style={{ position: "relative", background: "var(--surface)", borderRadius: 20, border: "1px solid var(--border)", width: "min(560px, 96vw)", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 32px 100px rgba(0,0,0,0.55)" }}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "22px 28px 18px", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 11, background: "#f1f5f9", border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Download size={20} style={{ color: "#000" }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 800, color: "var(--text)" }}>Download DSR</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Generate & download activity PDF report</div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={16} style={{ color: "var(--text-muted)" }} />
+          </button>
+        </div>
+
+        <div style={{ padding: "24px 28px", display: "flex", flexDirection: "column", gap: 22 }}>
+          {/* Employee Selection */}
+          {isSelfOnly ? (
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Employee</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", borderRadius: 10, border: "1.5px solid var(--border)", background: "var(--surface-2)" }}>
+                <div style={{ width: 30, height: 30, borderRadius: 8, background: rcolor(currentUser?.role), display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                  {(currentUser?.full_name || currentUser?.email || "?").charAt(0).toUpperCase()}
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{currentUser?.full_name || currentUser?.email || "You"}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{rlabel(currentUser?.role)} · Your report only</div>
+                </div>
+                <Lock size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Employees</div>
+              {/* Dropdown trigger */}
+              <button
+                onClick={() => setEmpOpen(o => !o)}
+                style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 13px", borderRadius: 10, border: `1.5px solid ${empOpen ? "#000" : "var(--border)"}`, background: "var(--surface-2)", color: "var(--text)", fontSize: 13, cursor: "pointer", textAlign: "left", transition: "border-color 0.15s", boxSizing: "border-box" }}
+              >
+                <span style={{ fontWeight: selectedEmpIds.length > 0 ? 600 : 400, color: selectedEmpIds.length === 0 ? "var(--text-muted)" : "var(--text)" }}>
+                  {selectedEmpIds.length === 0
+                    ? `All Employees (${viewableEmployees.length} total)`
+                    : selectedEmpIds.length === 1
+                    ? (viewableEmployees.find(u => u.id === selectedEmpIds[0])?.full_name || "1 employee")
+                    : `${selectedEmpIds.length} employees selected`}
+                </span>
+                <ChevronDown size={14} style={{ color: "var(--text-muted)", flexShrink: 0, transition: "transform 0.15s", transform: empOpen ? "rotate(180deg)" : "none" }} />
+              </button>
+              {/* Dropdown panel */}
+              {empOpen && (
+                <div style={{ marginTop: 5, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)", overflow: "hidden", boxShadow: "0 6px 24px rgba(0,0,0,0.12)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>
+                    <Search size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                    <input
+                      autoFocus
+                      placeholder="Search employees…" value={empSearch} onChange={e => setEmpSearch(e.target.value)}
+                      style={{ border: "none", outline: "none", background: "transparent", color: "var(--text)", fontSize: 13, flex: 1, minWidth: 0 }}
+                    />
+                    <button
+                      onClick={() => selectedEmpIds.length === viewableEmployees.length ? setSelectedEmpIds([]) : setSelectedEmpIds(viewableEmployees.map(u => u.id))}
+                      style={{ fontSize: 11, fontWeight: 700, color: "#000", background: "transparent", border: "none", cursor: "pointer", padding: "2px 4px", whiteSpace: "nowrap", flexShrink: 0 }}
+                    >
+                      {selectedEmpIds.length === viewableEmployees.length ? "Deselect All" : "Select All"}
+                    </button>
+                  </div>
+                  <div style={{ maxHeight: 220, overflowY: "auto" }}>
+                    <div
+                      onClick={() => setSelectedEmpIds([])}
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", cursor: "pointer", background: selectedEmpIds.length === 0 ? "rgba(0,0,0,0.04)" : "transparent", borderBottom: "1px solid var(--border)" }}
+                    >
+                      <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${selectedEmpIds.length === 0 ? "#000" : "var(--border)"}`, background: selectedEmpIds.length === 0 ? "#000" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        {selectedEmpIds.length === 0 && <span style={{ color: "#fff", fontSize: 9, fontWeight: 900 }}>✓</span>}
+                      </div>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>All Employees</span>
+                      <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto" }}>{viewableEmployees.length} total</span>
+                    </div>
+                    {filteredEmps.map(u => {
+                      const sel = selectedEmpIds.includes(u.id);
+                      return (
+                        <div key={u.id}
+                          onClick={() => setSelectedEmpIds(prev => sel ? prev.filter(x => x !== u.id) : [...prev, u.id])}
+                          style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", cursor: "pointer", background: sel ? "rgba(0,0,0,0.03)" : "transparent", borderBottom: "1px solid var(--border)" }}
+                        >
+                          <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${sel ? "#000" : "var(--border)"}`, background: sel ? "#000" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            {sel && <span style={{ color: "#fff", fontSize: 9, fontWeight: 900 }}>✓</span>}
+                          </div>
+                          <div style={{ width: 26, height: 26, borderRadius: 7, background: rcolor(u.role), display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                            {(u.full_name || "?").charAt(0).toUpperCase()}
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.full_name || u.email}</div>
+                            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{rlabel(u.role)}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {/* Selected chips (shown when closed) */}
+              {selectedEmpIds.length > 0 && !empOpen && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
+                  {viewableEmployees.filter(u => selectedEmpIds.includes(u.id)).map(u => (
+                    <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px 3px 10px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 20, fontSize: 11.5, fontWeight: 600, color: "#000" }}>
+                      {u.full_name || u.email}
+                      <button onClick={() => setSelectedEmpIds(p => p.filter(id => id !== u.id))} style={{ width: 14, height: 14, borderRadius: "50%", border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
+                        <X size={8} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Report Period dropdown */}
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#000", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Report Period</div>
+            <div style={{ position: "relative" }}>
+              <select value={reportType} onChange={e => setReportType(e.target.value)}
+                style={{ width: "100%", padding: "10px 36px 10px 13px", borderRadius: 10, border: "1.5px solid #d1d5db", background: "#fff", color: "#000", fontSize: 13, fontWeight: 600, cursor: "pointer", appearance: "none", WebkitAppearance: "none", outline: "none", boxSizing: "border-box" }}>
+                {REPORT_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+              </select>
+              <ChevronDown size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#64748b", pointerEvents: "none" }} />
+            </div>
+          </div>
+
+          {/* Date Selection */}
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Date / Range</div>
+            {reportType === "daily" && (
+              <input type="date" value={dailyDate} onChange={e => setDailyDate(e.target.value)}
+                style={{ ...selStyle, maxWidth: 200 }} />
+            )}
+            {reportType === "weekly" && (
+              <div>
+                <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginBottom: 5 }}>Pick any date in the week</div>
+                <input type="date" value={weekDate} onChange={e => setWeekDate(e.target.value)} style={{ ...selStyle, maxWidth: 200 }} />
+              </div>
+            )}
+            {reportType === "monthly" && (
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ position: "relative", flex: 1 }}>
+                  <select value={monthSel.month} onChange={e => setMonthSel(p => ({ ...p, month: +e.target.value }))} style={selStyle}>
+                    {MONTH_NAMES.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
+                  </select>
+                </div>
+                <div style={{ position: "relative", width: 90 }}>
+                  <select value={monthSel.year} onChange={e => setMonthSel(p => ({ ...p, year: +e.target.value }))} style={selStyle}>
+                    {years.map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+            {reportType === "quarterly" && (
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ position: "relative", flex: 1 }}>
+                  <select value={quarterSel.quarter} onChange={e => setQuarterSel(p => ({ ...p, quarter: +e.target.value }))} style={selStyle}>
+                    {[1,2,3,4].map(q => <option key={q} value={q}>Q{q}</option>)}
+                  </select>
+                </div>
+                <div style={{ position: "relative", width: 90 }}>
+                  <select value={quarterSel.year} onChange={e => setQuarterSel(p => ({ ...p, year: +e.target.value }))} style={selStyle}>
+                    {years.map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+            {reportType === "half_yearly" && (
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ position: "relative", flex: 1 }}>
+                  <select value={halfSel.half} onChange={e => setHalfSel(p => ({ ...p, half: +e.target.value }))} style={selStyle}>
+                    <option value={1}>H1 — Jan to Jun</option>
+                    <option value={2}>H2 — Jul to Dec</option>
+                  </select>
+                </div>
+                <div style={{ position: "relative", width: 90 }}>
+                  <select value={halfSel.year} onChange={e => setHalfSel(p => ({ ...p, year: +e.target.value }))} style={selStyle}>
+                    {years.map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+            {reportType === "yearly" && (
+              <div style={{ position: "relative", maxWidth: 120 }}>
+                <select value={yearSel} onChange={e => setYearSel(+e.target.value)} style={selStyle}>
+                  {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+            )}
+            {reportType === "custom" && (
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <input type="date" value={custStart} onChange={e => setCustStart(e.target.value)} style={{ ...selStyle, flex: 1 }} />
+                <span style={{ color: "var(--text-muted)", fontSize: 12 }}>to</span>
+                <input type="date" value={custEnd} onChange={e => setCustEnd(e.target.value)} style={{ ...selStyle, flex: 1 }} />
+              </div>
+            )}
+            {reportType === "custom" && custStart && custEnd && custStart > custEnd && (
+              <div style={{ fontSize: 11.5, color: "#EF4444", marginTop: 6 }}>End date must be after start date.</div>
+            )}
+          </div>
+
+          {/* Download button */}
+          <button onClick={handleDownloadPdf} disabled={pdfLoading || !dateValid}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "15px 0", borderRadius: 13, border: (pdfLoading || !dateValid) ? "1.5px solid #d1d5db" : "1.5px solid #000", background: "#fff", color: (pdfLoading || !dateValid) ? "#94a3b8" : "#000", fontSize: 15, fontWeight: 700, cursor: (pdfLoading || !dateValid) ? "not-allowed" : "pointer", transition: "all 0.15s" }}>
+            {pdfLoading ? <Loader2 size={18} style={{ animation: "spin 0.8s linear infinite" }} /> : <Download size={18} />}
+            {pdfLoading ? "Generating PDF…" : "Download PDF"}
+          </button>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    SEND DSR MODAL  —  multi-step: Date → Employees → Recipients → Preview
 ═══════════════════════════════════════════════════════════════════════ */
-function SendDSRModal({ onClose, viewableEmployees = [] }) {
-  const { user, profile }       = useAuth();
-  const normRoleModal           = (profile?.role || "").toLowerCase().replace(/[- ]/g, "_");
-  const isOwnerOrHeadModal      = ["owner", "sales_head"].includes(normRoleModal);
+function SendDSRModal({ onClose, viewableEmployees = [], currentUser = null }) {
+  // ── Fullscreen single-page DSR form ──────────────────────────────────────
+  const { user, profile } = useAuth();
+  const normRole = (profile?.role || "").toLowerCase().replace(/[- ]/g, "_");
+  const isOwnerOrHead = ["owner", "sales_head"].includes(normRole);
+  const isSelfOnly = !isOwnerOrHead;
+  const scrollRef = useRef(null);
 
-  // step: "date" | "employees" | "recipients" | "preview" | "sending" | "done" | "error"
-  const [step, setStep]                   = useState("date");
-
-  // Date selection
   const now = new Date();
-  const curY = getYear(now);
-  const curQ = getQuarter(now);
-  const prevQ = curQ === 1 ? 4 : curQ - 1;
-  const prevQY = curQ === 1 ? curY - 1 : curY;
+  const curYear = getYear(now);
+  const years = Array.from({ length: 5 }, (_, i) => curYear - i);
+  const MONTH_NAMES_LIST = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-  const DATE_PRESETS = [
-    { key: "today",         label: "Today",            sub: format(now, "MMM d") },
-    { key: "yesterday",     label: "Yesterday",        sub: format(subDays(now, 1), "MMM d") },
-    { key: "last_7",        label: "Last 7 Days",      sub: `${format(subDays(now, 6), "MMM d")} – ${format(now, "MMM d")}` },
-    { key: "this_week",     label: "This Week",        sub: format(startOfWeek(now, { weekStartsOn: 1 }), "MMM d") + " onwards" },
-    { key: "last_week",     label: "Last Week",        sub: format(startOfWeek(subWeeks(now, 1), { weekStartsOn: 1 }), "MMM d") },
-    { key: "this_month",    label: "This Month",       sub: format(now, "MMMM yyyy") },
-    { key: "last_month",    label: "Last Month",       sub: format(subMonths(now, 1), "MMMM yyyy") },
-    { key: "this_quarter",  label: `Q${curQ} ${curY}`,  sub: "This Quarter" },
-    { key: "last_quarter",  label: `Q${prevQ} ${prevQY}`, sub: "Last Quarter" },
-    { key: "current_year",  label: `Year ${curY}`,     sub: "Current Year" },
-    { key: "previous_year", label: `Year ${curY - 1}`, sub: "Previous Year" },
-    { key: "custom",        label: "Custom Range",     sub: "Pick dates" },
-  ];
-
-  const [datePreset, setDatePreset]       = useState("today");
-  const [customStart, setCustomStart]     = useState(format(subDays(now, 6), "yyyy-MM-dd"));
-  const [customEnd, setCustomEnd]         = useState(format(now, "yyyy-MM-dd"));
-
-  // Employee selection (owner/sales_head only)
-  const [empSearch, setEmpSearch]         = useState("");
-  const [selectedEmpIds, setSelectedEmpIds] = useState([]);
-
-  // Recipients
-  const [recipients, setRecipients]       = useState([]);
+  const [displayState, setDisplayState] = useState("form"); // "form" | "sending" | "done" | "error"
+  const [reportType, setReportType] = useState("daily");
+  const [dailyDate,  setDailyDate]  = useState(format(now, "yyyy-MM-dd"));
+  const [weekDate,   setWeekDate]   = useState(format(now, "yyyy-MM-dd"));
+  const [monthSel,   setMonthSel]   = useState({ year: curYear, month: getMonth(now) + 1 });
+  const [quarterSel, setQuarterSel] = useState({ year: curYear, quarter: getQuarter(now) });
+  const [halfSel,    setHalfSel]    = useState({ year: curYear, half: getMonth(now) < 6 ? 1 : 2 });
+  const [yearSel,    setYearSel]    = useState(curYear);
+  const [custStart,  setCustStart]  = useState(format(subDays(now, 6), "yyyy-MM-dd"));
+  const [custEnd,    setCustEnd]    = useState(format(now, "yyyy-MM-dd"));
+  const [empSearch,  setEmpSearch]  = useState("");
+  const [empOpen,    setEmpOpen]    = useState(false);
+  const [recipOpen,  setRecipOpen]  = useState(false);
+  // inside_sales: always send own ID; admins: empty = all employees
+  const [selectedEmpIds, setSelectedEmpIds] = useState(() => isSelfOnly && (currentUser?.id || profile?.id) ? [currentUser?.id || profile?.id] : []);
+  const [recipients,     setRecipients]     = useState([]);
   const [selectedEmails, setSelectedEmails] = useState([]);
-  const [recipSearch, setRecipSearch]     = useState("");
+  const [recipSearch,    setRecipSearch]    = useState("");
+  const [loadingStep,    setLoadingStep]    = useState(0);
+  const [result,         setResult]         = useState(null);
 
-  // Sending
-  const [loadingStep, setLoadingStep]     = useState(0);
-  const [result, setResult]               = useState(null);
-
-  const LOADING_MSGS = [
-    "Fetching sales data…",
-    "Generating PDF report…",
-    "Composing email…",
-    "Sending…",
+  const REPORT_TYPES = [
+    { key: "daily",       label: "Daily"        },
+    { key: "weekly",      label: "Weekly"       },
+    { key: "monthly",     label: "Monthly"      },
+    { key: "quarterly",   label: "Quarterly"    },
+    { key: "half_yearly", label: "Half-Yearly"  },
+    { key: "yearly",      label: "Yearly"       },
+    { key: "custom",      label: "Custom Range" },
   ];
+  const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const LOADING_MSGS = ["Fetching sales data…","Generating PDF report…","Composing email…","Sending…"];
 
-  // Steps — employees step only for owner/sales_head
-  const steps = useMemo(() =>
-    isOwnerOrHeadModal
-      ? ["date", "employees", "recipients", "preview"]
-      : ["date", "recipients", "preview"],
-    [isOwnerOrHeadModal]
-  );
-  const STEP_LABELS = { date: "Date Range", employees: "Employees", recipients: "Recipients", preview: "Preview" };
-  const stepIndex = steps.indexOf(step);
-
-  const goNext = () => {
-    const i = stepIndex + 1;
-    if (i < steps.length) setStep(steps[i]);
-  };
-  const goBack = () => {
-    const i = stepIndex - 1;
-    if (i >= 0) setStep(steps[i]);
-  };
-
-  // Fetch recipients on mount
   useEffect(() => {
     (async () => {
       try {
@@ -481,241 +800,515 @@ function SendDSRModal({ onClose, viewableEmployees = [] }) {
     })();
   }, [user]);
 
-  // Derived
+  useLayoutEffect(() => {
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    return () => {
+      document.body.style.overflow = "";
+      document.documentElement.style.overflow = "";
+    };
+  }, []);
+
+  useEffect(() => {
+    const fn = (e) => { if (e.key === "Escape" && displayState === "form") onClose(); };
+    window.addEventListener("keydown", fn);
+    return () => window.removeEventListener("keydown", fn);
+  }, [displayState, onClose]);
+
+  const payloadDates = useMemo(() => {
+    switch (reportType) {
+      case "daily":   return { customStart: dailyDate, customEnd: dailyDate };
+      case "weekly": {
+        const d = parseISO(weekDate || format(now, "yyyy-MM-dd"));
+        return { customStart: format(startOfWeek(d, { weekStartsOn: 1 }), "yyyy-MM-dd"), customEnd: format(endOfWeek(d, { weekStartsOn: 1 }), "yyyy-MM-dd") };
+      }
+      case "monthly": {
+        const d = new Date(monthSel.year, monthSel.month - 1, 1);
+        return { customStart: format(startOfMonth(d), "yyyy-MM-dd"), customEnd: format(endOfMonth(d), "yyyy-MM-dd") };
+      }
+      case "quarterly": {
+        const d = new Date(quarterSel.year, (quarterSel.quarter - 1) * 3, 1);
+        return { customStart: format(startOfQuarter(d), "yyyy-MM-dd"), customEnd: format(endOfQuarter(d), "yyyy-MM-dd") };
+      }
+      case "half_yearly": {
+        const sm = halfSel.half === 1 ? 0 : 6;
+        const em = halfSel.half === 1 ? 5 : 11;
+        return { customStart: format(new Date(halfSel.year, sm, 1), "yyyy-MM-dd"), customEnd: format(endOfMonth(new Date(halfSel.year, em, 1)), "yyyy-MM-dd") };
+      }
+      case "yearly": return { customStart: `${yearSel}-01-01`, customEnd: `${yearSel}-12-31` };
+      default:        return { customStart: custStart, customEnd: custEnd };
+    }
+  }, [reportType, dailyDate, weekDate, monthSel, quarterSel, halfSel, yearSel, custStart, custEnd]);
+
+  const dateLabel = useMemo(() => {
+    switch (reportType) {
+      case "daily":       return dailyDate ? format(parseISO(dailyDate), "MMMM d, yyyy") : "Today";
+      case "weekly":      return weekDate ? `${format(startOfWeek(parseISO(weekDate), { weekStartsOn: 1 }), "MMM d")} – ${format(endOfWeek(parseISO(weekDate), { weekStartsOn: 1 }), "MMM d, yyyy")}` : "";
+      case "monthly":     return `${MONTH_NAMES[monthSel.month - 1]} ${monthSel.year}`;
+      case "quarterly":   return `Q${quarterSel.quarter} ${quarterSel.year}`;
+      case "half_yearly": return `H${halfSel.half} ${halfSel.year}`;
+      case "yearly":      return `Year ${yearSel}`;
+      default:            return custStart && custEnd ? `${format(parseISO(custStart), "MMM d")} – ${format(parseISO(custEnd), "MMM d, yyyy")}` : "Custom Range";
+    }
+  }, [reportType, dailyDate, weekDate, monthSel, quarterSel, halfSel, yearSel, custStart, custEnd]);
+
+  const dateValid = reportType !== "custom" || (custStart && custEnd && custStart <= custEnd);
+  const canSend   = dateValid && selectedEmails.length > 0;
+
   const filteredEmps = useMemo(() => {
-    if (!empSearch.trim()) return viewableEmployees;
     const q = empSearch.toLowerCase();
-    return viewableEmployees.filter(u =>
-      (u.full_name || "").toLowerCase().includes(q) ||
-      (u.email || "").toLowerCase().includes(q) ||
-      (u.role || "").toLowerCase().includes(q)
+    return q === "" ? viewableEmployees : viewableEmployees.filter(u =>
+      (u.full_name || "").toLowerCase().includes(q) || (u.role || "").toLowerCase().includes(q)
     );
   }, [viewableEmployees, empSearch]);
 
-  const filteredRecipients = useMemo(() => {
+  const filteredRecips = useMemo(() => {
     const q = recipSearch.toLowerCase();
     return recipients.filter(r =>
-      !selectedEmails.includes(r.email) &&
-      (q === "" || (r.name || "").toLowerCase().includes(q) || (r.email || "").toLowerCase().includes(q))
+      q === "" || (r.name || "").toLowerCase().includes(q) || (r.email || "").toLowerCase().includes(q)
     );
-  }, [recipients, selectedEmails, recipSearch]);
+  }, [recipients, recipSearch]);
 
-  const selectedPreset    = DATE_PRESETS.find(p => p.key === datePreset);
-  const selectedEmpNames  = viewableEmployees.filter(u => selectedEmpIds.includes(u.id)).map(u => u.full_name || u.email);
-  const selectedRcpNames  = recipients.filter(r => selectedEmails.includes(r.email)).map(r => r.name);
+  const rlabel = r => r === "owner" ? "Super Admin" : r === "sales_head" ? "Sales Head" : r === "sales_manager" ? "Sales Manager" : r === "inside_sales" ? "Inside Sales" : (r || "").replace(/_/g, " ");
+  const rcolor = r => r === "owner" ? "#6366F1" : r === "sales_head" ? "#10B981" : r === "sales_manager" ? "#F59E0B" : "#3B82F6";
 
-  const rlabel    = r => r === "owner" ? "Super Admin" : r === "sales_head" ? "Sales Head" : (r || "").replace(/_/g, " ");
-  const roleClr   = r => r === "owner" ? "#6366F1" : r === "sales_head" ? "#10B981" : "#3B82F6";
+  const buildPayload = () => ({ selectedEmails, selectedEmployeeIds: selectedEmpIds, datePreset: "custom", ...payloadDates });
 
-  const dateValid = datePreset !== "custom" || (customStart && customEnd && customStart <= customEnd);
-
-  // Send handler
   const handleSend = async () => {
-    setStep("sending");
-    setLoadingStep(0);
+    if (!canSend) return;
+    setDisplayState("sending"); setLoadingStep(0);
     const t1 = setTimeout(() => setLoadingStep(1), 900);
     const t2 = setTimeout(() => setLoadingStep(2), 2000);
     const t3 = setTimeout(() => setLoadingStep(3), 3200);
     try {
       const token = await user.getIdToken();
-      const body = {
-        selectedEmails,
-        selectedEmployeeIds: selectedEmpIds,
-        datePreset,
-        ...(datePreset === "custom" ? { customStart, customEnd } : {}),
-      };
-      const res  = await fetch(`${API}/api/reports/send-dsr`, {
+      const res = await fetch(`${API}/api/reports/send-dsr`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
+        body: JSON.stringify(buildPayload()),
       });
       const data = await res.json().catch(() => ({}));
       clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
       setLoadingStep(3);
       await new Promise(r => setTimeout(r, 350));
-      if (!res.ok) {
-        setResult({ success: false, error: data.error || data.details || `HTTP ${res.status}` });
-        setStep("error");
-      } else {
-        setResult({ success: true, sent_to: data.sent_to });
-        setStep("done");
-      }
+      if (!res.ok) { setResult({ success: false, error: data.error || `HTTP ${res.status}` }); setDisplayState("error"); }
+      else { setResult({ success: true, sent_to: data.sent_to }); setDisplayState("done"); }
     } catch (err) {
       clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
-      setResult({ success: false, error: err.message || "Network error" });
-      setStep("error");
+      setResult({ success: false, error: err.message || "Network error" }); setDisplayState("error");
     }
   };
 
-  const isSpecialStep = ["sending", "done", "error"].includes(step);
+  const selStyle = { width: "100%", padding: "11px 34px 11px 13px", borderRadius: 11, border: "1.5px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 13.5, cursor: "pointer", appearance: "none", WebkitAppearance: "none", outline: "none" };
 
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(5px)" }} onClick={() => { if (!isSpecialStep) onClose(); }} />
-      <motion.div
-        initial={{ opacity: 0, scale: 0.94, y: 18 }}
-        animate={{ opacity: 1, scale: 1,    y: 0  }}
-        exit={{    opacity: 0, scale: 0.94, y: 18  }}
-        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-        style={{ position: "relative", width: "100%", maxWidth: 520, background: "var(--surface)", borderRadius: 20, border: "1px solid var(--border)", boxShadow: "0 32px 80px rgba(0,0,0,0.35)", overflow: "hidden", maxHeight: "92vh", display: "flex", flexDirection: "column" }}
-      >
-        {/* Rainbow accent bar */}
-        <div style={{ height: 3, background: "linear-gradient(90deg,#6366F1,#8B5CF6,#EC4899)", flexShrink: 0 }} />
-
-        {/* Header + step indicator */}
-        {!isSpecialStep && (
-          <div style={{ padding: "20px 24px 0", flexShrink: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em" }}>Generate & Send DSR</h2>
-                <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>Daily Sales Report — PDF + Email</p>
+  // ── Special overlay states (sending / done / error) ───────────────────────
+  if (displayState !== "form") {
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: "8vh" }}>
+        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(14px)" }} />
+        <motion.div initial={{ opacity: 0, scale: 0.88, y: -16 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+          style={{ position: "relative", background: "var(--surface)", borderRadius: 24, border: "1px solid var(--border)", padding: "52px 44px", maxWidth: 460, width: "90vw", textAlign: "center", boxShadow: "0 40px 120px rgba(0,0,0,0.55)" }}>
+          {displayState === "sending" && (
+            <>
+              <div style={{ position: "relative", width: 84, height: 84, margin: "0 auto 32px" }}>
+                <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.1, repeat: Infinity, ease: "linear" }}
+                  style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "3px solid transparent", borderTopColor: "#6366F1", borderRightColor: "#8B5CF6" }} />
+                <div style={{ position: "absolute", inset: 11, borderRadius: "50%", background: "rgba(99,102,241,0.08)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Send size={24} style={{ color: "#6366F1" }} />
+                </div>
               </div>
-              <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", flexShrink: 0 }}>
-                <X size={14} />
-              </button>
-            </div>
-
-            {/* Step pills */}
-            <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
-              {steps.map((s, i) => (
-                <Fragment key={s}>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                    <div style={{ width: 26, height: 26, borderRadius: "50%", background: s === step ? "#6366F1" : i < stepIndex ? "#10B981" : "var(--surface-2)", border: `2px solid ${s === step ? "#6366F1" : i < stepIndex ? "#10B981" : "var(--border)"}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: s === step || i < stepIndex ? "#fff" : "var(--text-muted)", transition: "all 0.2s" }}>
-                      {i < stepIndex ? "✓" : i + 1}
+              <div style={{ fontSize: 19, fontWeight: 800, color: "var(--text)", marginBottom: 28 }}>Sending Report…</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 14, textAlign: "left" }}>
+                {LOADING_MSGS.map((msg, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, opacity: i <= loadingStep ? 1 : 0.28, transition: "opacity 0.35s" }}>
+                    <div style={{ width: 28, height: 28, borderRadius: "50%", background: i < loadingStep ? "#10B981" : i === loadingStep ? "#6366F1" : "var(--border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "background 0.3s" }}>
+                      {i < loadingStep ? <span style={{ fontSize: 11, color: "#fff" }}>✓</span>
+                        : i === loadingStep ? <motion.div animate={{ rotate: 360 }} transition={{ duration: 0.7, repeat: Infinity, ease: "linear" }} style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid transparent", borderTopColor: "#fff" }} />
+                        : <span style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 700 }}>{i+1}</span>}
                     </div>
-                    <span style={{ fontSize: 9.5, fontWeight: 600, color: s === step ? "#6366F1" : "var(--text-muted)", whiteSpace: "nowrap" }}>{STEP_LABELS[s]}</span>
+                    <span style={{ fontSize: 14, fontWeight: i === loadingStep ? 700 : 500, color: i === loadingStep ? "var(--text)" : "var(--text-muted)" }}>{msg}</span>
                   </div>
-                  {i < steps.length - 1 && (
-                    <div style={{ flex: 1, height: 2, background: i < stepIndex ? "#10B981" : "var(--border)", margin: "0 5px", marginBottom: 18, transition: "background 0.25s" }} />
-                  )}
-                </Fragment>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Scrollable body */}
-        <div style={{ overflowY: "auto", flex: 1, padding: isSpecialStep ? 0 : "0 24px 20px" }} className="custom-scroll">
-
-          {/* ── Date step ── */}
-          {step === "date" && (
-            <div>
-              <p style={{ margin: "0 0 12px", fontSize: 12.5, fontWeight: 600, color: "var(--text-2)" }}>Select the date range for this report</p>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 7 }}>
-                {DATE_PRESETS.map(p => (
-                  <button key={p.key} onClick={() => setDatePreset(p.key)}
-                    style={{ padding: "9px 8px", borderRadius: 10, border: `1.5px solid ${datePreset === p.key ? (p.key === "custom" ? "#8B5CF6" : "#6366F1") : "var(--border)"}`, background: datePreset === p.key ? (p.key === "custom" ? "rgba(139,92,246,0.1)" : "rgba(99,102,241,0.09)") : "var(--surface-2)", cursor: "pointer", textAlign: "left", transition: "all 0.14s" }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: datePreset === p.key ? (p.key === "custom" ? "#8B5CF6" : "#6366F1") : "var(--text)" }}>{p.label}</div>
-                    <div style={{ fontSize: 9.5, color: "var(--text-muted)", marginTop: 2 }}>{p.sub}</div>
-                  </button>
                 ))}
               </div>
+            </>
+          )}
+          {displayState === "done" && (
+            <>
+              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 180, damping: 14 }}
+                style={{ width: 84, height: 84, borderRadius: "50%", background: "rgba(16,185,129,0.1)", border: "2px solid rgba(16,185,129,0.3)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px", boxShadow: "0 8px 32px rgba(16,185,129,0.22)" }}>
+                <CheckCircle2 size={40} style={{ color: "#10B981" }} />
+              </motion.div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "var(--text)", marginBottom: 10 }}>Report Sent!</div>
+              <div style={{ fontSize: 14, color: "var(--text-muted)", marginBottom: 26, lineHeight: 1.65 }}>
+                Delivered to <strong style={{ color: "var(--text)" }}>{result?.sent_to}</strong> recipient{result?.sent_to !== 1 ? "s" : ""} with PDF attached.
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", fontSize: 12, color: "#10B981", padding: "9px 20px", background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.18)", borderRadius: 12, marginBottom: 26, fontWeight: 600 }}>
+                <span>✓ PDF attached</span><span>·</span><span>✓ Email delivered</span><span>·</span><span>✓ Logged</span>
+              </div>
+              <button onClick={onClose} style={{ padding: "13px 48px", borderRadius: 13, border: "1.5px solid #000", background: "#fff", color: "#000", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>
+                Done
+              </button>
+            </>
+          )}
+          {displayState === "error" && (
+            <>
+              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 180, damping: 14 }}
+                style={{ width: 84, height: 84, borderRadius: "50%", background: "rgba(239,68,68,0.08)", border: "2px solid rgba(239,68,68,0.22)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 22px" }}>
+                <AlertCircle size={40} style={{ color: "#EF4444" }} />
+              </motion.div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "var(--text)", marginBottom: 10 }}>Send Failed</div>
+              <div style={{ fontSize: 13.5, color: "var(--text-muted)", marginBottom: 28, lineHeight: 1.65, maxWidth: 340, margin: "0 auto 28px" }}>{result?.error}</div>
+              <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+                <button onClick={() => setDisplayState("form")} style={{ padding: "11px 26px", borderRadius: 11, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Back</button>
+                <button onClick={handleSend} style={{ padding: "11px 30px", borderRadius: 11, border: "none", background: "#EF4444", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 14px rgba(239,68,68,0.33)" }}>Retry</button>
+              </div>
+            </>
+          )}
+        </motion.div>
+      </div>
+    );
+  }
 
-              {datePreset === "custom" && (
-                <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ display: "block", fontSize: 10.5, fontWeight: 700, color: "var(--text-2)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.05em" }}>From</label>
-                    <input type="date" value={customStart} max={customEnd || format(now, "yyyy-MM-dd")}
-                      onChange={e => setCustomStart(e.target.value)}
-                      style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 13, width: "100%", boxSizing: "border-box" }} />
+  // ── Fullscreen single-page form ───────────────────────────────────────────
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 99999, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px 16px" }}>
+      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(14px)" }} onClick={onClose} />
+
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+        style={{ position: "relative", width: "min(1140px, 96vw)", height: "88vh", background: "var(--surface)", borderRadius: 24, border: "1px solid var(--border)", boxShadow: "0 40px 120px rgba(0,0,0,0.55)", display: "flex", flexDirection: "column", overflow: "hidden" }}
+      >
+        {/* Accent bar */}
+        <div style={{ height: 4, background: "linear-gradient(90deg,#6366F1,#8B5CF6,#EC4899,#F59E0B)", flexShrink: 0 }} />
+
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 28px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 14, background: "linear-gradient(135deg,#6366F1,#8B5CF6)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Send size={19} style={{ color: "#fff" }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em" }}>Generate & Send DSR</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 1 }}>Configure employee selection, report type, date range and recipients — then download or send</div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ width: 36, height: 36, borderRadius: 11, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", flexShrink: 0 }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* 2-column body */}
+        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+
+          {/* LEFT: form sections */}
+          <div ref={scrollRef} style={{ flex: "0 0 58%", overflowY: "auto", padding: "28px 32px", borderRight: "1px solid var(--border)" }} className="custom-scroll">
+
+            {/* ── Section 1: Employee Selection (owner/head only) ── */}
+            {isOwnerOrHead && (
+              <div style={{ marginBottom: 32, paddingBottom: 32, borderBottom: "1px solid var(--border)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                  <div style={{ width: 24, height: 24, borderRadius: 8, background: "#000", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <span style={{ fontSize: 11, fontWeight: 900, color: "#fff" }}>1</span>
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ display: "block", fontSize: 10.5, fontWeight: 700, color: "var(--text-2)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.05em" }}>To</label>
-                    <input type="date" value={customEnd} min={customStart} max={format(now, "yyyy-MM-dd")}
-                      onChange={e => setCustomEnd(e.target.value)}
-                      style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 13, width: "100%", boxSizing: "border-box" }} />
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.01em" }}>Employee Selection</div>
+                </div>
+
+                {/* Dropdown trigger */}
+                <button
+                  onClick={() => setEmpOpen(o => !o)}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 14px", borderRadius: 12, border: `1.5px solid ${empOpen ? "#000" : "var(--border)"}`, background: "var(--surface-2)", color: "var(--text)", fontSize: 13, cursor: "pointer", textAlign: "left", transition: "border-color 0.15s", boxSizing: "border-box" }}
+                >
+                  <span style={{ fontWeight: selectedEmpIds.length > 0 ? 600 : 400, color: selectedEmpIds.length === 0 ? "var(--text-muted)" : "var(--text)" }}>
+                    {selectedEmpIds.length === 0
+                      ? `All Team (${viewableEmployees.length} employees)`
+                      : selectedEmpIds.length === 1
+                      ? (viewableEmployees.find(u => u.id === selectedEmpIds[0])?.full_name || "1 employee")
+                      : `${selectedEmpIds.length} employees selected`}
+                  </span>
+                  <ChevronDown size={14} style={{ color: "var(--text-muted)", flexShrink: 0, transition: "transform 0.15s", transform: empOpen ? "rotate(180deg)" : "none" }} />
+                </button>
+
+                {/* Dropdown panel */}
+                {empOpen && (
+                  <div style={{ marginTop: 5, borderRadius: 12, border: "1px solid var(--border)", background: "var(--surface)", overflow: "hidden", boxShadow: "0 6px 24px rgba(0,0,0,0.12)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 13px", borderBottom: "1px solid var(--border)" }}>
+                      <Search size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                      <input autoFocus value={empSearch} onChange={e => setEmpSearch(e.target.value)} placeholder="Search by name or role…"
+                        style={{ border: "none", outline: "none", background: "transparent", color: "var(--text)", fontSize: 13, flex: 1, minWidth: 0 }} />
+                      {empSearch && <button onClick={() => setEmpSearch("")} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 0 }}><X size={11} /></button>}
+                      <button
+                        onClick={() => selectedEmpIds.length === viewableEmployees.length ? setSelectedEmpIds([]) : setSelectedEmpIds(viewableEmployees.map(u => u.id))}
+                        style={{ fontSize: 11, fontWeight: 700, color: "#000", background: "transparent", border: "none", cursor: "pointer", padding: "2px 4px", whiteSpace: "nowrap", flexShrink: 0 }}
+                      >
+                        {selectedEmpIds.length === viewableEmployees.length ? "Deselect All" : "Select All"}
+                      </button>
+                    </div>
+                    <div style={{ maxHeight: 220, overflowY: "auto" }} className="custom-scroll">
+                      {/* All Team option */}
+                      <div onClick={() => setSelectedEmpIds([])}
+                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 13px", cursor: "pointer", background: selectedEmpIds.length === 0 ? "rgba(0,0,0,0.04)" : "transparent", borderBottom: "1px solid var(--border)" }}>
+                        <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${selectedEmpIds.length === 0 ? "#000" : "var(--border)"}`, background: selectedEmpIds.length === 0 ? "#000" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          {selectedEmpIds.length === 0 && <span style={{ color: "#fff", fontSize: 9, fontWeight: 900 }}>✓</span>}
+                        </div>
+                        <Users size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>All Team</span>
+                        <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto" }}>{viewableEmployees.length} employees</span>
+                      </div>
+                      {filteredEmps.map((u, idx) => {
+                        const on = selectedEmpIds.includes(u.id);
+                        const rc = rcolor(u.role);
+                        return (
+                          <div key={u.id} onClick={() => setSelectedEmpIds(p => on ? p.filter(id => id !== u.id) : [...p, u.id])}
+                            style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 13px", cursor: "pointer", background: on ? "rgba(0,0,0,0.03)" : "transparent", borderBottom: idx < filteredEmps.length - 1 ? "1px solid var(--border)" : "none" }}>
+                            <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${on ? "#000" : "var(--border)"}`, background: on ? "#000" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                              {on && <span style={{ color: "#fff", fontSize: 9, fontWeight: 900 }}>✓</span>}
+                            </div>
+                            <div style={{ width: 28, height: 28, borderRadius: 8, background: "#f3f4f6", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#64748b", flexShrink: 0 }}>
+                              {(u.full_name || "?").charAt(0).toUpperCase()}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.full_name || u.email}</div>
+                              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{rlabel(u.role)}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {filteredEmps.length === 0 && (
+                        <div style={{ padding: "20px", textAlign: "center", fontSize: 13, color: "var(--text-muted)" }}>No employees match</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Selected chips */}
+                {selectedEmpIds.length > 0 && !empOpen && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
+                    {viewableEmployees.filter(u => selectedEmpIds.includes(u.id)).map(u => (
+                      <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px 3px 10px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 20, fontSize: 11.5, fontWeight: 600, color: "#000" }}>
+                        {u.full_name}
+                        <button onClick={() => setSelectedEmpIds(p => p.filter(id => id !== u.id))} style={{ width: 14, height: 14, borderRadius: "50%", border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
+                          <X size={8} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Section 2: Report Type ── */}
+            <div style={{ marginBottom: 32, paddingBottom: 32, borderBottom: "1px solid var(--border)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 24, height: 24, borderRadius: 8, background: "#000", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 900, color: "#fff" }}>{isOwnerOrHead ? 2 : 1}</span>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "var(--text)" }}>Report Type</div>
+              </div>
+              <div style={{ position: "relative" }}>
+                <select value={reportType} onChange={e => setReportType(e.target.value)}
+                  style={{ width: "100%", padding: "11px 36px 11px 14px", borderRadius: 11, border: "1.5px solid #d1d5db", background: "var(--surface-2)", color: "var(--text)", fontSize: 13, fontWeight: 600, cursor: "pointer", appearance: "none", WebkitAppearance: "none", outline: "none", boxSizing: "border-box" }}>
+                  {REPORT_TYPES.map(rt => <option key={rt.key} value={rt.key}>{rt.label}</option>)}
+                </select>
+                <ChevronDown size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none" }} />
+              </div>
+            </div>
+
+            {/* ── Section 3: Date Selection ── */}
+            <div style={{ marginBottom: 32, paddingBottom: 32, borderBottom: "1px solid var(--border)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 24, height: 24, borderRadius: 8, background: "#000", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 900, color: "#fff" }}>{isOwnerOrHead ? 3 : 2}</span>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "var(--text)" }}>Date Selection</div>
+                {dateLabel && dateValid && (
+                  <span style={{ marginLeft: "auto", fontSize: 12, color: "#000", fontWeight: 600, background: "#f3f4f6", padding: "3px 10px", borderRadius: 8 }}>{dateLabel}</span>
+                )}
+              </div>
+
+              {reportType === "daily" && (
+                <input type="date" value={dailyDate} max={format(now, "yyyy-MM-dd")} onChange={e => setDailyDate(e.target.value)}
+                  style={{ ...selStyle, padding: "12px 14px", appearance: "auto", WebkitAppearance: "auto" }} />
+              )}
+              {reportType === "weekly" && (
+                <div>
+                  <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginBottom: 8 }}>Select any date within the desired week:</div>
+                  <input type="date" value={weekDate} max={format(now, "yyyy-MM-dd")} onChange={e => setWeekDate(e.target.value)}
+                    style={{ ...selStyle, padding: "12px 14px", appearance: "auto", WebkitAppearance: "auto" }} />
+                  {weekDate && (
+                    <div style={{ marginTop: 9, padding: "9px 14px", background: "#f3f4f6", border: "1px solid #e2e8f0", borderRadius: 10, fontSize: 13, fontWeight: 600, color: "#000" }}>
+                      Week: {format(startOfWeek(parseISO(weekDate), { weekStartsOn: 1 }), "MMM d")} – {format(endOfWeek(parseISO(weekDate), { weekStartsOn: 1 }), "MMM d, yyyy")}
+                    </div>
+                  )}
+                </div>
+              )}
+              {reportType === "monthly" && (
+                <div style={{ display: "flex", gap: 10 }}>
+                  <div style={{ position: "relative", flex: 2 }}>
+                    <select value={monthSel.month} onChange={e => setMonthSel(p => ({ ...p, month: Number(e.target.value) }))} style={selStyle}>
+                      {MONTH_NAMES.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
+                    </select>
+                    <ChevronDown size={14} style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none" }} />
+                  </div>
+                  <div style={{ position: "relative", flex: 1 }}>
+                    <select value={monthSel.year} onChange={e => setMonthSel(p => ({ ...p, year: Number(e.target.value) }))} style={selStyle}>
+                      {years.map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <ChevronDown size={14} style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none" }} />
                   </div>
                 </div>
               )}
-              {datePreset === "custom" && customStart && customEnd && customStart > customEnd && (
-                <p style={{ fontSize: 11.5, color: "#EF4444", margin: "8px 0 0" }}>Start date must be before end date</p>
+              {reportType === "quarterly" && (
+                <div style={{ display: "flex", gap: 10 }}>
+                  <div style={{ position: "relative", flex: 1 }}>
+                    <select value={quarterSel.quarter} onChange={e => setQuarterSel(p => ({ ...p, quarter: Number(e.target.value) }))} style={selStyle}>
+                      <option value={1}>Q1 (Jan – Mar)</option>
+                      <option value={2}>Q2 (Apr – Jun)</option>
+                      <option value={3}>Q3 (Jul – Sep)</option>
+                      <option value={4}>Q4 (Oct – Dec)</option>
+                    </select>
+                    <ChevronDown size={14} style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none" }} />
+                  </div>
+                  <div style={{ position: "relative", flex: 1 }}>
+                    <select value={quarterSel.year} onChange={e => setQuarterSel(p => ({ ...p, year: Number(e.target.value) }))} style={selStyle}>
+                      {years.map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <ChevronDown size={14} style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none" }} />
+                  </div>
+                </div>
+              )}
+              {reportType === "half_yearly" && (
+                <div style={{ display: "flex", gap: 10 }}>
+                  <div style={{ position: "relative", flex: 1 }}>
+                    <select value={halfSel.half} onChange={e => setHalfSel(p => ({ ...p, half: Number(e.target.value) }))} style={selStyle}>
+                      <option value={1}>H1 (January – June)</option>
+                      <option value={2}>H2 (July – December)</option>
+                    </select>
+                    <ChevronDown size={14} style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none" }} />
+                  </div>
+                  <div style={{ position: "relative", flex: 1 }}>
+                    <select value={halfSel.year} onChange={e => setHalfSel(p => ({ ...p, year: Number(e.target.value) }))} style={selStyle}>
+                      {years.map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <ChevronDown size={14} style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none" }} />
+                  </div>
+                </div>
+              )}
+              {reportType === "yearly" && (
+                <div style={{ position: "relative" }}>
+                  <select value={yearSel} onChange={e => setYearSel(Number(e.target.value))} style={selStyle}>
+                    {years.map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                  <ChevronDown size={14} style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none" }} />
+                </div>
+              )}
+              {reportType === "custom" && (
+                <div style={{ display: "flex", gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 7 }}>From Date</div>
+                    <input type="date" value={custStart} max={custEnd || format(now, "yyyy-MM-dd")} onChange={e => setCustStart(e.target.value)}
+                      style={{ width: "100%", padding: "12px 13px", borderRadius: 11, border: "1.5px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 14, boxSizing: "border-box", outline: "none" }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 7 }}>To Date</div>
+                    <input type="date" value={custEnd} min={custStart} max={format(now, "yyyy-MM-dd")} onChange={e => setCustEnd(e.target.value)}
+                      style={{ width: "100%", padding: "12px 13px", borderRadius: 11, border: "1.5px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 14, boxSizing: "border-box", outline: "none" }} />
+                  </div>
+                </div>
+              )}
+              {reportType === "custom" && custStart && custEnd && custStart > custEnd && (
+                <div style={{ fontSize: 12, color: "#EF4444", marginTop: 9 }}>Start date must be before end date</div>
               )}
             </div>
-          )}
 
-          {/* ── Employees step (owner/sales_head only) ── */}
-          {step === "employees" && (
+            {/* ── Section 4: Recipients ── */}
             <div>
-              <p style={{ margin: "0 0 12px", fontSize: 12.5, fontWeight: 600, color: "var(--text-2)" }}>Choose whose data to include in the report</p>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                <div style={{ width: 24, height: 24, borderRadius: 8, background: "#000", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 900, color: "#fff" }}>{isOwnerOrHead ? 4 : 3}</span>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "var(--text)" }}>Recipient Selection</div>
+              </div>
 
-              {/* All team */}
-              <button onClick={() => setSelectedEmpIds([])}
-                style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 10, border: `1.5px solid ${selectedEmpIds.length === 0 ? "#6366F1" : "var(--border)"}`, background: selectedEmpIds.length === 0 ? "rgba(99,102,241,0.08)" : "var(--surface-2)", cursor: "pointer", marginBottom: 9, textAlign: "left", transition: "all 0.14s" }}>
-                <div style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(99,102,241,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <Users size={15} style={{ color: "#6366F1" }} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: selectedEmpIds.length === 0 ? "#6366F1" : "var(--text)" }}>Entire Team</div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{viewableEmployees.length} accessible employees</div>
-                </div>
-                {selectedEmpIds.length === 0 && <span style={{ fontSize: 12, color: "#6366F1", fontWeight: 800 }}>✓</span>}
+              {/* Dropdown trigger */}
+              <button
+                onClick={() => setRecipOpen(o => !o)}
+                style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 14px", borderRadius: 12, border: `1.5px solid ${recipOpen ? "#000" : selectedEmails.length === 0 ? "#EF4444" : "var(--border)"}`, background: "var(--surface-2)", color: "var(--text)", fontSize: 13, cursor: "pointer", textAlign: "left", transition: "border-color 0.15s", boxSizing: "border-box" }}
+              >
+                <span style={{ fontWeight: selectedEmails.length > 0 ? 600 : 400, color: selectedEmails.length === 0 ? "var(--text-muted)" : "var(--text)" }}>
+                  {recipients.length === 0
+                    ? "Loading recipients…"
+                    : selectedEmails.length === 0
+                    ? "Select recipients…"
+                    : selectedEmails.length === 1
+                    ? (recipients.find(r => r.email === selectedEmails[0])?.name || selectedEmails[0])
+                    : `${selectedEmails.length} recipients selected`}
+                </span>
+                <ChevronDown size={14} style={{ color: "var(--text-muted)", flexShrink: 0, transition: "transform 0.15s", transform: recipOpen ? "rotate(180deg)" : "none" }} />
               </button>
 
-              {/* Search */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 9, marginBottom: 7 }}>
-                <Search size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-                <input value={empSearch} onChange={e => setEmpSearch(e.target.value)} placeholder="Search by name, role…"
-                  style={{ border: "none", outline: "none", background: "transparent", color: "var(--text)", fontSize: 12.5, flex: 1, minWidth: 0 }} />
-                {empSearch && <button onClick={() => setEmpSearch("")} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 0 }}><X size={11} /></button>}
-              </div>
-
-              {/* List */}
-              <div style={{ maxHeight: 220, overflowY: "auto" }} className="custom-scroll">
-                {filteredEmps.map(u => {
-                  const on = selectedEmpIds.includes(u.id);
-                  const rc = roleClr(u.role);
-                  return (
-                    <button key={u.id} onClick={() => setSelectedEmpIds(prev => on ? prev.filter(id => id !== u.id) : [...prev, u.id])}
-                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 11px", borderRadius: 8, border: `1px solid ${on ? rc + "33" : "var(--border)"}`, background: on ? rc + "0d" : "transparent", cursor: "pointer", marginBottom: 5, textAlign: "left", transition: "all 0.12s" }}>
-                      <div style={{ width: 28, height: 28, borderRadius: 8, background: rc + "1a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: rc, flexShrink: 0 }}>
-                        {(u.full_name || "?").charAt(0).toUpperCase()}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.full_name}</div>
-                        <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{rlabel(u.role)}</div>
-                      </div>
-                      {on && <div style={{ width: 18, height: 18, borderRadius: "50%", background: rc, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "#fff", flexShrink: 0 }}>✓</div>}
-                    </button>
-                  );
-                })}
-                {filteredEmps.length === 0 && (
-                  <div style={{ textAlign: "center", padding: "20px 0", fontSize: 12, color: "var(--text-muted)" }}>
-                    {empSearch ? "No employees match your search" : "No accessible employees"}
+              {/* Dropdown panel */}
+              {recipOpen && (
+                <div style={{ marginTop: 5, borderRadius: 12, border: "1px solid var(--border)", background: "var(--surface)", overflow: "hidden", boxShadow: "0 6px 24px rgba(0,0,0,0.12)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 13px", borderBottom: "1px solid var(--border)" }}>
+                    <Search size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                    <input autoFocus value={recipSearch} onChange={e => setRecipSearch(e.target.value)} placeholder="Search Super Admins and Sales Heads…"
+                      style={{ border: "none", outline: "none", background: "transparent", color: "var(--text)", fontSize: 13, flex: 1, minWidth: 0 }} />
+                    {recipSearch && <button onClick={() => setRecipSearch("")} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 0 }}><X size={11} /></button>}
+                    {recipients.length > 0 && (
+                      <button
+                        onClick={() => selectedEmails.length === recipients.length ? setSelectedEmails([]) : setSelectedEmails(recipients.map(r => r.email))}
+                        style={{ fontSize: 11, fontWeight: 700, color: "#000", background: "transparent", border: "none", cursor: "pointer", padding: "2px 4px", whiteSpace: "nowrap", flexShrink: 0 }}
+                      >
+                        {selectedEmails.length === recipients.length ? "Deselect All" : "Select All"}
+                      </button>
+                    )}
                   </div>
-                )}
-              </div>
-
-              {selectedEmpIds.length > 0 && (
-                <p style={{ margin: "8px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>
-                  {selectedEmpIds.length} employee{selectedEmpIds.length !== 1 ? "s" : ""} selected
-                </p>
+                  <div style={{ maxHeight: 230, overflowY: "auto" }} className="custom-scroll">
+                    {recipients.length === 0 ? (
+                      <div style={{ padding: "32px", textAlign: "center" }}>
+                        <Loader2 size={22} style={{ animation: "spin 0.8s linear infinite", color: "#94a3b8", margin: "0 auto 10px" }} />
+                        <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Loading recipients…</div>
+                      </div>
+                    ) : filteredRecips.length === 0 ? (
+                      <div style={{ padding: "22px", textAlign: "center", fontSize: 13, color: "var(--text-muted)" }}>No match</div>
+                    ) : filteredRecips.map((r, idx) => {
+                      const rc = rcolor(r.role);
+                      const sel = selectedEmails.includes(r.email);
+                      return (
+                        <div key={r.email}
+                          onClick={() => setSelectedEmails(s => sel ? s.filter(e => e !== r.email) : [...s, r.email])}
+                          style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 13px", cursor: "pointer", background: sel ? "rgba(0,0,0,0.03)" : "transparent", borderBottom: idx < filteredRecips.length - 1 ? "1px solid var(--border)" : "none" }}>
+                          <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${sel ? "#000" : "var(--border)"}`, background: sel ? "#000" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            {sel && <span style={{ color: "#fff", fontSize: 9, fontWeight: 900 }}>✓</span>}
+                          </div>
+                          <div style={{ width: 30, height: 30, borderRadius: 9, background: "#f3f4f6", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#64748b", flexShrink: 0 }}>
+                            {(r.name || "?").charAt(0).toUpperCase()}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+                              {r.name} <span style={{ fontWeight: 400, color: "var(--text-muted)", fontSize: 11.5 }}>({r.role === "owner" ? "Super Admin" : "Sales Head"})</span>
+                            </div>
+                            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.email}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               )}
-            </div>
-          )}
 
-          {/* ── Recipients step ── */}
-          {step === "recipients" && (
-            <div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                <p style={{ margin: 0, fontSize: 12.5, fontWeight: 600, color: "var(--text-2)" }}>Who should receive this report?</p>
-                {recipients.length > 0 && (
-                  <button onClick={() => setSelectedEmails(recipients.map(r => r.email))}
-                    style={{ fontSize: 11, fontWeight: 700, color: "#6366F1", background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.2)", borderRadius: 6, padding: "3px 8px", cursor: "pointer" }}>
-                    Select All
-                  </button>
-                )}
-              </div>
-
-              {/* Chips */}
-              {selectedEmails.length > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 9 }}>
+              {/* Selected chips */}
+              {selectedEmails.length > 0 && !recipOpen && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
                   {selectedEmails.map(email => {
                     const r = recipients.find(x => x.email === email);
                     return (
-                      <div key={email} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px 3px 10px", background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: 20, fontSize: 11.5, fontWeight: 600, color: "#6366F1" }}>
-                        <span>{r ? r.name : email}</span>
-                        <button onClick={() => setSelectedEmails(s => s.filter(e => e !== email))}
-                          style={{ width: 14, height: 14, borderRadius: "50%", border: "none", background: "rgba(99,102,241,0.2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, color: "#6366F1" }}>
+                      <div key={email} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px 3px 10px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 20, fontSize: 11.5, fontWeight: 600, color: "#000" }}>
+                        {r?.name || email}
+                        <button onClick={() => setSelectedEmails(s => s.filter(e => e !== email))} style={{ width: 14, height: 14, borderRadius: "50%", border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
                           <X size={8} />
                         </button>
                       </div>
@@ -723,196 +1316,105 @@ function SendDSRModal({ onClose, viewableEmployees = [] }) {
                   })}
                 </div>
               )}
-
-              {/* Search */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 9, marginBottom: 7 }}>
-                <Search size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-                <input value={recipSearch} onChange={e => setRecipSearch(e.target.value)}
-                  placeholder="Search Super Admins & Sales Heads…"
-                  style={{ border: "none", outline: "none", background: "transparent", color: "var(--text)", fontSize: 12.5, flex: 1, minWidth: 0 }} />
-              </div>
-
-              {/* Recipient list */}
-              <div style={{ maxHeight: 260, overflowY: "auto" }} className="custom-scroll">
-                {recipients.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "24px 0" }}>
-                    <Loader2 size={20} style={{ animation: "spin 0.8s linear infinite", color: "#6366F1", margin: "0 auto 8px" }} />
-                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading recipients…</div>
-                  </div>
-                ) : filteredRecipients.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "16px 0", fontSize: 12, color: "var(--text-muted)" }}>
-                    {recipSearch ? "No recipients match your search" : "All recipients already selected"}
-                  </div>
-                ) : (
-                  filteredRecipients.map(r => {
-                    const rc = roleClr(r.role);
-                    return (
-                      <button key={r.email} onClick={() => setSelectedEmails(s => [...s, r.email])}
-                        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 9, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", marginBottom: 5, textAlign: "left", transition: "background 0.1s" }}
-                        onMouseEnter={e => e.currentTarget.style.background = "var(--surface-2)"}
-                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                        <div style={{ width: 32, height: 32, borderRadius: 9, background: rc + "18", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: rc, flexShrink: 0 }}>
-                          {(r.name || "?").charAt(0).toUpperCase()}
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{r.name}</div>
-                          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.email}</div>
-                        </div>
-                        <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: rc + "15", color: rc, whiteSpace: "nowrap", flexShrink: 0 }}>
-                          {rlabel(r.role)}
-                        </span>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
+              {selectedEmails.length === 0 && !recipOpen && (
+                <div style={{ fontSize: 11.5, color: "#EF4444", marginTop: 5 }}>At least one recipient is required</div>
+              )}
             </div>
-          )}
-
-          {/* ── Preview step ── */}
-          {step === "preview" && (
-            <div>
-              <p style={{ margin: "0 0 14px", fontSize: 12.5, fontWeight: 600, color: "var(--text-2)" }}>Review before sending</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                <div style={{ padding: "12px 14px", background: "var(--surface-2)", borderRadius: 11, border: "1px solid var(--border)" }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>Date Range</div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>{selectedPreset?.label}</div>
-                  {datePreset === "custom" && <div style={{ fontSize: 11.5, color: "var(--text-2)", marginTop: 3 }}>{customStart} → {customEnd}</div>}
-                </div>
-
-                {isOwnerOrHeadModal && (
-                  <div style={{ padding: "12px 14px", background: "var(--surface-2)", borderRadius: 11, border: "1px solid var(--border)" }}>
-                    <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>Employees Included</div>
-                    {selectedEmpIds.length === 0 ? (
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>Entire Team ({viewableEmployees.length} employees)</div>
-                    ) : (
-                      <>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{selectedEmpIds.length} employee{selectedEmpIds.length !== 1 ? "s" : ""}</div>
-                        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>{selectedEmpNames.join(", ")}</div>
-                      </>
-                    )}
-                  </div>
-                )}
-
-                <div style={{ padding: "12px 14px", background: "var(--surface-2)", borderRadius: 11, border: "1px solid var(--border)" }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>Send To</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{selectedEmails.length} recipient{selectedEmails.length !== 1 ? "s" : ""}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>{selectedRcpNames.join(", ")}</div>
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "10px 12px", background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.18)", borderRadius: 9, fontSize: 12, color: "var(--text-2)" }}>
-                  <FileText size={13} style={{ color: "#6366F1", flexShrink: 0 }} />
-                  <span>A professional A4 PDF will be generated and attached to the email.</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ── Sending ── */}
-          {step === "sending" && (
-            <div style={{ padding: "44px 24px", display: "flex", flexDirection: "column", alignItems: "center", gap: 22 }}>
-              <div style={{ position: "relative", width: 68, height: 68 }}>
-                <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.1, repeat: Infinity, ease: "linear" }}
-                  style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "3px solid transparent", borderTopColor: "#6366F1", borderRightColor: "#8B5CF6" }} />
-                <div style={{ position: "absolute", inset: 9, borderRadius: "50%", background: "rgba(99,102,241,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Send size={19} style={{ color: "#6366F1" }} />
-                </div>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 9, width: "100%", maxWidth: 290 }}>
-                {LOADING_MSGS.map((msg, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, opacity: i <= loadingStep ? 1 : 0.3, transition: "opacity 0.35s" }}>
-                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: i < loadingStep ? "#10B981" : i === loadingStep ? "#6366F1" : "var(--border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "background 0.3s" }}>
-                      {i < loadingStep ? (
-                        <span style={{ fontSize: 9, color: "#fff" }}>✓</span>
-                      ) : i === loadingStep ? (
-                        <motion.div animate={{ rotate: 360 }} transition={{ duration: 0.7, repeat: Infinity, ease: "linear" }}
-                          style={{ width: 9, height: 9, borderRadius: "50%", border: "2px solid transparent", borderTopColor: "#fff" }} />
-                      ) : (
-                        <span style={{ fontSize: 9, color: "var(--text-muted)", fontWeight: 700 }}>{i + 1}</span>
-                      )}
-                    </div>
-                    <span style={{ fontSize: 12.5, fontWeight: i === loadingStep ? 700 : 500, color: i === loadingStep ? "var(--text)" : "var(--text-muted)" }}>{msg}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ── Success ── */}
-          {step === "done" && (
-            <div style={{ padding: "44px 24px", display: "flex", flexDirection: "column", alignItems: "center", gap: 16, textAlign: "center" }}>
-              <motion.div initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 200, damping: 18 }}
-                style={{ width: 68, height: 68, borderRadius: "50%", background: "rgba(16,185,129,0.12)", border: "2px solid rgba(16,185,129,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <CheckCircle2 size={30} style={{ color: "#10B981" }} />
-              </motion.div>
-              <div>
-                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "var(--text)" }}>Report Sent!</h3>
-                <p style={{ margin: "5px 0 0", fontSize: 12.5, color: "var(--text-muted)" }}>
-                  Delivered to {result?.sent_to} recipient{result?.sent_to !== 1 ? "s" : ""} with PDF attached
-                </p>
-              </div>
-              <div style={{ fontSize: 12, color: "var(--text-2)", padding: "8px 14px", background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 9 }}>
-                ✓ PDF generated &nbsp;·&nbsp; ✓ Email delivered &nbsp;·&nbsp; ✓ Audit logged
-              </div>
-              <button onClick={onClose} style={{ padding: "9px 28px", borderRadius: 10, border: "none", background: "#10B981", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", marginTop: 4 }}>
-                Done
-              </button>
-            </div>
-          )}
-
-          {/* ── Error ── */}
-          {step === "error" && (
-            <div style={{ padding: "44px 24px", display: "flex", flexDirection: "column", alignItems: "center", gap: 16, textAlign: "center" }}>
-              <motion.div initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 200, damping: 18 }}
-                style={{ width: 68, height: 68, borderRadius: "50%", background: "rgba(239,68,68,0.1)", border: "2px solid rgba(239,68,68,0.22)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <AlertCircle size={30} style={{ color: "#EF4444" }} />
-              </motion.div>
-              <div>
-                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: "var(--text)" }}>Send Failed</h3>
-                <p style={{ margin: "5px 0 0", fontSize: 12.5, color: "var(--text-muted)", maxWidth: 320 }}>{result?.error}</p>
-              </div>
-              <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={() => setStep("preview")} style={{ padding: "9px 18px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-                  Back
-                </button>
-                <button onClick={handleSend} style={{ padding: "9px 20px", borderRadius: 10, border: "none", background: "#EF4444", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                  Retry
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Footer nav */}
-        {!isSpecialStep && (
-          <div style={{ padding: "14px 24px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-            {stepIndex > 0 ? (
-              <button onClick={goBack} style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 15px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
-                <ChevronLeft size={13} /> Back
-              </button>
-            ) : (
-              <button onClick={onClose} style={{ padding: "8px 15px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
-                Cancel
-              </button>
-            )}
-
-            {step === "preview" ? (
-              <button onClick={handleSend} disabled={!selectedEmails.length}
-                style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 22px", borderRadius: 10, border: "none", background: "#6366F1", color: "#fff", fontSize: 13, fontWeight: 700, cursor: !selectedEmails.length ? "not-allowed" : "pointer", opacity: !selectedEmails.length ? 0.5 : 1 }}>
-                <Send size={13} /> Send DSR
-              </button>
-            ) : (
-              <button onClick={goNext}
-                disabled={!dateValid && step === "date" || (step === "recipients" && selectedEmails.length === 0)}
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 22px", borderRadius: 10, border: "none", background: "#6366F1", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: ((!dateValid && step === "date") || (step === "recipients" && selectedEmails.length === 0)) ? 0.5 : 1 }}>
-                Next <ChevronRight size={13} />
-              </button>
-            )}
           </div>
-        )}
+
+          {/* RIGHT: summary + actions */}
+          <div style={{ flex: "0 0 42%", display: "flex", flexDirection: "column", padding: "28px 28px", background: "var(--surface-2)", overflowY: "auto" }} className="custom-scroll">
+            <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 20 }}>Report Summary</div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 11, marginBottom: "auto" }}>
+              {/* Report period card */}
+              <div style={{ padding: "16px 18px", background: "var(--surface)", borderRadius: 15, border: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Report Period</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 3 }}>{REPORT_TYPES.find(r => r.key === reportType)?.label}</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: dateValid ? "var(--text)" : "#EF4444", letterSpacing: "-0.01em" }}>{dateLabel}</div>
+                    {!dateValid && <div style={{ fontSize: 11, color: "#EF4444", marginTop: 4 }}>Invalid date range</div>}
+                  </div>
+                  <div style={{ width: 38, height: 38, borderRadius: 11, background: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Calendar size={17} style={{ color: "var(--text-muted)" }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Employees card (owner/head only) */}
+              {isOwnerOrHead && (
+                <div style={{ padding: "16px 18px", background: "var(--surface)", borderRadius: 15, border: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Employees</div>
+                  {selectedEmpIds.length === 0 ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 10, background: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <Users size={15} style={{ color: "var(--text-muted)" }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>All Team</div>
+                        <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{viewableEmployees.length} employees</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", marginBottom: 8 }}>{selectedEmpIds.length} Employee{selectedEmpIds.length !== 1 ? "s" : ""} Selected</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {viewableEmployees.filter(u => selectedEmpIds.includes(u.id)).map(u => (
+                          <span key={u.id} style={{ fontSize: 11, padding: "3px 8px", background: "#f3f4f6", color: "#000", borderRadius: 10, fontWeight: 600 }}>{u.full_name}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Recipients card */}
+              <div style={{ padding: "16px 18px", background: "var(--surface)", borderRadius: 15, border: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                  Recipients
+                  {selectedEmails.length > 0 && <span style={{ color: "var(--text-muted)", marginLeft: 5 }}>({selectedEmails.length})</span>}
+                </div>
+                {selectedEmails.length === 0 ? (
+                  <div style={{ fontSize: 13, color: "var(--text-muted)", fontStyle: "italic" }}>No recipients selected yet</div>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    {selectedEmails.map(email => {
+                      const r = recipients.find(x => x.email === email);
+                      const rc = r ? rcolor(r.role) : "#6366F1";
+                      return (
+                        <span key={email} style={{ fontSize: 11.5, padding: "3px 9px", background: "#f3f4f6", color: "#000", borderRadius: 11, fontWeight: 600 }}>
+                          {r ? `${r.name} (${r.role === "owner" ? "Super Admin" : "Sales Head"})` : email}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Info strip */}
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", background: "rgba(99,102,241,0.05)", border: "1px solid rgba(99,102,241,0.14)", borderRadius: 12 }}>
+                <FileText size={14} style={{ color: "#6366F1", flexShrink: 0, marginTop: 1 }} />
+                <span style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.6 }}>A professional A4 PDF will be generated and attached to the email. The report covers the selected employees and date range.</span>
+              </div>
+            </div>
+
+            {/* Action buttons — pinned to bottom */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 24, paddingTop: 24, borderTop: "1px solid var(--border)" }}>
+              <button onClick={handleSend} disabled={!canSend}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "16px 0", borderRadius: 14, border: canSend ? "1.5px solid #000" : "1.5px solid #d1d5db", background: "#fff", color: canSend ? "#000" : "#94a3b8", fontSize: 15, fontWeight: 700, cursor: !canSend ? "not-allowed" : "pointer", transition: "all 0.15s" }}>
+                <Send size={18} />
+                Send DSR Email
+              </button>
+              {!selectedEmails.length && (
+                <div style={{ textAlign: "center", fontSize: 12, color: "var(--text-muted)" }}>Select at least one recipient to send</div>
+              )}
+            </div>
+          </div>
+        </div>
       </motion.div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1039,6 +1541,305 @@ function DSREmailLogsPanel() {
         </div>
       )}
     </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   AUTO SCHEDULER MODAL  —  per-user daily auto email scheduler
+═══════════════════════════════════════════════════════════════════════ */
+const TIME_SLOTS = Array.from({ length: 48 }, (_, i) => {
+  const h24 = Math.floor(i / 2);
+  const m   = (i % 2) * 30;
+  const h12 = h24 % 12 || 12;
+  const ap  = h24 < 12 ? "AM" : "PM";
+  return `${String(h12).padStart(2, "0")}:${String(m).padStart(2, "0")} ${ap}`;
+});
+
+const SCHEDULER_REPORT_TYPES = [
+  { key: "daily",       label: "Daily"       },
+  { key: "weekly",      label: "Weekly"      },
+  { key: "monthly",     label: "Monthly"     },
+  { key: "quarterly",   label: "Quarterly"   },
+  { key: "half_yearly", label: "Half-Yearly" },
+  { key: "yearly",      label: "Yearly"      },
+];
+
+function AutoSchedulerModal({ onClose, viewableEmployees = [], currentUser = null }) {
+  const { user } = useAuth();
+  const scrollRef = useRef(null);
+
+  const selfRole   = (currentUser?.role || "").toLowerCase().replace(/[- ]/g, "_");
+  const isSelfOnly = !["owner", "sales_head"].includes(selfRole);
+
+  const [loading,    setLoading]    = useState(true);
+  const [saving,     setSaving]     = useState(false);
+  const [enabled,    setEnabled]    = useState(true);
+  const [reportType, setReportType] = useState("daily");
+  const [timeSlot,   setTimeSlot]   = useState("08:00 PM");
+  const [empIds,     setEmpIds]     = useState(isSelfOnly && currentUser?.id ? [currentUser.id] : []);
+  const [empOpen,    setEmpOpen]    = useState(false);
+  const [empSearch,  setEmpSearch]  = useState("");
+
+  const rlabel = r => r === "owner" ? "Super Admin" : r === "sales_head" ? "Sales Head" : r === "inside_sales" ? "Inside Sales" : (r || "").replace(/_/g, " ");
+  const rcolor = r => r === "owner" ? "#6366F1" : r === "sales_head" ? "#10B981" : "#3B82F6";
+
+  useLayoutEffect(() => {
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    const fn = e => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", fn);
+    return () => {
+      document.body.style.overflow = "";
+      document.documentElement.style.overflow = "";
+      window.removeEventListener("keydown", fn);
+    };
+  }, [onClose]);
+
+  // Load existing config only — recipient is always the logged-in user
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        const cfgRes = await fetch(`${API}/api/reports/scheduler`, { headers: { Authorization: `Bearer ${token}` } });
+        if (cfgRes.ok) {
+          const cfg = await cfgRes.json();
+          if (cfg) {
+            setEnabled(cfg.enabled);
+            setReportType(cfg.report_type || "daily");
+            setTimeSlot(cfg.time_slot || "08:00 PM");
+            setEmpIds(isSelfOnly && currentUser?.id ? [currentUser.id] : (cfg.employee_ids || []));
+          }
+        }
+      } catch { /* silently ignore */ }
+      finally { setLoading(false); }
+    })();
+  }, [user]);
+
+  const filteredEmps = useMemo(() => {
+    const q = empSearch.toLowerCase();
+    return viewableEmployees.filter(u => !q || (u.full_name || "").toLowerCase().includes(q) || (u.role || "").toLowerCase().includes(q));
+  }, [viewableEmployees, empSearch]);
+
+  const handleSave = async () => {
+    if (!timeSlot) return toast.error("Select a time slot");
+    setSaving(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`${API}/api/reports/scheduler`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          enabled,
+          report_type:  reportType,
+          employee_ids: isSelfOnly ? (currentUser?.id ? [currentUser.id] : []) : (empIds.length > 0 ? empIds : null),
+          time_slot:    timeSlot,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Save failed");
+      toast.success(enabled ? `Auto DSR scheduled at ${timeSlot} IST` : "Auto DSR scheduler disabled");
+      onClose();
+    } catch (err) {
+      toast.error(err.message || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const labelStyle   = { fontSize: 12, fontWeight: 700, color: "#000", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 };
+  const triggerStyle = (open, invalid) => ({ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 13px", borderRadius: 10, border: `1.5px solid ${open ? "#000" : invalid ? "#ef4444" : "#e2e8f0"}`, background: "#fff", color: "#000", fontSize: 13, cursor: "pointer", textAlign: "left", boxSizing: "border-box" });
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 99999, display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: "5vh", paddingBottom: "2vh" }}>
+      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(12px)" }} onClick={onClose} />
+      <motion.div
+        ref={scrollRef}
+        initial={{ opacity: 0, scale: 0.93, y: -16 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.93, y: -16 }}
+        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+        style={{ position: "relative", background: "#fff", borderRadius: 20, border: "1px solid #e2e8f0", width: "min(540px, 96vw)", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 32px 100px rgba(0,0,0,0.45)" }}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "22px 28px 18px", borderBottom: "1px solid #e2e8f0" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 11, background: "#f1f5f9", border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Bell size={20} style={{ color: "#000" }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 800, color: "#000" }}>Auto Email Scheduler</div>
+              <div style={{ fontSize: 12, color: "#64748b" }}>Configure daily automatic DSR email delivery</div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#64748b", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div style={{ padding: 60, textAlign: "center" }}>
+            <Loader2 size={28} style={{ animation: "spin 0.8s linear infinite", color: "#64748b", margin: "0 auto" }} />
+          </div>
+        ) : (
+          <div style={{ padding: "24px 28px", display: "flex", flexDirection: "column", gap: 22 }}>
+
+            {/* Enable / Disable toggle */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 18px", borderRadius: 12, border: "1.5px solid #e2e8f0", background: "#f8fafc" }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#000" }}>Auto Email {enabled ? "Enabled" : "Disabled"}</div>
+                <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{enabled ? "DSR will be sent automatically at the selected time" : "No emails will be sent automatically"}</div>
+              </div>
+              <button
+                onClick={() => setEnabled(v => !v)}
+                style={{ width: 48, height: 26, borderRadius: 13, border: "none", background: enabled ? "#000" : "#cbd5e1", cursor: "pointer", position: "relative", flexShrink: 0, transition: "background 0.2s" }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: enabled ? 25 : 3, transition: "left 0.2s", boxShadow: "0 1px 4px rgba(0,0,0,0.2)" }} />
+              </button>
+            </div>
+
+            {/* Report Type dropdown */}
+            <div>
+              <div style={labelStyle}>Report Type</div>
+              <div style={{ position: "relative" }}>
+                <select value={reportType} onChange={e => setReportType(e.target.value)}
+                  style={{ width: "100%", padding: "10px 36px 10px 13px", borderRadius: 10, border: "1.5px solid #d1d5db", background: "#fff", color: "#000", fontSize: 13, fontWeight: 600, cursor: "pointer", appearance: "none", WebkitAppearance: "none", outline: "none", boxSizing: "border-box" }}>
+                  {SCHEDULER_REPORT_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+                </select>
+                <ChevronDown size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#64748b", pointerEvents: "none" }} />
+              </div>
+            </div>
+
+            {/* Time Slot dropdown */}
+            <div>
+              <div style={labelStyle}>Send Time (IST)</div>
+              <div style={{ position: "relative" }}>
+                <select
+                  value={timeSlot}
+                  onChange={e => setTimeSlot(e.target.value)}
+                  style={{ width: "100%", padding: "10px 36px 10px 13px", borderRadius: 10, border: "1.5px solid #e2e8f0", background: "#fff", color: "#000", fontSize: 13, fontWeight: 600, cursor: "pointer", appearance: "none", WebkitAppearance: "none", outline: "none", boxSizing: "border-box" }}
+                >
+                  {TIME_SLOTS.map(slot => (
+                    <option key={slot} value={slot}>{slot}</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#64748b", pointerEvents: "none" }} />
+              </div>
+              <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 5 }}>Email will be sent once daily at this time</div>
+            </div>
+
+            {/* Employee Selection */}
+            {isSelfOnly ? (
+              <div>
+                <div style={labelStyle}>Employee</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", borderRadius: 10, border: "1.5px solid #e2e8f0", background: "#f8fafc" }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 8, background: rcolor(currentUser?.role), display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                    {(currentUser?.full_name || currentUser?.email || "?").charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#000" }}>{currentUser?.full_name || currentUser?.email || "You"}</div>
+                    <div style={{ fontSize: 11, color: "#64748b" }}>Your report only</div>
+                  </div>
+                  <Lock size={14} style={{ color: "#94a3b8" }} />
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div style={labelStyle}>Employees</div>
+                <button onClick={() => setEmpOpen(o => !o)} style={triggerStyle(empOpen, false)}>
+                  <span style={{ color: empIds.length === 0 ? "#64748b" : "#000", fontWeight: empIds.length > 0 ? 600 : 400 }}>
+                    {empIds.length === 0 ? `All Employees (${viewableEmployees.length} total)` : empIds.length === 1 ? (viewableEmployees.find(u => u.id === empIds[0])?.full_name || "1 employee") : `${empIds.length} employees selected`}
+                  </span>
+                  <ChevronDown size={14} style={{ color: "#64748b", flexShrink: 0, transform: empOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                </button>
+                {empOpen && (
+                  <div style={{ marginTop: 5, borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", overflow: "hidden", boxShadow: "0 6px 24px rgba(0,0,0,0.1)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #e2e8f0" }}>
+                      <Search size={13} style={{ color: "#94a3b8", flexShrink: 0 }} />
+                      <input autoFocus value={empSearch} onChange={e => setEmpSearch(e.target.value)} placeholder="Search…" style={{ border: "none", outline: "none", background: "transparent", color: "#000", fontSize: 13, flex: 1 }} />
+                      <button onClick={() => empIds.length === viewableEmployees.length ? setEmpIds([]) : setEmpIds(viewableEmployees.map(u => u.id))} style={{ fontSize: 11, fontWeight: 700, color: "#000", background: "transparent", border: "none", cursor: "pointer", whiteSpace: "nowrap" }}>
+                        {empIds.length === viewableEmployees.length ? "Deselect All" : "Select All"}
+                      </button>
+                    </div>
+                    <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                      <div onClick={() => setEmpIds([])} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", cursor: "pointer", background: empIds.length === 0 ? "#f3f4f6" : "transparent", borderBottom: "1px solid #e2e8f0" }}>
+                        <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${empIds.length === 0 ? "#000" : "#e2e8f0"}`, background: empIds.length === 0 ? "#000" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          {empIds.length === 0 && <span style={{ color: "#fff", fontSize: 9, fontWeight: 900 }}>✓</span>}
+                        </div>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: "#000" }}>All Employees</span>
+                        <span style={{ fontSize: 11, color: "#64748b", marginLeft: "auto" }}>{viewableEmployees.length} total</span>
+                      </div>
+                      {filteredEmps.map(u => {
+                        const sel = empIds.includes(u.id);
+                        return (
+                          <div key={u.id} onClick={() => setEmpIds(p => sel ? p.filter(x => x !== u.id) : [...p, u.id])}
+                            style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", cursor: "pointer", background: sel ? "rgba(0,0,0,0.03)" : "transparent", borderBottom: "1px solid #e2e8f0" }}>
+                            <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${sel ? "#000" : "#e2e8f0"}`, background: sel ? "#000" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                              {sel && <span style={{ color: "#fff", fontSize: 9, fontWeight: 900 }}>✓</span>}
+                            </div>
+                            <div style={{ width: 26, height: 26, borderRadius: 7, background: rcolor(u.role), display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#fff", flexShrink: 0 }}>{(u.full_name || "?").charAt(0).toUpperCase()}</div>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: "#000", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.full_name || u.email}</div>
+                              <div style={{ fontSize: 11, color: "#64748b" }}>{rlabel(u.role)}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {empIds.length > 0 && !empOpen && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
+                    {viewableEmployees.filter(u => empIds.includes(u.id)).map(u => (
+                      <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px 3px 10px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 20, fontSize: 11.5, fontWeight: 600, color: "#000" }}>
+                        {u.full_name}
+                        <button onClick={() => setEmpIds(p => p.filter(x => x !== u.id))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", color: "#64748b" }}><X size={8} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Recipient — always the logged-in user, not selectable */}
+            <div>
+              <div style={labelStyle}>Report Recipient</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", borderRadius: 10, border: "1.5px solid #e2e8f0", background: "#f8fafc" }}>
+                <div style={{ width: 30, height: 30, borderRadius: 8, background: "#000", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                  {(currentUser?.full_name || currentUser?.email || "?").charAt(0).toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#000", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {currentUser?.full_name || "You"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {currentUser?.email}
+                  </div>
+                </div>
+                <Lock size={14} style={{ color: "#94a3b8", flexShrink: 0 }} />
+              </div>
+              <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 5 }}>
+                DSR will always be sent to your own email address
+              </div>
+            </div>
+
+            {/* Save / Cancel */}
+            <div style={{ display: "flex", gap: 10, paddingTop: 4 }}>
+              <button onClick={onClose} style={{ flex: 1, padding: "13px 0", borderRadius: 12, border: "1.5px solid #000", background: "#fff", color: "#000", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                Cancel
+              </button>
+              <button onClick={handleSave} disabled={saving}
+                style={{ flex: 2, padding: "13px 0", borderRadius: 12, border: saving ? "1.5px solid #d1d5db" : "1.5px solid #000", background: "#fff", color: saving ? "#94a3b8" : "#000", fontSize: 14, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                {saving ? <Loader2 size={16} style={{ animation: "spin 0.8s linear infinite" }} /> : <Bell size={16} />}
+                {saving ? "Saving…" : enabled ? "Save & Enable" : "Save (Disabled)"}
+              </button>
+            </div>
+
+          </div>
+        )}
+      </motion.div>
+    </div>,
+    document.body
   );
 }
 
@@ -1179,6 +1980,349 @@ function DSRConfigModal({ onClose }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   INACTIVITY ALERT MODAL  —  owner/sales_head can configure per-user
+   automated alerts when employees are inactive for N+ days
+═══════════════════════════════════════════════════════════════════════ */
+const INACTIVITY_THRESHOLD_OPTIONS = [
+  { value: 3, label: "3 Days"  },
+  { value: 5, label: "5 Days"  },
+  { value: 7, label: "7 Days"  },
+  { value: 0, label: "Custom"  },
+];
+const INACTIVITY_FREQUENCY_OPTIONS = [
+  { value: "daily",   label: "Daily"   },
+  { value: "weekly",  label: "Weekly"  },
+  { value: "monthly", label: "Monthly" },
+];
+const INACTIVITY_FORMAT_OPTIONS = [
+  { value: "summary",  label: "Summary Report"  },
+  { value: "detailed", label: "Detailed Report" },
+];
+
+function InactivityAlertModal({ onClose }) {
+  const { user, profile } = useAuth();
+  const scrollRef = useRef(null);
+
+  const [loading,      setLoading]      = useState(true);
+  const [saving,       setSaving]       = useState(false);
+  const [enabled,      setEnabled]      = useState(true);
+  const [threshold,    setThreshold]    = useState(3);  // 3 | 5 | 7 | 0 (custom)
+  const [customDays,   setCustomDays]   = useState(3);
+  const [timeSlot,     setTimeSlot]     = useState("08:00 PM");
+  const [frequency,    setFrequency]    = useState("daily");
+  const [emailFormat,  setEmailFormat]  = useState("summary");
+  const [manualSending,setManualSending]= useState(false);
+  // Test-email-only recipient dropdown (separate from scheduled alert recipients)
+  const [testRecips, setTestRecips] = useState([]);
+  const [testSel,    setTestSel]    = useState([]);
+  const [testOpen,   setTestOpen]   = useState(false);
+  const [testSearch, setTestSearch] = useState("");
+
+  const rlabel = r => r === "owner" ? "Super Admin" : r === "sales_head" ? "Sales Head" : r === "sales_manager" ? "Sales Manager" : r === "inside_sales" ? "Inside Sales" : (r || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+  useLayoutEffect(() => {
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    const fn = e => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", fn);
+    return () => {
+      document.body.style.overflow = "";
+      document.documentElement.style.overflow = "";
+      window.removeEventListener("keydown", fn);
+    };
+  }, [onClose]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        const [cfgRes, recipRes] = await Promise.all([
+          fetch(`${API}/api/reports/inactivity-config`,          { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API}/api/reports/inactivity-test-recipients`, { headers: { Authorization: `Bearer ${token}` } }),
+        ]);
+        if (cfgRes.ok) {
+          const cfg = await cfgRes.json();
+          if (cfg) {
+            setEnabled(cfg.enabled);
+            const td = cfg.threshold_days || 3;
+            if ([3, 5, 7].includes(td)) { setThreshold(td); }
+            else { setThreshold(0); setCustomDays(td); }
+            setTimeSlot(cfg.time_slot || "08:00 PM");
+            setFrequency(cfg.frequency || "daily");
+            setEmailFormat(cfg.email_format || "summary");
+          }
+        }
+        if (recipRes.ok) {
+          setTestRecips(await recipRes.json());
+        }
+      } catch { /* silently ignore */ }
+      finally { setLoading(false); }
+    })();
+  }, [user]);
+
+  const filteredTest = useMemo(() => {
+    const q = testSearch.toLowerCase();
+    return testRecips.filter(r => !q || (r.name || "").toLowerCase().includes(q) || (r.email || "").toLowerCase().includes(q));
+  }, [testRecips, testSearch]);
+
+  const handleSave = async () => {
+    if (!timeSlot) return toast.error("Select a time slot");
+    const effectiveDays = threshold === 0 ? customDays : threshold;
+    if (!effectiveDays || effectiveDays < 1) return toast.error("Enter a valid number of days");
+    setSaving(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`${API}/api/reports/inactivity-config`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body:    JSON.stringify({
+          enabled,
+          threshold_days: effectiveDays,
+          time_slot:      timeSlot,
+          frequency,
+          email_format:   emailFormat,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Save failed");
+      toast.success(enabled ? `Inactivity alert enabled — sending at ${timeSlot} IST` : "Inactivity alert disabled");
+      onClose();
+    } catch (err) {
+      toast.error(err.message || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSendNow = async () => {
+    setTestOpen(false); // close dropdown first so button is visible
+    const effectiveDays = threshold === 0 ? customDays : threshold;
+    setManualSending(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`${API}/api/reports/inactivity-send-now`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body:    JSON.stringify({ threshold_days: effectiveDays, test_emails: testSel }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Send failed");
+      if (data.sent) {
+        toast.success(`Test email sent — ${data.inactive_count} inactive employee${data.inactive_count !== 1 ? "s" : ""} found`);
+      } else {
+        toast.success("Test email sent — no inactive employees found for this threshold (email delivered to confirm delivery)");
+      }
+    } catch (err) {
+      toast.error(err.message || "Failed to send test email");
+    } finally {
+      setManualSending(false);
+    }
+  };
+
+  const labelStyle   = { fontSize: 12, fontWeight: 700, color: "#000", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 };
+  const triggerStyle = (open, invalid) => ({ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 13px", borderRadius: 10, border: `1.5px solid ${open ? "#000" : invalid ? "#ef4444" : "#e2e8f0"}`, background: "#fff", color: "#000", fontSize: 13, cursor: "pointer", textAlign: "left", boxSizing: "border-box" });
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 99999, display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: "5vh", paddingBottom: "2vh" }}>
+      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(12px)" }} onClick={onClose} />
+      <motion.div
+        ref={scrollRef}
+        initial={{ opacity: 0, scale: 0.93, y: -16 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.93, y: -16 }}
+        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+        style={{ position: "relative", background: "#fff", borderRadius: 20, border: "1px solid #e2e8f0", width: "min(540px, 96vw)", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 32px 100px rgba(0,0,0,0.45)" }}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "22px 28px 18px", borderBottom: "1px solid #e2e8f0" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 11, background: "#f1f5f9", border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <AlertCircle size={20} style={{ color: "#000" }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 800, color: "#000" }}>Inactivity Alert</div>
+              <div style={{ fontSize: 12, color: "#64748b" }}>Alert admins when employees are inactive for N+ days</div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#64748b", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div style={{ padding: 60, textAlign: "center" }}>
+            <Loader2 size={28} style={{ animation: "spin 0.8s linear infinite", color: "#64748b", margin: "0 auto" }} />
+          </div>
+        ) : (
+          <div style={{ padding: "24px 28px", display: "flex", flexDirection: "column", gap: 22 }}>
+
+            {/* Enable / Disable toggle */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 18px", borderRadius: 12, border: "1.5px solid #e2e8f0", background: "#f8fafc" }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#000" }}>Inactivity Alert {enabled ? "Enabled" : "Disabled"}</div>
+                <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{enabled ? "Alert emails will be sent at the scheduled time" : "No alert emails will be sent"}</div>
+              </div>
+              <button onClick={() => setEnabled(v => !v)}
+                style={{ width: 48, height: 26, borderRadius: 13, border: "none", background: enabled ? "#000" : "#cbd5e1", cursor: "pointer", position: "relative", flexShrink: 0, transition: "background 0.2s" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: enabled ? 25 : 3, transition: "left 0.2s", boxShadow: "0 1px 4px rgba(0,0,0,0.2)" }} />
+              </button>
+            </div>
+
+            {/* Inactivity Threshold */}
+            <div>
+              <div style={labelStyle}>Inactivity Threshold</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {INACTIVITY_THRESHOLD_OPTIONS.map(opt => (
+                  <button key={opt.value} onClick={() => setThreshold(opt.value)}
+                    style={{ flex: 1, padding: "9px 4px", borderRadius: 9, border: `1.5px solid ${threshold === opt.value ? "#000" : "#e2e8f0"}`, background: threshold === opt.value ? "#000" : "#fff", color: threshold === opt.value ? "#fff" : "#64748b", fontSize: 12.5, fontWeight: 700, cursor: "pointer", textAlign: "center", transition: "all 0.12s" }}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {threshold === 0 && (
+                <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
+                  <input
+                    type="number" min={1} max={90} value={customDays}
+                    onChange={e => setCustomDays(Math.max(1, parseInt(e.target.value) || 1))}
+                    style={{ width: 90, padding: "9px 12px", borderRadius: 9, border: "1.5px solid #d1d5db", background: "#fff", color: "#000", fontSize: 13, fontWeight: 600, outline: "none", boxSizing: "border-box" }}
+                  />
+                  <span style={{ fontSize: 13, color: "#64748b", fontWeight: 500 }}>consecutive days</span>
+                </div>
+              )}
+              <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 7 }}>
+                Employees with no login or CRM activity for this many consecutive days will be included in the alert
+              </div>
+            </div>
+
+            {/* Alert Time */}
+            <div>
+              <div style={labelStyle}>Alert Delivery Time (IST)</div>
+              <div style={{ position: "relative" }}>
+                <select value={timeSlot} onChange={e => setTimeSlot(e.target.value)}
+                  style={{ width: "100%", padding: "10px 36px 10px 13px", borderRadius: 10, border: "1.5px solid #e2e8f0", background: "#fff", color: "#000", fontSize: 13, fontWeight: 600, cursor: "pointer", appearance: "none", WebkitAppearance: "none", outline: "none", boxSizing: "border-box" }}>
+                  {TIME_SLOTS.map(slot => <option key={slot} value={slot}>{slot}</option>)}
+                </select>
+                <ChevronDown size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#64748b", pointerEvents: "none" }} />
+              </div>
+            </div>
+
+            {/* Alert Frequency */}
+            <div>
+              <div style={labelStyle}>Alert Frequency</div>
+              <div style={{ position: "relative" }}>
+                <select value={frequency} onChange={e => setFrequency(e.target.value)}
+                  style={{ width: "100%", padding: "10px 36px 10px 13px", borderRadius: 10, border: "1.5px solid #d1d5db", background: "#fff", color: "#000", fontSize: 13, fontWeight: 600, cursor: "pointer", appearance: "none", WebkitAppearance: "none", outline: "none", boxSizing: "border-box" }}>
+                  {INACTIVITY_FREQUENCY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+                <ChevronDown size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#64748b", pointerEvents: "none" }} />
+              </div>
+              <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 5 }}>
+                {frequency === "weekly" ? "Alert runs every Monday at the selected time" : frequency === "monthly" ? "Alert runs on the 1st of each month at the selected time" : "Alert runs every day at the selected time"}
+              </div>
+            </div>
+
+            {/* Email Format */}
+            <div>
+              <div style={labelStyle}>Email Format</div>
+              <div style={{ position: "relative" }}>
+                <select value={emailFormat} onChange={e => setEmailFormat(e.target.value)}
+                  style={{ width: "100%", padding: "10px 36px 10px 13px", borderRadius: 10, border: "1.5px solid #d1d5db", background: "#fff", color: "#000", fontSize: 13, fontWeight: 600, cursor: "pointer", appearance: "none", WebkitAppearance: "none", outline: "none", boxSizing: "border-box" }}>
+                  {INACTIVITY_FORMAT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+                <ChevronDown size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#64748b", pointerEvents: "none" }} />
+              </div>
+            </div>
+
+            {/* Save / Cancel */}
+            <div style={{ display: "flex", gap: 10, paddingTop: 4 }}>
+              <button onClick={onClose} style={{ flex: 1, padding: "13px 0", borderRadius: 12, border: "1.5px solid #000", background: "#fff", color: "#000", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                Cancel
+              </button>
+              <button onClick={handleSave} disabled={saving}
+                style={{ flex: 2, padding: "13px 0", borderRadius: 12, border: saving ? "1.5px solid #d1d5db" : "1.5px solid #000", background: "#fff", color: saving ? "#94a3b8" : "#000", fontSize: 14, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                {saving ? <Loader2 size={16} style={{ animation: "spin 0.8s linear infinite" }} /> : <AlertCircle size={16} />}
+                {saving ? "Saving…" : enabled ? "Save & Enable" : "Save (Disabled)"}
+              </button>
+            </div>
+
+            {/* Send Test Email */}
+            <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 18 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#000", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Send Test Email</div>
+              <div style={{ fontSize: 11.5, color: "#64748b", marginBottom: 12 }}>
+                Select one or more recipients below and send the inactivity alert immediately using the configured threshold.
+              </div>
+
+              {/* Test recipient selector */}
+              <div style={{ marginBottom: 12 }}>
+                <button onClick={() => setTestOpen(o => !o)}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 13px", borderRadius: 10, border: `1.5px solid ${testOpen ? "#000" : "#e2e8f0"}`, background: "#fff", color: "#000", fontSize: 13, cursor: "pointer", textAlign: "left", boxSizing: "border-box" }}>
+                  <span style={{ color: testSel.length === 0 ? "#94a3b8" : "#000", fontWeight: testSel.length > 0 ? 600 : 400 }}>
+                    {testSel.length === 0 ? "Select recipients…" : testSel.length === 1 ? (testRecips.find(r => r.email === testSel[0])?.name || testSel[0]) : `${testSel.length} recipients selected`}
+                  </span>
+                  <ChevronDown size={14} style={{ color: "#64748b", flexShrink: 0, transform: testOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                </button>
+                {testOpen && (
+                  <div style={{ marginTop: 4, borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", overflow: "hidden", boxShadow: "0 6px 24px rgba(0,0,0,0.1)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #e2e8f0" }}>
+                      <Search size={13} style={{ color: "#94a3b8", flexShrink: 0 }} />
+                      <input autoFocus value={testSearch} onChange={e => setTestSearch(e.target.value)} placeholder="Search by name or email…" style={{ border: "none", outline: "none", background: "transparent", color: "#000", fontSize: 13, flex: 1 }} />
+                      {testSel.length > 0 && (
+                        <button onClick={() => setTestSel([])} style={{ fontSize: 11, fontWeight: 700, color: "#000", background: "transparent", border: "none", cursor: "pointer", whiteSpace: "nowrap" }}>Clear</button>
+                      )}
+                    </div>
+                    <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                      {filteredTest.length === 0 ? (
+                        <div style={{ padding: 20, textAlign: "center", fontSize: 13, color: "#64748b" }}>{testRecips.length === 0 ? "Loading…" : "No match"}</div>
+                      ) : filteredTest.map((r, idx) => {
+                        const sel = testSel.includes(r.email);
+                        return (
+                          <div key={r.email} onClick={() => { setTestSel(s => sel ? s.filter(e => e !== r.email) : [...s, r.email]); }}
+                            style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", cursor: "pointer", background: sel ? "rgba(0,0,0,0.03)" : "transparent", borderBottom: idx < filteredTest.length - 1 ? "1px solid #e2e8f0" : "none" }}>
+                            <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${sel ? "#000" : "#e2e8f0"}`, background: sel ? "#000" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                              {sel && <span style={{ color: "#fff", fontSize: 9, fontWeight: 900 }}>✓</span>}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: "#000" }}>{r.name}</div>
+                              <div style={{ fontSize: 11, color: "#64748b" }}>{r.email} · {rlabel(r.role)}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {testSel.length > 0 && !testOpen && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
+                    {testSel.map(email => {
+                      const r = testRecips.find(x => x.email === email);
+                      return (
+                        <div key={email} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px 3px 10px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 20, fontSize: 11.5, fontWeight: 600, color: "#000" }}>
+                          {r?.name || email}
+                          <button onClick={() => setTestSel(s => s.filter(e => e !== email))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", color: "#64748b" }}><X size={8} /></button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <button onClick={handleSendNow} disabled={manualSending || testSel.length === 0}
+                style={{ width: "100%", padding: "11px 0", borderRadius: 10, border: (manualSending || testSel.length === 0) ? "1.5px solid #d1d5db" : "1.5px solid #000", background: "#fff", color: (manualSending || testSel.length === 0) ? "#94a3b8" : "#000", fontSize: 13, fontWeight: 700, cursor: (manualSending || testSel.length === 0) ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                {manualSending ? <Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} /> : <Send size={14} />}
+                {manualSending ? "Sending…" : testSel.length === 0 ? "Select recipients to send" : `Send Test Email to ${testSel.length} recipient${testSel.length !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+
+          </div>
+        )}
+      </motion.div>
+    </div>,
+    document.body
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    MAIN PAGE
 ═══════════════════════════════════════════════════════════════════════ */
 export default function DSRPage() {
@@ -1192,8 +2336,10 @@ export default function DSRPage() {
   const isOwnerOrHead = ["owner", "sales_head"].includes(normRole);
   const isOwner       = normRole === "owner";
 
-  const [dsrModalOpen, setDsrModalOpen]     = useState(false);
-  const [dsrConfigOpen, setDsrConfigOpen]   = useState(false);
+  const [dsrModalOpen,         setDsrModalOpen]         = useState(false);
+  const [dsrDownloadOpen,      setDsrDownloadOpen]      = useState(false);
+  const [schedulerOpen,        setSchedulerOpen]        = useState(false);
+  const [inactivityAlertOpen,  setInactivityAlertOpen]  = useState(false);
   const [activeTab, setActiveTab]           = useState("overview");
   const [range, setRange]                   = useState("daily");
   const [selectedDate, setSelectedDate]     = useState(new Date());
@@ -1558,21 +2704,38 @@ export default function DSRPage() {
             <Printer size={13} /> Print
           </button>
 
-          {isOwnerOrHead && (
+          {(isOwnerOrHead || normRole === "inside_sales") && (
+            <>
+              <button
+                onClick={() => setDsrModalOpen(true)}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 9, border: "1.5px solid #000", background: "#fff", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+              >
+                <Send size={13} /> Send DSR
+              </button>
+              <button
+                onClick={() => setDsrDownloadOpen(true)}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 9, border: "1.5px solid #000", background: "#fff", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+              >
+                <Download size={13} /> Download DSR
+              </button>
+            </>
+          )}
+          {(isOwnerOrHead || normRole === "inside_sales") && (
             <button
-              onClick={() => setDsrModalOpen(true)}
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 9, border: "1px solid rgba(99,102,241,0.35)", background: "rgba(99,102,241,0.08)", color: "#6366F1", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+              onClick={() => setSchedulerOpen(true)}
+              title="Auto Email Scheduler"
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 9, border: "1.5px solid #000", background: "#fff", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
             >
-              <Send size={13} /> Send DSR
+              <Bell size={13} /> Auto Schedule
             </button>
           )}
-          {isOwner && (
+          {isOwnerOrHead && (
             <button
-              onClick={() => setDsrConfigOpen(true)}
-              title="Configure auto DSR recipients"
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)", fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}
+              onClick={() => setInactivityAlertOpen(true)}
+              title="Employee Inactivity Alert"
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 9, border: "1.5px solid #000", background: "#fff", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
             >
-              <Settings size={13} /> Configure
+              <AlertCircle size={13} /> Inactivity Alert
             </button>
           )}
 
@@ -2376,12 +3539,22 @@ export default function DSRPage() {
 
       {/* ── Send DSR Modal ── */}
       <AnimatePresence>
-        {dsrModalOpen && <SendDSRModal onClose={() => setDsrModalOpen(false)} viewableEmployees={viewableUsers} />}
+        {dsrModalOpen && <SendDSRModal onClose={() => setDsrModalOpen(false)} viewableEmployees={viewableUsers} currentUser={profile} />}
       </AnimatePresence>
 
-      {/* ── DSR Config Modal (owner only) ── */}
+      {/* ── Download DSR Modal ── */}
       <AnimatePresence>
-        {dsrConfigOpen && <DSRConfigModal onClose={() => setDsrConfigOpen(false)} />}
+        {dsrDownloadOpen && <DownloadDSRModal onClose={() => setDsrDownloadOpen(false)} viewableEmployees={viewableUsers} currentUser={profile} />}
+      </AnimatePresence>
+
+      {/* ── Auto Scheduler Modal ── */}
+      <AnimatePresence>
+        {schedulerOpen && <AutoSchedulerModal onClose={() => setSchedulerOpen(false)} viewableEmployees={viewableUsers} currentUser={profile} />}
+      </AnimatePresence>
+
+      {/* ── Inactivity Alert Modal ── */}
+      <AnimatePresence>
+        {inactivityAlertOpen && <InactivityAlertModal onClose={() => setInactivityAlertOpen(false)} />}
       </AnimatePresence>
     </div>
   );

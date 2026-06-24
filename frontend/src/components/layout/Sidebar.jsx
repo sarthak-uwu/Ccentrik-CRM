@@ -45,7 +45,7 @@ const NAV = [
   {
     section: "INTELLIGENCE",
     items: [
-      { to: "/ai-assistant", icon: Brain, label: "AI Command", highlight: true },
+      { to: "/ai-assistant", icon: Brain, label: "Ccentrik AI", highlight: true },
     ],
   },
 ];

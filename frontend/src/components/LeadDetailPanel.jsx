@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { countryName } from "../constants/countries";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -9,7 +10,6 @@ import { supabase } from "../supabaseClient";
 import { auth } from "../firebase";
 import toast from "react-hot-toast";
 import { SourceBadge, LinkedinIcon } from "./SourceBadge";
-import EmailComposerModal from "./EmailComposerModal";
 
 const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
 import {
@@ -601,10 +601,11 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
   const { profile, isSalesHead } = useAuth();
   const qc          = useQueryClient();
   const [activeTab, setActiveTab] = useState("details");
-  const [emailComposer, setEmailComposer] = useState(null);
+  const navigate = useNavigate();
 
-  const openComposer  = (to, toName = "") => setEmailComposer({ to, toName });
-  const closeComposer = () => setEmailComposer(null);
+  const openComposer = (to, toName = "") => navigate("/activities", {
+    state: { openEmail: { to, toName, recordId: lead?.id, recordType: "lead", recordName: [lead?.contact_name, lead?.company_name].filter(Boolean).join(" / ") } },
+  });
 
   const extra          = parseJSON(lead?.other_notes);
   const contactLocked  = !!extra.contact_locked;
@@ -708,17 +709,6 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
 
   return (
     <>
-    {emailComposer && (
-      <EmailComposerModal
-        to={emailComposer.to}
-        toName={emailComposer.toName}
-        leadId={lead?.id}
-        assignedTo={lead?.assigned_to}
-        recordName={[lead?.contact_name, lead?.company_name].filter(Boolean).join(" / ")}
-        onClose={closeComposer}
-        onSent={() => qc.invalidateQueries({ queryKey: ["lead-timeline", lead?.id] })}
-      />
-    )}
     <AnimatePresence>
       <motion.div key="panel-backdrop"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}

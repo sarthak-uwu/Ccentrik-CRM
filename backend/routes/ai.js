@@ -1,10 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const Groq = require("groq-sdk");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { supabase } = require("../config/db");
 const { authenticate } = require("../middleware/auth");
 
-const MODEL = "llama-3.3-70b-versatile";
+const GEMINI_MODEL = "gemini-1.5-flash";
 
 // Server-side per-user conversation history (capped at 12 messages)
 const conversationHistory = {};
@@ -38,9 +38,9 @@ async function getCRMContext(profile) {
 
   const [leads, deals, tasks] = await Promise.all([leadsQ, dealsQ, tasksQ]);
 
-  const leadsData   = leads.data  || [];
-  const dealsData   = deals.data  || [];
-  const tasksData   = tasks.data  || [];
+  const leadsData = leads.data  || [];
+  const dealsData = deals.data  || [];
+  const tasksData = tasks.data  || [];
 
   const stageCounts = leadsData.reduce((acc, l) => { acc[l.stage] = (acc[l.stage] || 0) + 1; return acc; }, {});
   const tempCounts  = leadsData.reduce((acc, l) => { acc[l.temperature] = (acc[l.temperature] || 0) + 1; return acc; }, {});
@@ -104,39 +104,30 @@ async function executeAction(action, profile) {
   return { error: `Unknown action type: ${type}` };
 }
 
-// POST /api/ai/chat
-router.post("/chat", authenticate, async (req, res) => {
-  const { message } = req.body;
-  if (!message) return res.status(400).json({ error: "Message is required" });
+function buildSystemPrompt(profile, crmContext) {
+  return `You are ARIA — the AI Executive Assistant embedded in Ccentrik CRM, an enterprise sales platform used by the Indian sales team.
 
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey || apiKey === "your-groq-api-key-here") {
-    return res.status(503).json({ error: "Groq API key not configured. Add GROQ_API_KEY to backend/.env" });
-  }
+IDENTITY:
+- Full name: ARIA (AI Revenue Intelligence Assistant)
+- You are a highly trained executive assistant and sales strategist, not a chatbot
+- Personality: Professional, warm, intelligent, direct, action-oriented — like a trusted senior business partner
+- You speak naturally. Never sound robotic or generic.
 
-  const groq = new Groq({ apiKey });
-  const userId = req.profile.id;
+USER CONTEXT:
+- Name: ${profile.full_name}
+- Role: ${profile.role}
+- Date: ${new Date().toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
 
-  // Initialise server-side conversation history for this user
-  if (!conversationHistory[userId]) {
-    conversationHistory[userId] = [];
-  }
+HOW TO COMMUNICATE:
+- Address user by first name naturally — not every message, but enough to feel personal
+- Be concise and direct. Sales professionals are busy.
+- Use bullet points for lists. **Bold** company names and key numbers.
+- Always close with a clear recommended next action
+- Indian number format: ₹, Lakh, Crore
+- If user writes in Hindi or Hinglish, respond in the same language naturally
 
-  try {
-    const crmContext = await getCRMContext(req.profile);
-
-    const systemPrompt = `You are an intelligent AI assistant for Ccentrik CRM, used by CCENTRIK Infotech Pvt Ltd.
-You have live access to CRM data and help the sales team with:
-- Summarizing leads, deals, tasks, and pipeline status
-- Suggesting follow-up actions for hot/warm leads
-- Drafting emails or call scripts
-- Creating leads, logging activities, or updating lead status on request
-- Sales coaching and best practices
-
-User: ${req.profile.full_name} | Role: ${req.profile.role}
-Be concise, professional, and actionable. Use bullet points for lists. Format currency with ₹.
-
-When the user asks you to CREATE a lead, LOG an activity, or UPDATE a lead status — include a JSON action block at the end of your response in this exact format (and ONLY when an action is explicitly requested):
+WHEN PROPOSING CRM ACTIONS:
+If the user explicitly asks to CREATE a lead, LOG an activity, or UPDATE a lead status — include a JSON action block at the end of your response:
 \`\`\`action
 {"type":"create_lead","payload":{"contact_name":"...","company_name":"...","stage":"new","temperature":"warm","priority":"medium","source":"manual","budget":0}}
 \`\`\`
@@ -149,28 +140,63 @@ or
 {"type":"update_lead_status","payload":{"lead_id":"<uuid>","stage":"...","temperature":"..."}}
 \`\`\`
 
+CRITICAL RULES:
+- NEVER make up CRM data. Only reference the snapshot below.
+- If you don't have data for something, say so honestly.
+- Be proactive: if you spot a risk or opportunity in the data, mention it.
+- Sound like you genuinely care about the user's success.
+
 LIVE CRM DATA:
 ${crmContext}`;
+}
 
-    // Append user message to server-side history
+// POST /api/ai/chat
+router.post("/chat", authenticate, async (req, res) => {
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ error: "Message is required" });
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === "your-gemini-api-key-here") {
+    return res.status(503).json({ error: "Gemini API key not configured. Add GEMINI_API_KEY to backend/.env" });
+  }
+
+  const userId = req.profile.id;
+  if (!conversationHistory[userId]) conversationHistory[userId] = [];
+
+  try {
+    const crmContext = await getCRMContext(req.profile);
+    const systemPrompt = buildSystemPrompt(req.profile, crmContext);
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: GEMINI_MODEL,
+      systemInstruction: systemPrompt,
+    });
+
+    // Append user message
     conversationHistory[userId].push({ role: "user", content: message });
-
-    // Trim to last 12 messages
     if (conversationHistory[userId].length > 12) {
       conversationHistory[userId] = conversationHistory[userId].slice(-12);
     }
 
-    const response = await groq.chat.completions.create({
-      model: MODEL,
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...conversationHistory[userId],
-      ],
-      max_tokens: 1024,
-      temperature: 0.6,
+    // Convert history to Gemini format — must alternate user/model, starting with user
+    const geminiHistory = [];
+    let prevRole = null;
+    for (const msg of conversationHistory[userId].slice(0, -1)) {
+      const gRole = msg.role === "assistant" ? "model" : "user";
+      if (geminiHistory.length === 0 && gRole === "model") continue;
+      if (gRole === prevRole) continue;
+      geminiHistory.push({ role: gRole, parts: [{ text: msg.content }] });
+      prevRole = gRole;
+    }
+
+    const chat = model.startChat({
+      history: geminiHistory,
+      generationConfig: { temperature: 0.6, maxOutputTokens: 1024 },
     });
 
-    let reply = response.choices[0].message.content;
+    const result = await chat.sendMessage(message);
+    let reply = result.response.text();
     let actionResult = null;
 
     // Parse and execute embedded action block
@@ -180,18 +206,15 @@ ${crmContext}`;
         const action = JSON.parse(actionMatch[1].trim());
         actionResult = await executeAction(action, req.profile);
         reply = reply.replace(/```action[\s\S]*?```/, "").trim();
-      } catch {
-        // malformed action block — ignore
-      }
+      } catch { /* malformed action block — ignore */ }
     }
 
-    // Append assistant reply to server-side history
     conversationHistory[userId].push({ role: "assistant", content: reply });
 
-    res.json({ reply, model: MODEL, action: actionResult });
+    res.json({ reply, model: GEMINI_MODEL, action: actionResult });
   } catch (err) {
-    console.error("Groq AI error:", err?.error || err.message);
-    res.status(500).json({ error: err?.error?.message || err.message });
+    console.error("Gemini AI error:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

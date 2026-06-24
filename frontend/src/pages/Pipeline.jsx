@@ -1918,7 +1918,7 @@ export default function Pipeline() {
         {/* Source dropdown filter */}
         <select
           className="crm-input"
-          style={{ height: 34, fontSize: 12, minWidth: 120, maxWidth: 150 }}
+          style={{ height: 34, fontSize: 12, width: "auto", minWidth: 0, paddingLeft: 10, paddingRight: 28 }}
           value={filterSource.length === 1 ? filterSource[0] : ""}
           onChange={(e) => setFilterSource(e.target.value ? [e.target.value] : [])}
           title="Filter by Source"
@@ -2095,7 +2095,7 @@ export default function Pipeline() {
                           )}
                           {visibleCols.includes("id") && (
                           <td style={{ whiteSpace: "nowrap" }}>
-                            <span style={{ fontSize: 11, fontWeight: 800, color: "#6366F1", fontFamily: "monospace", background: "rgba(99,102,241,0.08)", padding: "2px 7px", borderRadius: 5, border: "1px solid rgba(99,102,241,0.2)" }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)", fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", letterSpacing: "0.01em" }}>
                               {fmtCode(e.lead_code)}
                             </span>
                           </td>
@@ -2130,7 +2130,7 @@ export default function Pipeline() {
                           {visibleCols.includes("industry") && (
                           <td>
                             {extra.industry ? (
-                              <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 12, background: "var(--accent-light)", color: "var(--accent)", fontWeight: 600 }}>{extra.industry}</span>
+                              <span style={{ fontSize: 12.5, color: "var(--text-2)", fontWeight: 500 }}>{extra.industry}</span>
                             ) : <span style={{ color: "var(--text-muted)" }}>—</span>}
                           </td>
                           )}
@@ -2158,14 +2158,14 @@ export default function Pipeline() {
                             const srcLabel = src ? (LEAD_SOURCES.find(s => s.key === src)?.label || src) : "— Source —";
                             return (
                               <td onClick={(ev) => ev.stopPropagation()}>
-                                <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 99, background: src ? `${srcColor}12` : "var(--surface-2)", border: src ? `1px solid ${srcColor}28` : "1px solid var(--border)", width: "fit-content" }}>
+                                <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                                   {SrcIcon && <span style={{ display: "inline-flex", color: srcColor, flexShrink: 0 }}><SrcIcon size={13} /></span>}
                                   <span style={{ display: "inline-grid" }}>
-                                    <span style={{ gridArea: "1/1", fontSize: 11, fontWeight: 700, visibility: "hidden", whiteSpace: "nowrap", pointerEvents: "none", userSelect: "none", paddingRight: 2 }}>{srcLabel}</span>
+                                    <span style={{ gridArea: "1/1", fontSize: 11, fontWeight: 600, visibility: "hidden", whiteSpace: "nowrap", pointerEvents: "none", userSelect: "none", paddingRight: 2 }}>{srcLabel}</span>
                                     <select
                                       value={src}
                                       onChange={(ev) => handleInlineUpdate(e.id, "source", ev.target.value || null)}
-                                      style={{ gridArea: "1/1", width: "100%", appearance: "none", WebkitAppearance: "none", MozAppearance: "none", fontSize: 11, fontWeight: 700, border: "none", padding: 0, background: "transparent", color: src ? srcColor : "var(--text-muted)", cursor: "pointer", fontFamily: "inherit", outline: "none" }}
+                                      style={{ gridArea: "1/1", width: "100%", appearance: "none", WebkitAppearance: "none", MozAppearance: "none", fontSize: 11, fontWeight: 600, border: "none", padding: 0, background: "transparent", color: src ? srcColor : "var(--text-muted)", cursor: "pointer", fontFamily: "inherit", outline: "none" }}
                                     >
                                       <option value="">— Source —</option>
                                       {LEAD_SOURCES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
@@ -2204,13 +2204,16 @@ export default function Pipeline() {
                             const stg = PIPELINE_STAGES.find(s => s.key === (e.pipeline_stage || "new_prospect")) || PIPELINE_STAGES[0];
                             return (
                               <td onClick={(ev) => ev.stopPropagation()}>
-                                <select
-                                  value={e.pipeline_stage || "new_prospect"}
-                                  onChange={(ev) => handleInlineUpdate(e.id, "pipeline_stage", ev.target.value)}
-                                  style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", fontSize: 11, fontWeight: 700, border: `1px solid ${stg.color}30`, borderRadius: 99, padding: "3px 11px", background: `${stg.color}14`, color: stg.color, cursor: "pointer", fontFamily: "inherit", outline: "none" }}
-                                >
-                                  {PIPELINE_STAGES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-                                </select>
+                                <span style={{ display: "inline-grid" }}>
+                                  <span style={{ gridArea: "1/1", fontSize: 11, fontWeight: 700, visibility: "hidden", whiteSpace: "nowrap", pointerEvents: "none", userSelect: "none", paddingRight: 2 }}>{stg.label}</span>
+                                  <select
+                                    value={e.pipeline_stage || "new_prospect"}
+                                    onChange={(ev) => handleInlineUpdate(e.id, "pipeline_stage", ev.target.value)}
+                                    style={{ gridArea: "1/1", width: "100%", appearance: "none", WebkitAppearance: "none", MozAppearance: "none", fontSize: 11, fontWeight: 700, border: "none", padding: 0, background: "transparent", color: stg.color, cursor: "pointer", fontFamily: "inherit", outline: "none" }}
+                                  >
+                                    {PIPELINE_STAGES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+                                  </select>
+                                </span>
                               </td>
                             );
                           })()}
@@ -2223,8 +2226,7 @@ export default function Pipeline() {
                                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                                   {e.assigned_profile ? (
                                     <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                                      <Avatar name={e.assigned_profile.full_name} avatarUrl={e.assigned_profile.avatar_url} size={20} />
-                                      <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>{e.assigned_profile.full_name}</span>
+                                      <span style={{ fontSize: 12.5, color: "var(--text-2)", fontWeight: 500 }}>{e.assigned_profile.full_name}</span>
                                       {(e.assigned_to === profile?.id || e.created_by === profile?.id) && (
                                         <span style={{ fontSize: 9.5, fontWeight: 700, padding: "1px 6px", borderRadius: 6, background: "#EDE9FE", color: "#7C3AED", border: "1px solid rgba(124,58,237,0.25)" }}>Mine</span>
                                       )}
