@@ -105,8 +105,8 @@ function startCronJobs() {
     }
   });
 
-  // Daily at 14:30 UTC (8:00 PM IST) — automated DSR to Super Admin
-  cron.schedule("30 14 * * *", async () => {
+  // Daily at 15:30 UTC (9:00 PM IST) — automated DSR to Super Admin
+  cron.schedule("30 15 * * *", async () => {
     console.log("[CRON] Running daily DSR report...");
     try {
       await sendAutomatedDSR();
@@ -359,7 +359,7 @@ async function sendAutomatedDSR() {
   const todayIST    = new Date(now.getTime() + istOffsetMs);
   const dateStr     = todayIST.toISOString().split("T")[0];
   const dayStart    = new Date(`${dateStr}T00:00:00+05:30`).toISOString();
-  const dayEnd      = new Date(`${dateStr}T20:00:00+05:30`).toISOString();
+  const dayEnd      = new Date(`${dateStr}T21:00:00+05:30`).toISOString();
 
   const reportDate = todayIST.toLocaleDateString("en-IN", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",

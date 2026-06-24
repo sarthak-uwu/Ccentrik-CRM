@@ -15,7 +15,7 @@
   "crons": [
     {
       "path": "/api/reports/auto-dsr-cron",
-      "schedule": "30 14 * * *"
+      "schedule": "30 15 * * *"
     }
   ]
 }
