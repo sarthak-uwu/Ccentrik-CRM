@@ -7,7 +7,7 @@ import {
   ChevronDown, Settings, LogOut, Menu,
   Shield, Bell, CheckSquare, Clock, Users, Calendar, X,
   CalendarCheck, MessageSquare, Briefcase, Target, CheckCheck, Trash2,
-  Sun, Moon, Monitor, Activity, AlertCircle, Building2,
+  Sun, Moon, Monitor, Activity, AlertCircle, Building2, Brain,
 } from "lucide-react";
 import { supabase } from "../../supabaseClient";
 import { notificationsService } from "../../services/notificationsService";
@@ -365,6 +365,27 @@ export default function Header({ onMobileMenu }) {
           </button>
         </div>
       )}
+
+      {/* ── Ccentrik AI Brain Icon ── */}
+      <motion.button
+        onClick={() => navigate("/ai-assistant")}
+        title="Ccentrik AI — Open AI Assistant"
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.9 }}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: 32, height: 32, borderRadius: 9,
+          background: location.pathname === "/ai-assistant"
+            ? "linear-gradient(135deg,#4F46E5,#7C3AED)"
+            : "linear-gradient(135deg,rgba(79,70,229,0.12),rgba(124,58,237,0.08))",
+          border: "1px solid rgba(99,102,241,0.25)",
+          cursor: "pointer", flexShrink: 0,
+          boxShadow: location.pathname === "/ai-assistant" ? "0 2px 12px rgba(99,102,241,0.4)" : "none",
+          transition: "all 0.18s",
+        }}
+      >
+        <Brain size={15} strokeWidth={1.75} style={{ color: location.pathname === "/ai-assistant" ? "#fff" : "#A78BFA" }} />
+      </motion.button>
 
       {/* ── Theme Toggle ── */}
       <div style={{ display: "flex", alignItems: "center", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 10, padding: 3, gap: 1 }}>

@@ -416,7 +416,7 @@ export default function AIAssistant() {
   const [thinkingStatus, setThinkingStatus] = useState(THINKING_STATUSES[0]);
   const [pendingAction, setPendingAction] = useState(null);
   const [isVoiceOn, setIsVoiceOn]         = useState(false);
-  const [isMuted, setIsMuted]             = useState(false);
+  const [isMuted, setIsMuted]             = useState(true); // Voice OFF by default — chat-first experience
   const [selectedLang, setSelectedLang]   = useState(LANGUAGES[0]);
   const [recognition, setRecognition]     = useState(null);
   const bottomRef        = useRef(null);
@@ -640,8 +640,10 @@ export default function AIAssistant() {
             </div>
             <motion.button className="icon-btn" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.88 }}
               onClick={() => { setIsMuted((v) => !v); if (!isMuted) synthRef.current?.cancel(); }}
-              title={isMuted ? "Unmute" : "Mute"} style={{ color: isMuted ? "var(--red)" : undefined }}>
+              title={isMuted ? "Enable Voice Mode — AI will speak responses" : "Voice Mode ON — click to disable"}
+              style={{ color: isMuted ? "var(--text-muted)" : "#10B981", position: "relative" }}>
               {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+              {!isMuted && <span style={{ position: "absolute", top: -2, right: -2, width: 6, height: 6, borderRadius: "50%", background: "#10B981", border: "1.5px solid var(--surface)" }} />}
             </motion.button>
             <motion.button className="icon-btn" onClick={clearChat} whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.88 }} title="Clear chat">
               <Trash2 size={15} strokeWidth={1.75} />
@@ -766,7 +768,7 @@ export default function AIAssistant() {
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
             <Activity size={10} style={{ color: "var(--text-muted)" }} />
             <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-              Powered by <strong style={{ color: "var(--accent)" }}>ARIA Agent</strong> · Llama 3.3 on Groq · Enter to send · Actions require approval
+              Powered by <strong style={{ color: "var(--accent)" }}>ARIA Agent</strong> · Llama 3.3 on Groq · {isMuted ? "Chat mode" : <span style={{ color: "#10B981", fontWeight: 600 }}>Voice mode ON</span>} · Enter to send · Actions require approval
             </span>
           </div>
         </div>
