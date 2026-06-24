@@ -3,7 +3,7 @@ const router  = express.Router();
 const { supabase }     = require("../config/db");
 const { authenticate } = require("../middleware/auth");
 
-const OR_MODEL       = "meta-llama/llama-3.3-70b-instruct:free";
+const OR_MODEL       = "google/gemini-2.0-flash-exp:free";
 const OR_BASE_URL    = "https://openrouter.ai/api/v1/chat/completions";
 const MAX_ITERATIONS = 6;
 
