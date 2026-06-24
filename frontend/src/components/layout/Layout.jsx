@@ -7,6 +7,8 @@ import CommandPalette from "../CommandPalette";
 import ErrorBoundary from "../ErrorBoundary";
 import SecurityMonitor from "../SecurityMonitor";
 import EmailActivityPopup from "../EmailActivityPopup";
+import { ARIAProvider } from "../../context/ARIAContext";
+import ARIAPanel from "../aria/ARIAPanel";
 
 function PageLoader() {
   return (
@@ -42,6 +44,7 @@ export default function Layout() {
   }, []);
 
   return (
+    <ARIAProvider>
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "var(--bg)" }}>
       {/* Mobile backdrop */}
       {mobileOpen && (
@@ -78,6 +81,8 @@ export default function Layout() {
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
       <SecurityMonitor />
       <EmailActivityPopup />
+      <ARIAPanel />
     </div>
+    </ARIAProvider>
   );
 }

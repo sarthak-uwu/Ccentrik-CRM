@@ -13,6 +13,7 @@ import { supabase } from "../../supabaseClient";
 import { notificationsService } from "../../services/notificationsService";
 import { format, isPast, isToday } from "date-fns";
 import toast from "react-hot-toast";
+import { useARIA } from "../../context/ARIAContext";
 
 const ROLE_LABELS = { owner: "Super Admin", sales_head: "Sales Head", sales_manager: "Sales Manager", employee: "Sales Employee", inside_sales: "Inside Sales" };
 
@@ -101,6 +102,7 @@ function getGreetingPrefs(profileId) {
 export default function Header({ onMobileMenu }) {
   const { profile, logout } = useAuth();
   const { theme, setTheme } = useTheme();
+  const { isOpen: ariaOpen, togglePanel } = useARIA();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -368,23 +370,28 @@ export default function Header({ onMobileMenu }) {
 
       {/* ── Ccentrik AI Brain Icon ── */}
       <motion.button
-        onClick={() => navigate("/ai-assistant")}
-        title="Ccentrik AI — Open AI Assistant"
+        onClick={location.pathname === "/ai-assistant" ? undefined : togglePanel}
+        title={location.pathname === "/ai-assistant" ? "AI Assistant" : ariaOpen ? "Close ARIA Panel" : "Open ARIA — AI Agent"}
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.9 }}
         style={{
           display: "flex", alignItems: "center", justifyContent: "center",
           width: 32, height: 32, borderRadius: 9,
-          background: location.pathname === "/ai-assistant"
+          background: ariaOpen || location.pathname === "/ai-assistant"
             ? "linear-gradient(135deg,#4F46E5,#7C3AED)"
             : "linear-gradient(135deg,rgba(79,70,229,0.12),rgba(124,58,237,0.08))",
           border: "1px solid rgba(99,102,241,0.25)",
-          cursor: "pointer", flexShrink: 0,
-          boxShadow: location.pathname === "/ai-assistant" ? "0 2px 12px rgba(99,102,241,0.4)" : "none",
+          cursor: location.pathname === "/ai-assistant" ? "default" : "pointer",
+          flexShrink: 0,
+          boxShadow: ariaOpen || location.pathname === "/ai-assistant" ? "0 2px 12px rgba(99,102,241,0.4)" : "none",
           transition: "all 0.18s",
+          position: "relative",
         }}
       >
-        <Brain size={15} strokeWidth={1.75} style={{ color: location.pathname === "/ai-assistant" ? "#fff" : "#A78BFA" }} />
+        <Brain size={15} strokeWidth={1.75} style={{ color: ariaOpen || location.pathname === "/ai-assistant" ? "#fff" : "#A78BFA" }} />
+        {ariaOpen && location.pathname !== "/ai-assistant" && (
+          <span style={{ position: "absolute", top: -2, right: -2, width: 7, height: 7, borderRadius: "50%", background: "#10B981", border: "2px solid var(--header-bg)" }} />
+        )}
       </motion.button>
 
       {/* ── Theme Toggle ── */}

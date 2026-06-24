@@ -8,7 +8,7 @@ const TOOL_STATUS = {
   get_pipeline_summary: "Computing pipeline...",
 };
 
-export async function streamARIA({ message, getToken, onStatus, onToken, onDone, onError }) {
+export async function streamARIA({ message, pageContext, getToken, onStatus, onToken, onDone, onError }) {
   try {
     const token = await getToken();
 
@@ -18,7 +18,7 @@ export async function streamARIA({ message, getToken, onStatus, onToken, onDone,
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, pageContext: pageContext || null }),
     });
 
     if (!res.ok) {
