@@ -124,13 +124,7 @@ export default function ARIAPanel() {
   const navigate = useNavigate();
   const qc = useQueryClient();
 
-  // Don't render floating panel when already on the full AI page
-  if (location.pathname === "/ai-assistant") return null;
-
-  const pageInfo = PAGE_CTX[location.pathname] || { module: "CRM", page: "Ccentrik CRM", prompts: ["Pipeline summary", "Hot leads", "Overdue tasks"] };
-  const roleLabel = ROLE_LABELS[profile?.role] || "Employee";
-  const firstName = profile?.full_name?.split(" ")[0] || "there";
-
+  // All hooks must be declared before any conditional return
   const [messages, setMessages] = useState([]);
   const [input, setInput]       = useState("");
   const [loading, setLoading]   = useState(false);
@@ -139,25 +133,32 @@ export default function ARIAPanel() {
   const [actionLoading, setActionLoading] = useState(false);
   const [thinkingStatus, setThinkingStatus] = useState("");
 
-  const bottomRef = useRef(null);
-  const inputRef  = useRef(null);
+  const bottomRef    = useRef(null);
+  const inputRef     = useRef(null);
+  const welcomedRef  = useRef(false);
+  const prevPageRef  = useRef(location.pathname);
+
+  // Derived values (not hooks — safe to compute anywhere)
+  const pageInfo  = PAGE_CTX[location.pathname] || { module: "CRM", page: "Ccentrik CRM", prompts: ["Pipeline summary", "Hot leads", "Overdue tasks"] };
+  const roleLabel = ROLE_LABELS[profile?.role] || "Employee";
+  const firstName = profile?.full_name?.split(" ")[0] || "there";
 
   // Add welcome message when panel first opens
-  const welcomedRef = useRef(false);
   useEffect(() => {
     if (isOpen && !welcomedRef.current) {
       welcomedRef.current = true;
+      const pi = PAGE_CTX[location.pathname] || { module: "CRM", page: "Ccentrik CRM", prompts: [] };
+      const fn = profile?.full_name?.split(" ")[0] || "there";
       setMessages([{
         id: "welcome",
         role: "assistant",
-        content: `Hi ${firstName}! I'm ARIA, your CRM AI Agent.\n\nI can see you're on the **${pageInfo.module}** page. I can help you:\n• Search, filter, and view ${pageInfo.module.toLowerCase()} records\n• Create leads, tasks, and activities\n• Get insights and recommendations\n• Execute multi-step workflows\n\nWhat would you like to do?`,
+        content: `Hi ${fn}! I'm ARIA, your CRM AI Agent.\n\nI can see you're on the **${pi.module}** page. I can help you:\n• Search, filter, and view ${pi.module.toLowerCase()} records\n• Create leads, tasks, and activities\n• Get insights and recommendations\n• Execute multi-step workflows\n\nWhat would you like to do?`,
         ts: new Date(),
       }]);
     }
   }, [isOpen]);
 
-  // Update welcome context when page changes (panel stays open)
-  const prevPageRef = useRef(location.pathname);
+  // Notify when page changes while panel is open
   useEffect(() => {
     if (prevPageRef.current !== location.pathname && isOpen && messages.length > 0) {
       prevPageRef.current = location.pathname;
@@ -170,8 +171,10 @@ export default function ARIAPanel() {
           ts: new Date(),
         }]);
       }
+    } else {
+      prevPageRef.current = location.pathname;
     }
-  }, [location.pathname, isOpen]);
+  }, [location.pathname]);
 
   useEffect(() => {
     if (isOpen) { setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50); }
@@ -324,6 +327,9 @@ export default function ARIAPanel() {
   };
 
   const PROMPT_ICONS = [Zap, Clock, TrendingUp, Target, BarChart3, FileText, Activity, Users];
+
+  // Guard AFTER all hooks — this is the correct place per React rules
+  if (location.pathname === "/ai-assistant") return null;
 
   return (
     <AnimatePresence>
