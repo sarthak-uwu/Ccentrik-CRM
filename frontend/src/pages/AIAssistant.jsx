@@ -11,7 +11,7 @@ import {
   IndianRupee, BriefcaseBusiness, ArrowRight, Lightbulb, Activity,
   Calendar, FileText, Check, X, Loader2, CheckCircle2,
 } from "lucide-react";
-import { streamGeminiResponse } from "../services/geminiService";
+import { streamGroqResponse } from "../services/groqService";
 import { useCurrency } from "../context/CurrencyContext";
 
 // ── Language config ───────────────────────────────────────────────────────────
@@ -574,7 +574,7 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
     setMessages((prev) => [...prev, { id: streamId, role: "assistant", content: "", ts: new Date(), streaming: true }]);
 
     try {
-      await streamGeminiResponse({
+      await streamGroqResponse({
         messages: history,
         context: crmContext,
         language: selectedLang.name,
@@ -591,14 +591,14 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
           speakText(cleanText);
         },
         onError: (err) => {
-          const message = err?.message || "Unknown Gemini error";
-          const isKeyMissing = message === "GEMINI_KEY_MISSING";
-          const isBillingIssue = /quota|billing|resource.has.been.exhausted|API key not valid/i.test(message);
+          const message = err?.message || "Unknown error";
+          const isKeyMissing = message === "GROQ_KEY_MISSING";
+          const isRateLimit  = /rate.limit|429|quota/i.test(message);
 
           const fallback = isKeyMissing
-            ? "**AI key not configured.** Add `VITE_GEMINI_API_KEY=...` to your `.env.production` file and rebuild.\n\nGet your free key at **aistudio.google.com/app/apikey**"
-            : isBillingIssue
-              ? "**Gemini API quota exceeded or billing issue.** Check your quota at **console.cloud.google.com**, then retry.\n\nIf the key was recently created, wait a few minutes and try again."
+            ? "**AI key not configured.** Add `VITE_GROQ_API_KEY=...` to your `.env.production` file and rebuild.\n\nGet your free key at **console.groq.com**"
+            : isRateLimit
+              ? "**Rate limit hit.** Groq free tier allows 14,400 requests/day. Wait a moment and try again."
               : `**Error:** ${message}`;
 
           setMessages((prev) => prev.map((m) => m.id === streamId ? { ...m, content: fallback, streaming: false } : m));
@@ -641,7 +641,7 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
               <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 400 }}>AI Executive Assistant</span>
               <span className="badge badge-purple" style={{ fontSize: 9.5 }}>BETA</span>
               <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "#10B981", fontWeight: 600 }}>
-                <span className="live-indicator" /> Gemini 2.5
+                <span className="live-indicator" /> Llama 3.3
               </span>
             </div>
             <motion.div
@@ -790,7 +790,7 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
             <Activity size={10} style={{ color: "var(--text-muted)" }} />
             <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-              Powered by <strong style={{ color: "var(--accent)" }}>Gemini 2.5</strong> (Google) · Enter to send · Shift+Enter for new line · Actions require approval
+              Powered by <strong style={{ color: "var(--accent)" }}>Llama 3.3</strong> (Groq) · Enter to send · Shift+Enter for new line · Actions require approval
             </span>
           </div>
         </div>

@@ -1,12 +1,11 @@
 const express = require("express");
-const router = express.Router();
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { supabase } = require("../config/db");
+const router  = express.Router();
+const Groq    = require("groq-sdk");
+const { supabase }    = require("../config/db");
 const { authenticate } = require("../middleware/auth");
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GROQ_MODEL = "llama-3.3-70b-versatile";
 
-// Server-side per-user conversation history (capped at 12 messages)
 const conversationHistory = {};
 
 async function getCRMContext(profile) {
@@ -38,9 +37,9 @@ async function getCRMContext(profile) {
 
   const [leads, deals, tasks] = await Promise.all([leadsQ, dealsQ, tasksQ]);
 
-  const leadsData = leads.data  || [];
-  const dealsData = deals.data  || [];
-  const tasksData = tasks.data  || [];
+  const leadsData = leads.data || [];
+  const dealsData = deals.data || [];
+  const tasksData = tasks.data || [];
 
   const stageCounts = leadsData.reduce((acc, l) => { acc[l.stage] = (acc[l.stage] || 0) + 1; return acc; }, {});
   const tempCounts  = leadsData.reduce((acc, l) => { acc[l.temperature] = (acc[l.temperature] || 0) + 1; return acc; }, {});
@@ -109,9 +108,9 @@ function buildSystemPrompt(profile, crmContext) {
 
 IDENTITY:
 - Full name: ARIA (AI Revenue Intelligence Assistant)
+- Powered by Llama 3.3-70B via Groq
 - You are a highly trained executive assistant and sales strategist, not a chatbot
 - Personality: Professional, warm, intelligent, direct, action-oriented — like a trusted senior business partner
-- You speak naturally. Never sound robotic or generic.
 
 USER CONTEXT:
 - Name: ${profile.full_name}
@@ -155,51 +154,37 @@ router.post("/chat", authenticate, async (req, res) => {
   const { message } = req.body;
   if (!message) return res.status(400).json({ error: "Message is required" });
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === "your-gemini-api-key-here") {
-    return res.status(503).json({ error: "Gemini API key not configured. Add GEMINI_API_KEY to backend/.env" });
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey || apiKey === "your-groq-api-key-here") {
+    return res.status(503).json({ error: "Groq API key not configured. Add GROQ_API_KEY to backend environment." });
   }
 
   const userId = req.profile.id;
   if (!conversationHistory[userId]) conversationHistory[userId] = [];
 
   try {
-    const crmContext = await getCRMContext(req.profile);
+    const crmContext  = await getCRMContext(req.profile);
     const systemPrompt = buildSystemPrompt(req.profile, crmContext);
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: GEMINI_MODEL,
-      systemInstruction: systemPrompt,
-    });
-
-    // Append user message
     conversationHistory[userId].push({ role: "user", content: message });
     if (conversationHistory[userId].length > 12) {
       conversationHistory[userId] = conversationHistory[userId].slice(-12);
     }
 
-    // Convert history to Gemini format — must alternate user/model, starting with user
-    const geminiHistory = [];
-    let prevRole = null;
-    for (const msg of conversationHistory[userId].slice(0, -1)) {
-      const gRole = msg.role === "assistant" ? "model" : "user";
-      if (geminiHistory.length === 0 && gRole === "model") continue;
-      if (gRole === prevRole) continue;
-      geminiHistory.push({ role: gRole, parts: [{ text: msg.content }] });
-      prevRole = gRole;
-    }
-
-    const chat = model.startChat({
-      history: geminiHistory,
-      generationConfig: { temperature: 0.6, maxOutputTokens: 1024 },
+    const groq = new Groq({ apiKey });
+    const completion = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...conversationHistory[userId],
+      ],
+      temperature: 0.6,
+      max_tokens: 1024,
     });
 
-    const result = await chat.sendMessage(message);
-    let reply = result.response.text();
+    let reply = completion.choices[0]?.message?.content || "";
     let actionResult = null;
 
-    // Parse and execute embedded action block
     const actionMatch = reply.match(/```action\s*([\s\S]*?)```/);
     if (actionMatch) {
       try {
@@ -211,9 +196,9 @@ router.post("/chat", authenticate, async (req, res) => {
 
     conversationHistory[userId].push({ role: "assistant", content: reply });
 
-    res.json({ reply, model: GEMINI_MODEL, action: actionResult });
+    res.json({ reply, model: GROQ_MODEL, action: actionResult });
   } catch (err) {
-    console.error("Gemini AI error:", err.message);
+    console.error("Groq AI error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
