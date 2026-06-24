@@ -641,7 +641,7 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
               <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 400 }}>AI Executive Assistant</span>
               <span className="badge badge-purple" style={{ fontSize: 9.5 }}>BETA</span>
               <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "#10B981", fontWeight: 600 }}>
-                <span className="live-indicator" /> Gemini 1.5
+                <span className="live-indicator" /> Gemini 2.0
               </span>
             </div>
             <motion.div
@@ -790,7 +790,7 @@ TASKS (${(tasksRes.data||[]).length}): ${JSON.stringify((tasksRes.data||[]).slic
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
             <Activity size={10} style={{ color: "var(--text-muted)" }} />
             <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-              Powered by <strong style={{ color: "var(--accent)" }}>Gemini 1.5</strong> (Google) · Enter to send · Shift+Enter for new line · Actions require approval
+              Powered by <strong style={{ color: "var(--accent)" }}>Gemini 2.0</strong> (Google) · Enter to send · Shift+Enter for new line · Actions require approval
             </span>
           </div>
         </div>

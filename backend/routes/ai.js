@@ -4,7 +4,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { supabase } = require("../config/db");
 const { authenticate } = require("../middleware/auth");
 
-const GEMINI_MODEL = "gemini-1.5-flash";
+const GEMINI_MODEL = "gemini-2.0-flash";
 
 // Server-side per-user conversation history (capped at 12 messages)
 const conversationHistory = {};
