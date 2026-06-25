@@ -105,6 +105,7 @@ app.use("/api/deals",      require("./routes/deals"));
 app.use("/api/activities", require("./routes/activities"));
 app.use("/api/analytics",  require("./routes/analytics"));
 app.use("/api/ai",         require("./routes/ai"));
+app.use("/api/ai/documents", require("./routes/aiDocuments"));
 app.use("/api/meetings",   require("./routes/meetings"));
 app.use("/api/targets",    require("./routes/targets"));
 app.use("/api/email",      require("./routes/email"));

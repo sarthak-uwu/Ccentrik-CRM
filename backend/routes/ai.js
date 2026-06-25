@@ -4,6 +4,31 @@ const Groq    = require("groq-sdk");
 const { supabase }     = require("../config/db");
 const { authenticate } = require("../middleware/auth");
 
+// ── Document RAG: search uploaded project docs ────────────────────────────────
+async function searchDocuments(query) {
+  try {
+    // Skip if no ready documents exist
+    const { count } = await supabase
+      .from("ai_documents")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "ready");
+    if (!count || count === 0) return null;
+
+    // Full-text search via the Postgres function defined in migration
+    const { data, error } = await supabase.rpc("search_document_chunks", {
+      query_text:  query,
+      match_count: 5,
+    });
+    if (error || !data?.length) return null;
+
+    return data
+      .map((c) => `[Source: ${c.document_name}]\n${c.content}`)
+      .join("\n\n---\n\n");
+  } catch {
+    return null;
+  }
+}
+
 const GROQ_MODEL      = "llama-3.1-8b-instant";
 const MAX_ITERATIONS  = 4;
 
@@ -173,7 +198,7 @@ async function executeTool(name, args, profile) {
 }
 
 // ── System prompt ─────────────────────────────────────────────────────────────
-function buildSystemPrompt(profile, pageContext) {
+function buildSystemPrompt(profile, pageContext, docContext) {
   const date = new Date().toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
   const pageSection = pageContext
@@ -225,7 +250,14 @@ or
 {"type":"assign_lead","description":"Assign lead [Lead ID] to [Name]","data":{"lead_id":"...","assignee_name":"..."}}
 </action>
 
-Always confirm with the user by including the action block — never execute writes silently.`;
+Always confirm with the user by including the action block — never execute writes silently.${docContext ? `
+
+━━━ PROJECT DOCUMENT KNOWLEDGE BASE ━━━
+The following content is extracted from uploaded project documents. Treat this as your PRIMARY source of truth when answering any questions about the project, its features, workflows, or specifications. Cite the source document when relevant.
+
+${docContext}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+If the user's question can be answered from the documents above, answer from them first and clearly. If a question is only partially answered by the documents, state what is documented and what is not. Only fall back to your general knowledge when the documents have no relevant information.` : ""}`;
 }
 
 // POST /api/ai/chat
@@ -254,8 +286,11 @@ router.post("/chat", authenticate, async (req, res) => {
   try {
     const groq = new Groq({ apiKey });
 
+    // Search uploaded documents first — inject relevant chunks into system prompt
+    const docContext = await searchDocuments(message);
+
     const messages = [
-      { role: "system", content: buildSystemPrompt(req.profile, pageContext || null) },
+      { role: "system", content: buildSystemPrompt(req.profile, pageContext || null, docContext) },
       ...conversationHistory[userId].slice(-6),
       { role: "user", content: message },
     ];

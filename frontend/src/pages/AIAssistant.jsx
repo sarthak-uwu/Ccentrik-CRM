@@ -10,8 +10,10 @@ import {
   XCircle, BarChart3, Mic, MicOff, Volume2, VolumeX,
   IndianRupee, BriefcaseBusiness, ArrowRight, Lightbulb, Activity,
   Calendar, FileText, Check, X, Loader2, CheckCircle2, Copy,
+  Upload, BookOpen, FilePlus, FileCheck, FileX, FolderOpen,
 } from "lucide-react";
 import { streamARIA } from "../services/ariaService";
+import { aiDocumentService } from "../services/aiDocumentService";
 import { auth } from "../firebase";
 import { useCurrency } from "../context/CurrencyContext";
 import toast from "react-hot-toast";
@@ -275,6 +277,218 @@ function AlertRow({ icon: Icon, color, text, sub, onClick }) {
   );
 }
 
+// ── Documents Panel ───────────────────────────────────────────────────────────
+function DocumentsPanel() {
+  const qc = useQueryClient();
+  const [dragging, setDragging]   = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress]   = useState(0);
+  const fileInputRef = useRef(null);
+
+  const { data: documents = [], isLoading, refetch } = useQuery({
+    queryKey: ["ai-documents"],
+    queryFn:  () => aiDocumentService.list(),
+    staleTime: 10000,
+    refetchInterval: 15000,
+  });
+
+  const ACCEPTED = ".pdf,.doc,.docx,.txt,.md,.xlsx,.xls";
+  const MAX_MB   = 10;
+
+  const handleFiles = async (files) => {
+    const file = files[0];
+    if (!file) return;
+    if (file.size > MAX_MB * 1024 * 1024) {
+      toast.error(`File too large. Max size is ${MAX_MB} MB.`);
+      return;
+    }
+    setUploading(true);
+    setProgress(0);
+    try {
+      await aiDocumentService.upload(file, setProgress);
+      toast.success(`"${file.name}" uploaded and indexed.`);
+      qc.invalidateQueries({ queryKey: ["ai-documents"] });
+    } catch (err) {
+      toast.error(err.message || "Upload failed");
+    } finally {
+      setUploading(false);
+      setProgress(0);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleDelete = async (doc) => {
+    if (!window.confirm(`Remove "${doc.name}" from the knowledge base?`)) return;
+    try {
+      await aiDocumentService.remove(doc.id);
+      toast.success("Document removed");
+      qc.invalidateQueries({ queryKey: ["ai-documents"] });
+    } catch (err) {
+      toast.error(err.message || "Delete failed");
+    }
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    handleFiles(e.dataTransfer.files);
+  };
+
+  const fmtSize = (bytes) => {
+    if (!bytes) return "";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const statusIcon = (status) => {
+    if (status === "ready")      return <FileCheck size={13} style={{ color: "#10B981", flexShrink: 0 }} />;
+    if (status === "error")      return <FileX     size={13} style={{ color: "#EF4444", flexShrink: 0 }} />;
+    return <Loader2 size={13} style={{ color: "#A78BFA", flexShrink: 0, animation: "spin 1s linear infinite" }} />;
+  };
+
+  const typeLabel = (t) => (t || "").toUpperCase();
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+      {/* Header row */}
+      <div style={{ padding: "10px 16px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <BookOpen size={12} style={{ color: "#A78BFA" }} />
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
+            Knowledge Base
+          </span>
+          {documents.length > 0 && (
+            <span style={{ fontSize: 9.5, fontWeight: 700, padding: "1px 6px", borderRadius: 99, background: "rgba(99,102,241,0.12)", color: "#A78BFA", border: "1px solid rgba(99,102,241,0.2)" }}>
+              {documents.filter((d) => d.status === "ready").length} ready
+            </span>
+          )}
+        </div>
+        <button onClick={() => refetch()} className="btn-ghost" style={{ padding: 4 }}>
+          <RefreshCw size={11} />
+        </button>
+      </div>
+
+      {/* Drop zone */}
+      <div style={{ padding: "0 12px 10px", flexShrink: 0 }}>
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          onClick={() => !uploading && fileInputRef.current?.click()}
+          style={{
+            border: `2px dashed ${dragging ? "var(--accent)" : "rgba(99,102,241,0.25)"}`,
+            borderRadius: 10,
+            padding: "14px 10px",
+            textAlign: "center",
+            cursor: uploading ? "default" : "pointer",
+            background: dragging ? "rgba(99,102,241,0.06)" : "transparent",
+            transition: "all 0.15s",
+          }}
+        >
+          {uploading ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+              <Loader2 size={20} style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }} />
+              <div style={{ fontSize: 11, color: "var(--text-2)", fontWeight: 600 }}>Processing… {progress}%</div>
+              <div style={{ width: "100%", height: 3, background: "var(--border)", borderRadius: 99, overflow: "hidden" }}>
+                <div style={{ width: `${progress}%`, height: "100%", background: "var(--accent)", transition: "width 0.3s", borderRadius: 99 }} />
+              </div>
+            </div>
+          ) : (
+            <>
+              <FilePlus size={20} style={{ color: "rgba(99,102,241,0.5)", marginBottom: 6 }} />
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text-2)" }}>
+                Drop file or <span style={{ color: "var(--accent)" }}>click to upload</span>
+              </div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 3 }}>
+                PDF · DOCX · TXT · MD · XLSX · max {MAX_MB} MB
+              </div>
+            </>
+          )}
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPTED}
+          style={{ display: "none" }}
+          onChange={(e) => e.target.files?.[0] && handleFiles(e.target.files)}
+        />
+      </div>
+
+      {/* Document list */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "0 12px 12px" }} className="custom-scroll">
+        {isLoading ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: 20 }}>
+            <Loader2 size={16} style={{ color: "var(--text-muted)", animation: "spin 1s linear infinite" }} />
+          </div>
+        ) : documents.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "20px 0", color: "var(--text-muted)" }}>
+            <FolderOpen size={28} style={{ opacity: 0.25, marginBottom: 8 }} />
+            <div style={{ fontSize: 12 }}>No documents yet.</div>
+            <div style={{ fontSize: 11, marginTop: 3 }}>Upload project docs to let the AI<br />answer questions about your project.</div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {documents.map((doc) => (
+              <div
+                key={doc.id}
+                style={{
+                  display: "flex", alignItems: "flex-start", gap: 8,
+                  background: "var(--surface)", border: "1px solid var(--border)",
+                  borderRadius: 9, padding: "8px 10px",
+                }}
+              >
+                {statusIcon(doc.status)}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {doc.name}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 2 }}>
+                    <span style={{ fontSize: 9.5, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "rgba(99,102,241,0.1)", color: "#818CF8" }}>
+                      {typeLabel(doc.file_type)}
+                    </span>
+                    {doc.status === "ready" && (
+                      <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                        {doc.chunk_count} chunks · {fmtSize(doc.size_bytes)}
+                      </span>
+                    )}
+                    {doc.status === "processing" && (
+                      <span style={{ fontSize: 10, color: "#A78BFA" }}>Indexing…</span>
+                    )}
+                    {doc.status === "error" && (
+                      <span style={{ fontSize: 10, color: "#EF4444" }} title={doc.error_message}>Error</span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleDelete(doc)}
+                  title="Remove document"
+                  style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 3px", color: "var(--text-muted)", borderRadius: 5, flexShrink: 0, display: "flex" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = "#EF4444"; e.currentTarget.style.background = "rgba(239,68,68,0.08)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "none"; }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Footer hint */}
+      {documents.some((d) => d.status === "ready") && (
+        <div style={{ padding: "8px 14px", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
+          <div style={{ fontSize: 10, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 5 }}>
+            <Sparkles size={9} style={{ color: "#A78BFA" }} />
+            AI searches these docs automatically on every question
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Smart Insights Panel ──────────────────────────────────────────────────────
 function SmartInsightsPanel({ onAskAI, fmtVal }) {
   const { data, isLoading, refetch } = useQuery({
@@ -439,6 +653,8 @@ export default function AIAssistant() {
     queryFn: fetchInsights,
     staleTime: 300000,
   });
+
+  const [rightTab, setRightTab] = useState("intelligence"); // "intelligence" | "documents"
 
   const [messages, setMessages] = useState([{
     id: "welcome",
@@ -902,21 +1118,44 @@ export default function AIAssistant() {
         </div>
       </div>
 
-      {/* ── Right: Live Intelligence ── */}
+      {/* ── Right: Tabbed panel (Intelligence / Documents) ── */}
       <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", background: "var(--surface-2)", borderLeft: "1px solid var(--border)" }}>
-        <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", background: "var(--surface)", flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg,rgba(99,102,241,0.2),rgba(139,92,246,0.12))", border: "1px solid rgba(99,102,241,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Sparkles size={13} style={{ color: "#A78BFA" }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text)" }}>Live Intelligence</div>
-              <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>Real-time CRM insights</div>
-            </div>
+
+        {/* Tab header */}
+        <div style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+          <div style={{ display: "flex" }}>
+            {[
+              { key: "intelligence", icon: Sparkles,  label: "Intelligence" },
+              { key: "documents",    icon: BookOpen,   label: "Documents"    },
+            ].map(({ key, icon: Icon, label }) => (
+              <button
+                key={key}
+                onClick={() => setRightTab(key)}
+                style={{
+                  flex: 1, padding: "11px 0",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                  background: "none", border: "none", cursor: "pointer",
+                  fontSize: 12, fontWeight: rightTab === key ? 700 : 500,
+                  color:  rightTab === key ? "var(--accent)" : "var(--text-muted)",
+                  borderBottom: `2px solid ${rightTab === key ? "var(--accent)" : "transparent"}`,
+                  transition: "all 0.15s",
+                  marginBottom: -1,
+                }}
+              >
+                <Icon size={12} />
+                {label}
+              </button>
+            ))}
           </div>
         </div>
+
+        {/* Panel content */}
         <div style={{ flex: 1, overflow: "hidden" }}>
-          <SmartInsightsPanel onAskAI={sendMessage} fmtVal={fmtVal} />
+          {rightTab === "intelligence" ? (
+            <SmartInsightsPanel onAskAI={sendMessage} fmtVal={fmtVal} />
+          ) : (
+            <DocumentsPanel />
+          )}
         </div>
       </div>
     </div>
