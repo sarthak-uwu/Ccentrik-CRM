@@ -59,7 +59,7 @@ router.get("/", authenticate, async (req, res) => {
   // Try enriched select with joins first; fall back to plain select if FK joins fail
   let { data, error, count } = await applyFilters(
     supabase.from("deals").select(
-      "*, assigned_profile:profiles!assigned_to(id,full_name,avatar_url), linked_lead:leads!lead_id(lead_code,source,country,industry)",
+      "*, assigned_profile:profiles!assigned_to(id,full_name,avatar_url), linked_lead:leads!lead_id(lead_code,source,country,industry,other_notes)",
       { count: "exact" }
     )
   );
@@ -89,7 +89,7 @@ router.get("/", authenticate, async (req, res) => {
 router.get("/:id", authenticate, async (req, res) => {
   let { data, error } = await supabase
     .from("deals")
-    .select("*, assigned_profile:profiles!assigned_to(id,full_name,avatar_url), linked_lead:leads!lead_id(lead_code,source,country,industry)")
+    .select("*, assigned_profile:profiles!assigned_to(id,full_name,avatar_url), linked_lead:leads!lead_id(lead_code,source,country,industry,other_notes)")
     .eq("id", req.params.id)
     .single();
   if (error) {

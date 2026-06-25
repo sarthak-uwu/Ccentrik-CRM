@@ -27,6 +27,11 @@ import { changeHistoryService, DEAL_TRACKED_FIELDS } from "../services/changeHis
 import { SourceBadge } from "../components/SourceBadge";
 import { ActivityEngine } from "../services/activityEngine";
 
+const SAP_SERVICES = [
+  "SAP Implementation", "SAP Migration ECC→S/4HANA", "SAP Version Upgrade",
+  "SAP Resource Augmentation", "Other Project Services",
+];
+
 const DEAL_COLUMNS = [
   { key: "deal_id",  label: "ID",                required: true },
   { key: "company",  label: "Company",           required: true },
@@ -34,6 +39,7 @@ const DEAL_COLUMNS = [
   { key: "country",  label: "Country"                          },
   { key: "contact",  label: "POC"                              },
   { key: "source",   label: "Source"                           },
+  { key: "services", label: "Services"                         },
   { key: "website",  label: "Website"                          },
   { key: "linkedin", label: "LinkedIn"                         },
   { key: "stage",    label: "Stage",             required: true },
@@ -1266,6 +1272,7 @@ export default function Deals() {
   const [filterLeadId,   setFilterLeadId]   = useState("");
   const [filterValueMin, setFilterValueMin] = useState("");
   const [filterValueMax, setFilterValueMax] = useState("");
+  const [filterService,  setFilterService]  = useState([]);
   const [infoLocked, setInfoLocked] = useState(() => localStorage.getItem("deals_info_locked") === "1");
   const [activeId, setActiveId]     = useState(null);
   const [activeDeal, setActiveDeal] = useState(null);
@@ -1527,6 +1534,10 @@ export default function Deals() {
     }
     if (filterValueMin !== "" && Number(d.value) < Number(filterValueMin)) return false;
     if (filterValueMax !== "" && Number(d.value) > Number(filterValueMax)) return false;
+    if (filterService.length) {
+      const svcs = parseJSON(d.linked_lead?.other_notes).services || [];
+      if (!filterService.some((f) => svcs.includes(f))) return false;
+    }
     return true;
   }).sort((a, b) => {
     if (dealsSortBy === "lead_code") {
@@ -1542,7 +1553,7 @@ export default function Deals() {
   // ── Pagination (table view only) ──────────────────────────────────────────
   const DEALS_PAGE_SIZE = 30;
   const [dealsPage, setDealsPage] = useState(1);
-  useEffect(() => { setDealsPage(1); }, [filterStage, filterCountry, filterIndustry, filterSource, filterAssigned, filterDateFrom, filterDateTo, filterLeadId, filterValueMin, filterValueMax, dealsSortBy, dealsSortDir]);
+  useEffect(() => { setDealsPage(1); }, [filterStage, filterCountry, filterIndustry, filterSource, filterAssigned, filterDateFrom, filterDateTo, filterLeadId, filterValueMin, filterValueMax, filterService, dealsSortBy, dealsSortDir]);
   const dealsTotalPages = Math.ceil(deals.length / DEALS_PAGE_SIZE);
   const pagedDeals = deals.slice((dealsPage - 1) * DEALS_PAGE_SIZE, dealsPage * DEALS_PAGE_SIZE);
 
@@ -1667,9 +1678,9 @@ export default function Deals() {
           <input className="crm-input" value={filterLeadId} onChange={(e) => setFilterLeadId(e.target.value)} placeholder="Search ID" style={{ paddingLeft: 28, height: 34, fontSize: 12, fontFamily: "monospace", borderColor: filterLeadId ? "var(--accent)" : undefined }} />
         </div>
 
-        {(filterStage.length || filterCountry.length || filterIndustry.length || filterSource.length || filterAssigned.length || filterLeadId || filterDateFrom || filterDateTo || filterValueMin !== "" || filterValueMax !== "") && (
+        {(filterStage.length || filterCountry.length || filterIndustry.length || filterSource.length || filterAssigned.length || filterLeadId || filterDateFrom || filterDateTo || filterValueMin !== "" || filterValueMax !== "" || filterService.length) && (
           <button className="btn-secondary" style={{ height: 34, fontSize: 12, display: "flex", alignItems: "center", gap: 5 }}
-            onClick={() => { setFilterStage([]); setFilterCountry([]); setFilterIndustry([]); setFilterSource([]); setFilterAssigned([]); setFilterLeadId(""); setFilterDateFrom(""); setFilterDateTo(""); setFilterValueMin(""); setFilterValueMax(""); }}>
+            onClick={() => { setFilterStage([]); setFilterCountry([]); setFilterIndustry([]); setFilterSource([]); setFilterAssigned([]); setFilterLeadId(""); setFilterDateFrom(""); setFilterDateTo(""); setFilterValueMin(""); setFilterValueMax(""); setFilterService([]); }}>
             <X size={12} /> Clear Filters
           </button>
         )}
@@ -1692,13 +1703,14 @@ export default function Deals() {
       </div>
 
       {/* ── Active Filter Pills ── */}
-      {(filterStage.length || filterIndustry.length || filterCountry.length || filterSource.length || filterAssigned.length || filterDateFrom || filterDateTo || filterValueMin !== "" || filterValueMax !== "") && (
+      {(filterStage.length || filterIndustry.length || filterCountry.length || filterSource.length || filterAssigned.length || filterDateFrom || filterDateTo || filterValueMin !== "" || filterValueMax !== "" || filterService.length) && (
         <div style={{ display: "flex", gap: 5, flexWrap: "wrap", padding: "6px 20px 8px", borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
           {filterStage.map((key) => { const s = FUNNEL_STATUSES.find((x) => x.key === key); return <span key={key} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", display: "flex", alignItems: "center", gap: 4 }}>Stage: {s?.label || key}<button type="button" onClick={() => setFilterStage((p) => p.filter((k) => k !== key))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#6366F1", lineHeight: 1 }}><X size={9} /></button></span>; })}
           {filterIndustry.map((v) => <span key={v} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", display: "flex", alignItems: "center", gap: 4 }}>Industry: {v}<button type="button" onClick={() => setFilterIndustry((p) => p.filter((x) => x !== v))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#6366F1", lineHeight: 1 }}><X size={9} /></button></span>)}
           {filterCountry.map((v) => { const cn = COUNTRIES.find((c) => c.code === v); return <span key={v} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", display: "flex", alignItems: "center", gap: 4 }}>Country: {cn?.name || v}<button type="button" onClick={() => setFilterCountry((p) => p.filter((x) => x !== v))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#6366F1", lineHeight: 1 }}><X size={9} /></button></span>; })}
           {filterSource.map((v) => { const s = DEAL_SOURCES.find((x) => x.value === v); return <span key={v} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", display: "flex", alignItems: "center", gap: 4 }}>Source: {s?.label || v}<button type="button" onClick={() => setFilterSource((p) => p.filter((x) => x !== v))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#6366F1", lineHeight: 1 }}><X size={9} /></button></span>; })}
           {filterAssigned.map((v) => { const m = teamMembers.find((x) => x.id === v); return <span key={v} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", display: "flex", alignItems: "center", gap: 4 }}>Assigned: {m?.full_name || "User"}<button type="button" onClick={() => setFilterAssigned((p) => p.filter((x) => x !== v))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#6366F1", lineHeight: 1 }}><X size={9} /></button></span>; })}
+          {filterService.map((v) => <span key={v} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 99, background: "rgba(37,99,235,0.1)", color: "#3B82F6", border: "1px solid rgba(37,99,235,0.2)", display: "flex", alignItems: "center", gap: 4 }}>Service: {v}<button type="button" onClick={() => setFilterService((p) => p.filter((x) => x !== v))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#3B82F6", lineHeight: 1 }}><X size={9} /></button></span>)}
           {filterDateFrom && <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", display: "flex", alignItems: "center", gap: 4 }}>From: {filterDateFrom}<button type="button" onClick={() => setFilterDateFrom("")} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#6366F1", lineHeight: 1 }}><X size={9} /></button></span>}
           {filterDateTo && <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", display: "flex", alignItems: "center", gap: 4 }}>To: {filterDateTo}<button type="button" onClick={() => setFilterDateTo("")} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#6366F1", lineHeight: 1 }}><X size={9} /></button></span>}
           {filterValueMin !== "" && <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", display: "flex", alignItems: "center", gap: 4 }}>Value ≥ {Number(filterValueMin).toLocaleString()}<button type="button" onClick={() => setFilterValueMin("")} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#6366F1", lineHeight: 1 }}><X size={9} /></button></span>}
@@ -1747,8 +1759,8 @@ export default function Deals() {
         ) : deals.length === 0 ? (
           <div className="empty-state">
             <TrendingUp size={40} />
-            <h3>{search || filterStage.length || filterCountry.length || filterIndustry.length || filterSource.length || filterAssigned.length || filterLeadId || filterDateFrom || filterDateTo || filterValueMin !== "" || filterValueMax !== "" ? "No deals match your filters" : "No deals in the funnel"}</h3>
-            <p>{search || filterStage.length || filterCountry.length || filterIndustry.length || filterSource.length || filterAssigned.length || filterLeadId || filterDateFrom || filterDateTo || filterValueMin !== "" || filterValueMax !== "" ? "Try adjusting your filters" : "Add your first deal to start tracking progress"}</p>
+            <h3>{search || filterStage.length || filterCountry.length || filterIndustry.length || filterSource.length || filterAssigned.length || filterLeadId || filterDateFrom || filterDateTo || filterValueMin !== "" || filterValueMax !== "" || filterService.length ? "No deals match your filters" : "No deals in the funnel"}</h3>
+            <p>{search || filterStage.length || filterCountry.length || filterIndustry.length || filterSource.length || filterAssigned.length || filterLeadId || filterDateFrom || filterDateTo || filterValueMin !== "" || filterValueMax !== "" || filterService.length ? "Try adjusting your filters" : "Add your first deal to start tracking progress"}</p>
           </div>
         ) : view === "kanban" ? (
           /* ── KANBAN ── */
@@ -1835,6 +1847,7 @@ export default function Deals() {
                           { key: "country",  label: "COUNTRY",    filterKey: "country",  filterOpts: countryOpts },
                           { key: "contact",  label: "POC",        filterKey: null },
                           { key: "source",   label: "SOURCE",     filterKey: "source",   filterOpts: DEAL_SOURCES },
+                          { key: "services", label: "SERVICES",   filterKey: "services", filterOpts: SAP_SERVICES.map((s) => ({ value: s, label: s })) },
                           { key: "website",  label: "WEBSITE",    filterKey: null },
                           { key: "linkedin", label: "LINKEDIN",   filterKey: null },
                           { key: "stage",    label: "STAGE",      required: true, filterKey: "stage", filterOpts: FUNNEL_STATUSES.map((s) => ({ value: s.key, label: s.label })) },
@@ -1857,13 +1870,14 @@ export default function Deals() {
                                 <ColFilter
                                   label={label}
                                   options={filterOpts}
-                                  value={filterKey === "industry" ? filterIndustry : filterKey === "country" ? filterCountry : filterKey === "source" ? filterSource : filterKey === "stage" ? filterStage : filterKey === "assigned" ? filterAssigned : []}
+                                  value={filterKey === "industry" ? filterIndustry : filterKey === "country" ? filterCountry : filterKey === "source" ? filterSource : filterKey === "stage" ? filterStage : filterKey === "assigned" ? filterAssigned : filterKey === "services" ? filterService : []}
                                   onChange={(v) => {
                                     if (filterKey === "industry") setFilterIndustry(v);
                                     else if (filterKey === "country") setFilterCountry(v);
                                     else if (filterKey === "source") setFilterSource(v);
                                     else if (filterKey === "stage") setFilterStage(v);
                                     else if (filterKey === "assigned") setFilterAssigned(v);
+                                    else if (filterKey === "services") setFilterService(v);
                                   }}
                                 />
                               )}
@@ -1945,6 +1959,24 @@ export default function Deals() {
                             {isVisible("source") && (
                               <td>{srcLabel !== "—" ? <SourceBadge source={srcLabel} plain /> : <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>}</td>
                             )}
+                            {isVisible("services") && (() => {
+                              const svcs = parseJSON(d.linked_lead?.other_notes).services || [];
+                              const customSvc = parseJSON(d.linked_lead?.other_notes).custom_service;
+                              return (
+                                <td>
+                                  {(svcs.length > 0 || customSvc) ? (
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                                      {svcs.map((svc) => (
+                                        <span key={svc} style={{ fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 10, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.18)", color: "#3B82F6", whiteSpace: "nowrap" }}>{svc}</span>
+                                      ))}
+                                      {customSvc && (
+                                        <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 10, background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.18)", color: "#8B5CF6", whiteSpace: "nowrap" }}>{customSvc}</span>
+                                      )}
+                                    </div>
+                                  ) : <span style={{ color: "var(--text-muted)", fontSize: 11 }}>—</span>}
+                                </td>
+                              );
+                            })()}
                             {isVisible("website") && (
                               <td>
                                 {extra.website ? (

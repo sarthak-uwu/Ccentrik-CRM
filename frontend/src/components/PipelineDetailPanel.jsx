@@ -229,7 +229,7 @@ function InfoRow({ icon: Icon, label, value, isLink, isEmail, isPhone, onCompose
 }
 
 // ── Activity Form ─────────────────────────────────────────────────────────────
-function AddActivityForm({ entryId, profile, onSuccess }) {
+function AddActivityForm({ entryId, profile, onSuccess, services = [] }) {
   const [saving, setSaving]       = useState(false);
   const [actType, setActType]     = useState("follow_up_call");
   const [actTypeOpen, setActTypeOpen] = useState(false);
@@ -237,6 +237,10 @@ function AddActivityForm({ entryId, profile, onSuccess }) {
   const [date, setDate]           = useState("");
   const [time, setTime]           = useState("");
   const actTypeRef = useRef(null);
+  const svcOptions = services.length > 0
+    ? (services.length === 1 ? services : [...services, "Cumulative"])
+    : [];
+  const [actService, setActService] = useState(() => svcOptions.length === 1 ? svcOptions[0] : "");
 
   useEffect(() => {
     if (!actTypeOpen) return;
@@ -248,6 +252,7 @@ function AddActivityForm({ entryId, profile, onSuccess }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!remarks.trim()) { toast.error("Remarks are required"); return; }
+    if (svcOptions.length > 0 && !actService) { toast.error("Please select a service"); return; }
     setSaving(true);
     try {
       const typeInfo    = ACT_FORM_TYPES.find((t) => t.key === actType);
@@ -268,7 +273,7 @@ function AddActivityForm({ entryId, profile, onSuccess }) {
           status:       scheduledAt ? "todo" : "done",
           priority:     "medium",
           due_date:     scheduledAt || null,
-          metadata:     { activity_type: actType, remarks: remarks.trim(), scheduled_at: scheduledAt },
+          metadata:     { activity_type: actType, remarks: remarks.trim(), scheduled_at: scheduledAt, ...(actService ? { service: actService } : {}) },
         }),
       });
       if (!res.ok) {
@@ -277,6 +282,7 @@ function AddActivityForm({ entryId, profile, onSuccess }) {
       }
       toast.success("Activity logged");
       setRemarks(""); setDate(""); setTime(""); setActType("follow_up_call");
+      setActService(svcOptions.length === 1 ? svcOptions[0] : "");
       onSuccess?.();
     } catch (err) {
       toast.error("Failed: " + (err.message || "Unknown error"));
@@ -317,6 +323,24 @@ function AddActivityForm({ entryId, profile, onSuccess }) {
           )}
         </div>
       </div>
+      {svcOptions.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 5 }}>
+            Service *
+          </label>
+          <select
+            className="crm-input"
+            style={{ height: 36, fontSize: 13, width: "100%", borderColor: svcOptions.length > 1 && !actService ? "rgba(239,68,68,0.5)" : undefined }}
+            value={actService}
+            onChange={(e) => setActService(e.target.value)}
+          >
+            {svcOptions.length > 1 && <option value="">Select service...</option>}
+            {svcOptions.map((svc) => (
+              <option key={svc} value={svc}>{svc}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div style={{ marginBottom: 10 }}>
         <label style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 5 }}>Remarks *</label>
         <textarea className="crm-input" rows={3} value={remarks} onChange={(e) => setRemarks(e.target.value)}
@@ -370,7 +394,12 @@ function ActivityItem({ activity, isLast }) {
             </button>
           </div>
         )}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
+          {meta.service && (
+            <span style={{ fontSize: 10.5, fontWeight: 700, padding: "1px 7px", borderRadius: 99, background: meta.service === "Cumulative" ? "rgba(139,92,246,0.1)" : "rgba(37,99,235,0.08)", color: meta.service === "Cumulative" ? "#8B5CF6" : "#3B82F6", border: `1px solid ${meta.service === "Cumulative" ? "rgba(139,92,246,0.25)" : "rgba(37,99,235,0.2)"}` }}>
+              {meta.service === "Cumulative" ? "Cumulative" : `Service: ${meta.service}`}
+            </span>
+          )}
           {(activity.user?.full_name || activity.created_by_profile?.full_name) && (
             <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 700, padding: "1px 7px", borderRadius: 99, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
               {activity.user?.full_name || activity.created_by_profile?.full_name}
@@ -1057,7 +1086,7 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
                 )}
               </div>
 
-              <AddActivityForm entryId={entry.id} profile={profile}
+              <AddActivityForm entryId={entry.id} profile={profile} services={extra.services || []}
                 onSuccess={() => {
                   qc.invalidateQueries({ queryKey: ["unified-timeline-pipeline", entry.id] });
                   qc.invalidateQueries({ queryKey: ["my-pending-activities"] });
