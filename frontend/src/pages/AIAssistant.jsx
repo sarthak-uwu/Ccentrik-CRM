@@ -1,19 +1,16 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Brain, Send, Trash2, Mic, MicOff, Volume2, VolumeX,
   Copy, Check, ThumbsUp, ThumbsDown, Square, Globe,
-  FileText, Upload, X, Plus, Sparkles, Zap,
-  Target, BarChart3, Calendar, Mail, Settings, BookOpen,
-  Loader2, Download, TrendingUp, RefreshCw, FilePlus,
-  FileCheck, FileX, FolderOpen, MessageSquare, ChevronRight,
-  Image, Menu, PanelRightClose, PanelRightOpen, AlertCircle,
+  FileText, Upload, Plus, Sparkles,
+  Target, BarChart3, Calendar, Mail, Settings,
+  Loader2, Download, TrendingUp, RefreshCw,
+  ChevronRight, Image, Menu, PanelRightClose, PanelRightOpen,
 } from "lucide-react";
 import { streamARIA, clearARIAHistory } from "../services/ariaService";
-import { aiDocumentService } from "../services/aiDocumentService";
 import { auth } from "../firebase";
 import toast from "react-hot-toast";
 
@@ -529,153 +526,6 @@ function WelcomeScreen({ selectedLang, onSelectLang, onStart }) {
   );
 }
 
-// ─── Documents Panel ──────────────────────────────────────────────────────────
-
-function DocumentsPanel() {
-  const qc = useQueryClient();
-  const [dragging, setDragging]   = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [progress, setProgress]   = useState(0);
-  const fileInputRef = useRef(null);
-
-  const { data: documents = [], isLoading, refetch } = useQuery({
-    queryKey: ["ai-documents"],
-    queryFn:  () => aiDocumentService.list(),
-    staleTime: 12000,
-    refetchInterval: 18000,
-  });
-
-  const MAX_MB = 10;
-
-  const handleFiles = async (files) => {
-    const file = files[0];
-    if (!file) return;
-    if (file.size > MAX_MB * 1024 * 1024) { toast.error(`Max file size is ${MAX_MB} MB`); return; }
-    setUploading(true); setProgress(0);
-    try {
-      await aiDocumentService.upload(file, setProgress);
-      toast.success(`"${file.name}" indexed successfully`);
-      qc.invalidateQueries({ queryKey: ["ai-documents"] });
-    } catch (err) {
-      toast.error(err.message || "Upload failed");
-    } finally {
-      setUploading(false); setProgress(0);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
-
-  const handleDelete = async (doc) => {
-    if (!window.confirm(`Remove "${doc.name}"?`)) return;
-    try { await aiDocumentService.remove(doc.id); qc.invalidateQueries({ queryKey: ["ai-documents"] }); }
-    catch (err) { toast.error(err.message); }
-  };
-
-  const fmtSize = (b) => !b ? "" : b < 1048576 ? `${(b/1024).toFixed(0)} KB` : `${(b/1048576).toFixed(1)} MB`;
-
-  return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      <div style={{ padding: "12px 14px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <BookOpen size={12} style={{ color: "#A78BFA" }} />
-          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>Knowledge Base</span>
-          {documents.filter(d => d.status === "ready").length > 0 && (
-            <span style={{ fontSize: 9.5, padding: "1px 6px", borderRadius: 99, background: "rgba(99,102,241,0.12)", color: "#A78BFA", border: "1px solid rgba(99,102,241,0.2)", fontWeight: 700 }}>
-              {documents.filter(d => d.status === "ready").length}
-            </span>
-          )}
-        </div>
-        <button onClick={refetch} className="btn-ghost" style={{ padding: 4 }}><RefreshCw size={11} /></button>
-      </div>
-
-      <div style={{ padding: "0 10px 10px", flexShrink: 0 }}>
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => { e.preventDefault(); setDragging(false); handleFiles(e.dataTransfer.files); }}
-          onClick={() => !uploading && fileInputRef.current?.click()}
-          style={{
-            border: `2px dashed ${dragging ? "#6366F1" : "rgba(99,102,241,0.22)"}`,
-            borderRadius: 10, padding: "12px 10px", textAlign: "center",
-            cursor: uploading ? "default" : "pointer",
-            background: dragging ? "rgba(99,102,241,0.06)" : "transparent",
-            transition: "all 0.15s",
-          }}
-        >
-          {uploading ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-              <Loader2 size={18} style={{ color: "#6366F1", animation: "spin 1s linear infinite" }} />
-              <div style={{ fontSize: 11, color: "var(--text-2)", fontWeight: 600 }}>Processing… {progress}%</div>
-              <div style={{ width: "100%", height: 3, background: "var(--border)", borderRadius: 99, overflow: "hidden" }}>
-                <div style={{ width: `${progress}%`, height: "100%", background: "linear-gradient(90deg,#6366F1,#8B5CF6)", transition: "width 0.3s", borderRadius: 99 }} />
-              </div>
-            </div>
-          ) : (
-            <>
-              <FilePlus size={18} style={{ color: "rgba(99,102,241,0.45)", marginBottom: 5 }} />
-              <div style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text-2)" }}>
-                Drop or <span style={{ color: "#818CF8" }}>click to upload</span>
-              </div>
-              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>PDF · DOCX · TXT · MD · XLSX · max {MAX_MB} MB</div>
-            </>
-          )}
-        </div>
-        <input ref={fileInputRef} type="file" accept=".pdf,.doc,.docx,.txt,.md,.xlsx,.xls" style={{ display: "none" }}
-          onChange={(e) => e.target.files?.[0] && handleFiles(e.target.files)} />
-      </div>
-
-      <div style={{ flex: 1, overflowY: "auto", padding: "0 10px 10px" }} className="custom-scroll">
-        {isLoading ? (
-          <div style={{ display: "flex", justifyContent: "center", padding: 16 }}>
-            <Loader2 size={16} style={{ color: "var(--text-muted)", animation: "spin 1s linear infinite" }} />
-          </div>
-        ) : documents.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "16px 0", color: "var(--text-muted)" }}>
-            <FolderOpen size={26} style={{ opacity: 0.25, marginBottom: 6 }} />
-            <div style={{ fontSize: 11.5 }}>No documents yet</div>
-            <div style={{ fontSize: 10.5, marginTop: 3 }}>Upload docs to train Ccentrik AI</div>
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            {documents.map((doc) => (
-              <div key={doc.id} style={{
-                display: "flex", alignItems: "center", gap: 8,
-                background: "var(--surface)", border: "1px solid var(--border)",
-                borderRadius: 9, padding: "7px 10px",
-              }}>
-                {doc.status === "ready"      ? <FileCheck size={12} style={{ color: "#10B981", flexShrink: 0 }} />
-                 : doc.status === "error"    ? <FileX     size={12} style={{ color: "#EF4444", flexShrink: 0 }} />
-                 : <Loader2 size={12} style={{ color: "#A78BFA", flexShrink: 0, animation: "spin 1s linear infinite" }} />}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.name}</div>
-                  <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 1 }}>
-                    {doc.status === "ready"      ? `${doc.chunk_count} chunks · ${fmtSize(doc.size_bytes)}`
-                     : doc.status === "processing" ? "Indexing…"
-                     : "Error"}
-                  </div>
-                </div>
-                <button onClick={() => handleDelete(doc)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "2px 3px", borderRadius: 5, display: "flex", flexShrink: 0 }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = "#EF4444"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}>
-                  <Trash2 size={11} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {documents.some(d => d.status === "ready") && (
-        <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
-          <div style={{ fontSize: 10, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 5 }}>
-            <Sparkles size={9} style={{ color: "#A78BFA" }} />
-            AI searches these docs on every question
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── Suggestions Panel ────────────────────────────────────────────────────────
 
 function SuggestionsPanel({ mode, onAskAI, loading }) {
@@ -755,7 +605,6 @@ export default function AIAssistant() {
   // ── UI state ───────────────────────────────────────────────────────────────
   const [showLeft, setShowLeft]     = useState(true);
   const [showRight, setShowRight]   = useState(true);
-  const [rightTab, setRightTab]     = useState("suggestions");
   const [showLangPicker, setShowLangPicker] = useState(false);
 
   // ── Refs ───────────────────────────────────────────────────────────────────
@@ -1503,36 +1352,8 @@ export default function AIAssistant() {
               overflow: "hidden",
             }}
           >
-            {/* Tabs */}
-            <div style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-              <div style={{ display: "flex" }}>
-                {[
-                  { key: "suggestions", icon: Sparkles, label: "Suggestions" },
-                  { key: "documents",   icon: BookOpen,  label: "Docs"        },
-                ].map(({ key, icon: Icon, label }) => (
-                  <button key={key} onClick={() => setRightTab(key)}
-                    style={{
-                      flex: 1, padding: "10px 0",
-                      display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                      background: "none", border: "none", cursor: "pointer",
-                      fontSize: 12, fontWeight: rightTab === key ? 700 : 500,
-                      color: rightTab === key ? "var(--accent)" : "var(--text-muted)",
-                      borderBottom: `2px solid ${rightTab === key ? "var(--accent)" : "transparent"}`,
-                      transition: "all 0.14s", marginBottom: -1,
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    <Icon size={11} /> {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             <div style={{ flex: 1, overflow: "hidden" }}>
-              {rightTab === "suggestions"
-                ? <SuggestionsPanel mode={currentMode} onAskAI={(p) => sendMessage(p)} loading={loading} />
-                : <DocumentsPanel />
-              }
+              <SuggestionsPanel mode={currentMode} onAskAI={(p) => sendMessage(p)} loading={loading} />
             </div>
           </motion.div>
         )}
