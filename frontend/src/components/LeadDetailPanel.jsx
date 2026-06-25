@@ -191,7 +191,7 @@ function SourceChip({ activity }) {
 }
 
 /* ─── Add Activity Form ───────────────────────────────────────────────────── */
-function AddActivityForm({ leadId, profile, onSuccess }) {
+function AddActivityForm({ leadId, profile, onSuccess, services = [] }) {
   const [saving, setSaving]           = useState(false);
   const [actType, setActType]         = useState("follow_up_call");
   const [actTypeOpen, setActTypeOpen] = useState(false);
@@ -199,6 +199,10 @@ function AddActivityForm({ leadId, profile, onSuccess }) {
   const [date, setDate]               = useState("");
   const [time, setTime]               = useState("");
   const actTypeRef = useRef(null);
+  const svcOptions = services.length > 0
+    ? (services.length === 1 ? services : [...services, "Cumulative"])
+    : [];
+  const [actService, setActService] = useState(() => svcOptions.length === 1 ? svcOptions[0] : "");
 
   useEffect(() => {
     if (!actTypeOpen) return;
@@ -210,6 +214,7 @@ function AddActivityForm({ leadId, profile, onSuccess }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!remarks.trim()) { toast.error("Remarks are required"); return; }
+    if (svcOptions.length > 0 && !actService) { toast.error("Please select a service"); return; }
     setSaving(true);
     try {
       const typeInfo    = ACT_FORM_TYPES.find((t) => t.key === actType);
@@ -230,7 +235,7 @@ function AddActivityForm({ leadId, profile, onSuccess }) {
           status:       scheduledAt ? "todo" : "done",
           priority:     "medium",
           due_date:     scheduledAt || null,
-          metadata:     { activity_type: actType, remarks: remarks.trim(), scheduled_at: scheduledAt },
+          metadata:     { activity_type: actType, remarks: remarks.trim(), scheduled_at: scheduledAt, ...(actService ? { service: actService } : {}) },
         }),
       });
       if (!res.ok) {
@@ -239,6 +244,7 @@ function AddActivityForm({ leadId, profile, onSuccess }) {
       }
       toast.success("Activity logged");
       setRemarks(""); setDate(""); setTime(""); setActType("follow_up_call");
+      setActService(svcOptions.length === 1 ? svcOptions[0] : "");
       onSuccess?.();
     } catch (err) {
       toast.error("Failed: " + (err.message || "Unknown error"));
@@ -279,6 +285,24 @@ function AddActivityForm({ leadId, profile, onSuccess }) {
           )}
         </div>
       </div>
+      {svcOptions.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 5 }}>
+            Service *
+          </label>
+          <select
+            className="crm-input"
+            style={{ height: 36, fontSize: 13, width: "100%", borderColor: svcOptions.length > 1 && !actService ? "rgba(239,68,68,0.5)" : undefined }}
+            value={actService}
+            onChange={(e) => setActService(e.target.value)}
+          >
+            {svcOptions.length > 1 && <option value="">Select service...</option>}
+            {svcOptions.map((svc) => (
+              <option key={svc} value={svc}>{svc}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div style={{ marginBottom: 10 }}>
         <label style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 5 }}>Remarks *</label>
         <textarea className="crm-input" rows={3} value={remarks} onChange={(e) => setRemarks(e.target.value)}
@@ -334,8 +358,13 @@ function ActivityItem({ activity, isLast }) {
             </button>
           </div>
         )}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
           <SourceChip activity={activity} />
+          {meta.service && (
+            <span style={{ fontSize: 10.5, fontWeight: 700, padding: "1px 7px", borderRadius: 99, background: meta.service === "Cumulative" ? "rgba(139,92,246,0.1)" : "rgba(37,99,235,0.08)", color: meta.service === "Cumulative" ? "#8B5CF6" : "#3B82F6", border: `1px solid ${meta.service === "Cumulative" ? "rgba(139,92,246,0.25)" : "rgba(37,99,235,0.2)"}` }}>
+              {meta.service === "Cumulative" ? "Cumulative" : `Service: ${meta.service}`}
+            </span>
+          )}
           {(activity.user?.full_name || activity.created_by_profile?.full_name) && (
             <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 700, padding: "1px 7px", borderRadius: 99, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
               {activity.user?.full_name || activity.created_by_profile?.full_name}
@@ -863,23 +892,39 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
           {/* ── DETAILS TAB ── */}
           {activeTab === "details" && (
             <div>
-              <SectionHead label="Lead Identification" />
-              <InfoRow icon={Hash}     label="Lead ID"       value={leadId} />
-              {lead.created_by_profile?.full_name && <InfoRow icon={User} label="Connected By" value={lead.created_by_profile.full_name} />}
-              {lead.assigned_profile?.full_name   && <InfoRow icon={User} label="Assigned To"  value={lead.assigned_profile.full_name} />}
-
-              <SectionHead label="Contact Information" />
-              <InfoRow icon={User}      label="Full Name"       value={lead.contact_name} />
-              <InfoRow icon={Briefcase} label="Designation"     value={lead.designation} />
-              <InfoRow icon={Mail} label="Email"           value={extra.email || lead.email} isEmail onComposeEmail={openComposer} />
-              <InfoRow icon={Mail} label="Alternate Email" value={extra.alternate_email}       isEmail onComposeEmail={openComposer} />
-              <InfoRow icon={Phone}     label="Phone"           value={extra.phone || lead.phone} />
-              <InfoRow icon={Phone}     label="Alternate Phone" value={extra.alternate_phone || extra.alternate_contact} />
-
-              <SectionHead label="Company" />
+              {/* ── Section 1: Company Information ── */}
+              <SectionHead label="Company Information" />
               <InfoRow icon={Building2} label="Company Name"     value={lead.company_name} />
               <InfoRow icon={Globe}     label="Website"          value={extra.website} isLink={!!(extra.website)} />
               <InfoRow icon={Link2}     label="Company LinkedIn" value={extra.company_linkedin} isLink={!!(extra.company_linkedin)} />
+              <InfoRow icon={Briefcase} label="Industry"         value={extra.industry} />
+              {extra.country && <InfoRow icon={Globe}   label="Country" value={countryName(extra.country) || extra.country} />}
+              {extra.state   && <InfoRow icon={MapPin}  label="State"   value={extra.state} />}
+              {extra.city    && <InfoRow icon={MapPin}  label="City"    value={extra.city} />}
+              {(extra.services?.length > 0 || extra.custom_service) && (
+                <>
+                  <SectionHead label="Services" />
+                  <div style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {(extra.services || []).map((svc) => (
+                        <span key={svc} style={{ padding: "4px 11px", borderRadius: 20, fontSize: 11.5, fontWeight: 600, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.18)", color: "#3B82F6" }}>{svc}</span>
+                      ))}
+                      {extra.custom_service && (
+                        <span style={{ padding: "4px 11px", borderRadius: 20, fontSize: 11.5, fontWeight: 600, background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.18)", color: "#8B5CF6" }}>{extra.custom_service}</span>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* ── Section 2: Contact Person ── */}
+              <SectionHead label="Contact Person" />
+              <InfoRow icon={User}      label="Full Name"       value={lead.contact_name} />
+              <InfoRow icon={Briefcase} label="Designation"     value={lead.designation} />
+              <InfoRow icon={Mail}      label="Email"           value={extra.email || lead.email} isEmail onComposeEmail={openComposer} />
+              <InfoRow icon={Mail}      label="Alternate Email" value={extra.alternate_email}      isEmail onComposeEmail={openComposer} />
+              <InfoRow icon={Phone}     label="Phone"           value={extra.phone || lead.phone} />
+              <InfoRow icon={Phone}     label="Alternate Phone" value={extra.alternate_phone || extra.alternate_contact} />
               {extra.linkedin_url && (
                 <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "9px 0", borderBottom: "1px solid var(--border)" }}>
                   <div style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(10,102,194,0.1)", border: "1px solid rgba(10,102,194,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -894,25 +939,23 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                   </div>
                 </div>
               )}
-              {extra.country && <InfoRow icon={Globe} label="Country" value={countryName(extra.country) || extra.country} />}
 
-              {(extra.services?.length > 0 || extra.custom_service) && (
-                <>
-                  <SectionHead label="Services of Interest" />
-                  <div style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      {(extra.services || []).map((svc) => (
-                        <span key={svc} style={{ padding: "4px 11px", borderRadius: 20, fontSize: 11.5, fontWeight: 600, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.18)", color: "#3B82F6" }}>{svc}</span>
-                      ))}
-                      {extra.custom_service && (
-                        <span style={{ padding: "4px 11px", borderRadius: 20, fontSize: 11.5, fontWeight: 600, background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.18)", color: "#8B5CF6" }}>{extra.custom_service}</span>
-                      )}
-                    </div>
+              {/* ── Section 3: Lead Information ── */}
+              <SectionHead label="Lead Information" />
+              <InfoRow icon={Hash} label="Lead ID"      value={leadId} />
+              {lead.created_by_profile?.full_name && <InfoRow icon={User} label="Connected By" value={lead.created_by_profile.full_name} />}
+              {lead.assigned_profile?.full_name   && <InfoRow icon={User} label="Assigned To"  value={lead.assigned_profile.full_name} />}
+              {lead.source && (
+                <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "9px 0", borderBottom: "1px solid var(--border)" }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 8, background: "var(--surface-2)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Tag size={13} style={{ color: "var(--text-muted)" }} strokeWidth={1.7} />
                   </div>
-                </>
+                  <div style={{ flex: 1, minWidth: 0, paddingTop: 1 }}>
+                    <div style={{ fontSize: 10.5, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>Lead Source</div>
+                    <div style={{ paddingTop: 2 }}><SourceBadge source={lead.source} /></div>
+                  </div>
+                </div>
               )}
-
-              <SectionHead label="Stage & Status" />
               <div style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
                 <div style={{ fontSize: 10.5, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>Lead Stage</div>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "6px 16px", borderRadius: 99, background: statusInfo.bg, border: `1px solid ${statusInfo.color}30`, fontSize: 13, fontWeight: 700, color: statusInfo.color }}>
@@ -920,10 +963,27 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                   {statusInfo.label}
                 </span>
               </div>
+              {lead.temperature && TEMP_MAP[lead.temperature] && (() => {
+                const t = TEMP_MAP[lead.temperature]; const TIcon = t.icon;
+                return (
+                  <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "9px 0", borderBottom: "1px solid var(--border)" }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 8, background: `${t.color}12`, border: `1px solid ${t.color}20`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <TIcon size={13} style={{ color: t.color }} strokeWidth={1.7} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0, paddingTop: 1 }}>
+                      <div style={{ fontSize: 10.5, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>Lead Temperature</div>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: t.color }}>{t.label}</span>
+                    </div>
+                  </div>
+                );
+              })()}
               {extra.meeting_status && extra.meeting_status !== "—" && (
                 <InfoRow icon={Calendar} label="Meeting Status" value={extra.meeting_status} />
               )}
+              <InfoRow icon={Clock} label="Created"      value={lead.created_at ? `${fmtDate(lead.created_at)} · ${fmtRelative(lead.created_at)}` : null} />
+              <InfoRow icon={Clock} label="Last Updated" value={lead.updated_at ? `${fmtDate(lead.updated_at)} · ${fmtRelative(lead.updated_at)}` : null} />
 
+              {/* ── Notes ── */}
               {lead.remarks && (
                 <>
                   <SectionHead label="Notes" />
@@ -932,10 +992,6 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                   </div>
                 </>
               )}
-
-              <SectionHead label="Record Info" />
-              <InfoRow icon={Clock} label="Created"      value={lead.created_at ? `${fmtDate(lead.created_at)} · ${fmtRelative(lead.created_at)}` : null} />
-              <InfoRow icon={Clock} label="Last Updated" value={lead.updated_at ? `${fmtDate(lead.updated_at)} · ${fmtRelative(lead.updated_at)}` : null} />
             </div>
           )}
 
@@ -1092,7 +1148,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                 </div>
               )}
 
-              <AddActivityForm leadId={lead.id} profile={profile}
+              <AddActivityForm leadId={lead.id} profile={profile} services={extra.services || []}
                 onSuccess={() => {
                   qc.invalidateQueries({ queryKey: ["unified-timeline-lead", lead.id] });
                   qc.invalidateQueries({ queryKey: ["my-pending-activities"] });

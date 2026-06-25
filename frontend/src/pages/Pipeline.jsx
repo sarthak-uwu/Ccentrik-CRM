@@ -822,6 +822,7 @@ const ALL_COLS = [
   { key: "country",  label: "Country"     },
   { key: "poc",      label: "POC"         },
   { key: "source",   label: "Source"      },
+  { key: "services", label: "Services"    },
   { key: "website",  label: "Website"     },
   { key: "linkedin", label: "LinkedIn"    },
   { key: "stage",    label: "Stage"       },
@@ -1534,6 +1535,7 @@ export default function Pipeline() {
   const [filterAssigned,  setFilterAssigned]  = useState([]);
   const [filterDateFrom,  setFilterDateFrom]  = useState("");
   const [filterDateTo,    setFilterDateTo]    = useState("");
+  const [filterService,   setFilterService]   = useState([]);
   const [leadIdSearch,    setLeadIdSearch]    = useState("");
   const [visibleCols,     setVisibleCols]     = useState(() => { try { const s = localStorage.getItem(LS_COL_KEY); return s ? JSON.parse(s) : DEFAULT_COLS; } catch { return DEFAULT_COLS; } });
   // Load user-specific column prefs when profile becomes available
@@ -1626,6 +1628,10 @@ export default function Pipeline() {
     if (filterAssigned.length) rows = rows.filter((e) => filterAssigned.includes(e.assigned_to));
     if (filterDateFrom) rows = rows.filter((e) => e.created_at && new Date(e.created_at) >= new Date(filterDateFrom));
     if (filterDateTo)   rows = rows.filter((e) => e.created_at && new Date(e.created_at) <= new Date(filterDateTo + "T23:59:59"));
+    if (filterService.length) rows = rows.filter((e) => {
+      const svcs = parseJSON(e.other_notes).services || [];
+      return filterService.some((f) => svcs.includes(f));
+    });
 
     rows.sort((a, b) => {
       let av, bv;
@@ -1643,12 +1649,12 @@ export default function Pipeline() {
       return 0;
     });
     return rows;
-  }, [allEntries, filterStage, filterIndustry, filterCountry, filterSource, filterAssigned, filterDateFrom, filterDateTo, sortBy, sortDir, leadIdSearch]);
+  }, [allEntries, filterStage, filterIndustry, filterCountry, filterSource, filterAssigned, filterDateFrom, filterDateTo, filterService, sortBy, sortDir, leadIdSearch]);
 
   // ── Pagination ────────────────────────────────────────────────────────────
   const PIPELINE_PAGE_SIZE = 30;
   const [pipelinePage, setPipelinePage] = useState(1);
-  useEffect(() => { setPipelinePage(1); }, [filterStage, filterIndustry, filterCountry, filterSource, filterAssigned, filterDateFrom, filterDateTo, leadIdSearch]);
+  useEffect(() => { setPipelinePage(1); }, [filterStage, filterIndustry, filterCountry, filterSource, filterAssigned, filterDateFrom, filterDateTo, filterService, leadIdSearch]);
   const pipelineTotalPages = Math.ceil(filteredEntries.length / PIPELINE_PAGE_SIZE);
   const pagedEntries = filteredEntries.slice((pipelinePage - 1) * PIPELINE_PAGE_SIZE, pipelinePage * PIPELINE_PAGE_SIZE);
 
@@ -1926,10 +1932,20 @@ export default function Pipeline() {
           <option value="">All Sources</option>
           {LEAD_SOURCES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
         </select>
-        {/* NOTE: The filter dropdown keeps its arrow for discoverability; only table-row selects hide arrows */}
+        {/* Service filter */}
+        <select
+          className="crm-input"
+          style={{ height: 34, fontSize: 12, width: "auto", minWidth: 0, paddingLeft: 10, paddingRight: 28, borderColor: filterService.length ? "rgba(37,99,235,0.5)" : undefined }}
+          value={filterService.length === 1 ? filterService[0] : ""}
+          onChange={(e) => setFilterService(e.target.value ? [e.target.value] : [])}
+          title="Filter by Service"
+        >
+          <option value="">All Services</option>
+          {SAP_SERVICES.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
 
-        {(search || leadIdSearch || filterStage.length || filterIndustry.length || filterCountry.length || filterSource.length || filterAssigned.length || filterDateFrom || filterDateTo) && (
-          <button className="btn-secondary" style={{ height: 34, fontSize: 12, display: "flex", alignItems: "center", gap: 5 }} onClick={() => { setSearch(""); setLeadIdSearch(""); setFilterStage([]); setFilterIndustry([]); setFilterCountry([]); setFilterSource([]); setFilterAssigned([]); setFilterDateFrom(""); setFilterDateTo(""); }}>
+        {(search || leadIdSearch || filterStage.length || filterIndustry.length || filterCountry.length || filterSource.length || filterService.length || filterAssigned.length || filterDateFrom || filterDateTo) && (
+          <button className="btn-secondary" style={{ height: 34, fontSize: 12, display: "flex", alignItems: "center", gap: 5 }} onClick={() => { setSearch(""); setLeadIdSearch(""); setFilterStage([]); setFilterIndustry([]); setFilterCountry([]); setFilterSource([]); setFilterService([]); setFilterAssigned([]); setFilterDateFrom(""); setFilterDateTo(""); }}>
             <X size={12} /> Clear Filters
           </button>
         )}
@@ -2020,6 +2036,7 @@ export default function Pipeline() {
                       { colKey: "country",  label: "COUNTRY",     col: null,             filterKey: "country",   filterOpts: COUNTRIES.map((c) => ({ value: c.code, label: c.name })) },
                       { colKey: "poc",      label: "POC",         col: null,             filterKey: null         },
                       { colKey: "source",   label: "SOURCE",      col: null,             filterKey: "source",    filterOpts: LEAD_SOURCES.map((s) => ({ value: s.key, label: s.label })) },
+                      { colKey: "services", label: "SERVICES",    col: null,             filterKey: null         },
                       { colKey: "website",  label: "WEBSITE",     col: null,             filterKey: null         },
                       { colKey: "linkedin", label: "LINKEDIN",    col: null,             filterKey: null         },
                       { colKey: "stage",    label: "STAGE",       col: "pipeline_stage", filterKey: "stage",     filterOpts: PIPELINE_STAGES.map((s) => ({ value: s.key, label: s.label })) },
@@ -2175,6 +2192,20 @@ export default function Pipeline() {
                               </td>
                             );
                           })()}
+                          {visibleCols.includes("services") && (
+                          <td>
+                            {(extra.services?.length > 0 || extra.custom_service) ? (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                                {(extra.services || []).map((svc) => (
+                                  <span key={svc} style={{ fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 10, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.18)", color: "#3B82F6", whiteSpace: "nowrap" }}>{svc}</span>
+                                ))}
+                                {extra.custom_service && (
+                                  <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 10, background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.18)", color: "#8B5CF6", whiteSpace: "nowrap" }}>{extra.custom_service}</span>
+                                )}
+                              </div>
+                            ) : <span style={{ color: "var(--text-muted)", fontSize: 11 }}>—</span>}
+                          </td>
+                          )}
                           {visibleCols.includes("website") && (
                           <td>
                             {extra.website ? (

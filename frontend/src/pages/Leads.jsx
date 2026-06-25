@@ -28,6 +28,7 @@ const LEAD_COLUMNS = [
   { key: "country",  label: "Country"     },
   { key: "poc",      label: "POC"         },
   { key: "source",   label: "Source"      },
+  { key: "services", label: "Services"    },
   { key: "website",  label: "Website"     },
   { key: "linkedin", label: "LinkedIn"    },
   { key: "temp",     label: "Lead Status" },
@@ -1626,6 +1627,7 @@ export default function Leads() {
   const [filterAssigned,  setFilterAssigned]  = useState([]);
   const [filterDateFrom,  setFilterDateFrom]  = useState("");
   const [filterDateTo,    setFilterDateTo]    = useState("");
+  const [filterService,   setFilterService]   = useState([]);
   const [filterLeadId,    setFilterLeadId]    = useState("");
   const [showBulkImport, setShowBulkImport] = useState(false);
   const fileRef            = useRef();
@@ -1947,6 +1949,10 @@ export default function Leads() {
     if (filterAssigned.length) arr = arr.filter((l) => filterAssigned.includes(l.assigned_to));
     if (filterDateFrom) arr = arr.filter((l) => l.created_at && new Date(l.created_at) >= new Date(filterDateFrom));
     if (filterDateTo)   arr = arr.filter((l) => l.created_at && new Date(l.created_at) <= new Date(filterDateTo + "T23:59:59"));
+    if (filterService.length) arr = arr.filter((l) => {
+      const svcs = parseJSON(l.other_notes).services || [];
+      return filterService.some((f) => svcs.includes(f));
+    });
     switch (sortBy) {
       case "id_asc":        return arr.sort((a, b) => (parseInt((a.lead_code||"").replace(/\D/g,""),10)||0) - (parseInt((b.lead_code||"").replace(/\D/g,""),10)||0));
       case "id_desc":       return arr.sort((a, b) => (parseInt((b.lead_code||"").replace(/\D/g,""),10)||0) - (parseInt((a.lead_code||"").replace(/\D/g,""),10)||0));
@@ -1955,12 +1961,12 @@ export default function Leads() {
       case "company_asc":   return arr.sort((a, b) => (a.company_name || "").localeCompare(b.company_name || ""));
       default: return arr;
     }
-  }, [rawLeads, sortBy, hideConverted, filterStage, filterTemp, filterLeadId, filterIndustry, filterCountry, filterSource, filterAssigned, filterDateFrom, filterDateTo]);
+  }, [rawLeads, sortBy, hideConverted, filterStage, filterTemp, filterLeadId, filterIndustry, filterCountry, filterSource, filterAssigned, filterDateFrom, filterDateTo, filterService]);
 
   // ── Pagination ────────────────────────────────────────────────────────────
   const LEADS_PAGE_SIZE = 30;
   const [leadsPage, setLeadsPage] = useState(1);
-  useEffect(() => { setLeadsPage(1); }, [filterStage, filterTemp, filterLeadId, filterIndustry, filterCountry, filterSource, filterAssigned, filterDateFrom, filterDateTo, hideConverted]);
+  useEffect(() => { setLeadsPage(1); }, [filterStage, filterTemp, filterLeadId, filterIndustry, filterCountry, filterSource, filterAssigned, filterDateFrom, filterDateTo, filterService, hideConverted]);
   const leadsTotalPages = Math.ceil(leads.length / LEADS_PAGE_SIZE);
   const pagedLeads = leads.slice((leadsPage - 1) * LEADS_PAGE_SIZE, leadsPage * LEADS_PAGE_SIZE);
 
@@ -2118,7 +2124,7 @@ export default function Leads() {
         </div>
       </div>
 
-      {/* ── Toolbar (search only) ── */}
+      {/* ── Toolbar (search + service filter) ── */}
       <div style={{ padding: "8px 24px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)" }}>
         {/* Company/contact search */}
         <div style={{ position: "relative", flex: "1 1 200px", maxWidth: 300 }}>
@@ -2137,6 +2143,21 @@ export default function Leads() {
             style={{ paddingLeft: 28, height: 34, fontSize: 12, fontFamily: "monospace", borderColor: filterLeadId ? "var(--accent)" : undefined }}
           />
         </div>
+
+        {/* Service filter */}
+        <select
+          className="crm-input"
+          style={{ height: 34, fontSize: 12, width: "auto", minWidth: 0, paddingLeft: 10, paddingRight: 28, borderColor: filterService.length ? "rgba(37,99,235,0.5)" : undefined }}
+          value={filterService.length === 1 ? filterService[0] : ""}
+          onChange={(e) => setFilterService(e.target.value ? [e.target.value] : [])}
+          title="Filter by Service"
+        >
+          <option value="">All Services</option>
+          {SAP_SERVICES.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        {filterService.length > 0 && (
+          <button type="button" onClick={() => setFilterService([])} style={{ background: "none", border: "none", cursor: "pointer", padding: "1px 4px", color: "#EF4444", lineHeight: 1 }}><X size={12} /></button>
+        )}
 
         <div style={{ flex: 1 }} />
 
@@ -2207,6 +2228,7 @@ export default function Leads() {
                       { key: "country",  label: "COUNTRY",     filterKey: "country",  filterOpts: COUNTRIES.map((c) => ({ value: c.code, label: c.name })) },
                       { key: "poc",      label: "POC",         filterKey: null },
                       { key: "source",   label: "SOURCE",      filterKey: "source",   filterOpts: LEAD_SOURCES.map((s) => ({ value: s.key, label: s.label })) },
+                      { key: "services", label: "SERVICES",    filterKey: null },
                       { key: "website",  label: "WEBSITE",     filterKey: null },
                       { key: "linkedin", label: "LINKEDIN",    filterKey: null },
                       { key: "temp",   label: "LEAD STATUS", filterKey: "temp",   filterOpts: [{ value: "hot", label: "Hot" }, { value: "warm", label: "Warm" }, { value: "cold", label: "Cold" }] },
@@ -2315,6 +2337,20 @@ export default function Leads() {
                         {isVisible("source") && (
                           <td>
                             {l.source ? <SourceBadge source={l.source} plain /> : <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>}
+                          </td>
+                        )}
+                        {isVisible("services") && (
+                          <td>
+                            {(extra.services?.length > 0 || extra.custom_service) ? (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                                {(extra.services || []).map((svc) => (
+                                  <span key={svc} style={{ fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 10, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.18)", color: "#3B82F6", whiteSpace: "nowrap" }}>{svc}</span>
+                                ))}
+                                {extra.custom_service && (
+                                  <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 10, background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.18)", color: "#8B5CF6", whiteSpace: "nowrap" }}>{extra.custom_service}</span>
+                                )}
+                              </div>
+                            ) : <span style={{ color: "var(--text-muted)", fontSize: 11 }}>—</span>}
                           </td>
                         )}
                         {isVisible("website") && (
