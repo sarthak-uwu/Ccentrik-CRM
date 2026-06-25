@@ -14,6 +14,7 @@ import {
 import { streamARIA } from "../services/ariaService";
 import { auth } from "../firebase";
 import { useCurrency } from "../context/CurrencyContext";
+import toast from "react-hot-toast";
 
 // ── Language config ───────────────────────────────────────────────────────────
 const LANGUAGES = [
@@ -464,7 +465,7 @@ export default function AIAssistant() {
     rec.onend   = () => { setAiState("idle"); setIsVoiceOn(false); };
     rec.onerror = (e) => {
       setAiState("idle"); setIsVoiceOn(false);
-      if (e.error === "not-allowed") alert("Microphone access denied. Please allow microphone permission in your browser and try again.");
+      if (e.error === "not-allowed") toast.error("Microphone blocked. Click the lock icon in your browser address bar and allow microphone, then try again.");
       else if (e.error === "no-speech") setInput("");
     };
     setRecognition(rec);
@@ -486,11 +487,20 @@ export default function AIAssistant() {
     synthRef.current.speak(utter);
   }, [isMuted, selectedLang.code]);
 
-  const startVoice = () => {
-    if (!recognition) { alert("Voice recognition not supported. Please use Chrome."); return; }
+  const startVoice = async () => {
+    if (!recognition) { toast.error("Voice recognition not supported in this browser. Please use Chrome."); return; }
     synthRef.current?.cancel();
+    // Request getUserMedia first — this forces Chrome to show/cache the permission properly
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop()); // release immediately; we only need the grant
+    } catch {
+      toast.error("Microphone access denied. Click the lock icon in the address bar, allow microphone, then try again.");
+      return;
+    }
     setAiState("listening"); setIsVoiceOn(true);
-    recognition.lang = selectedLang.code; recognition.start();
+    recognition.lang = selectedLang.code;
+    try { recognition.start(); } catch { /* already started */ }
   };
   const stopVoice = () => { recognition?.stop(); setAiState("idle"); setIsVoiceOn(false); };
 
