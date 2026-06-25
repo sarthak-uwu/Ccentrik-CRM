@@ -1710,7 +1710,7 @@ async function sendRoleBasedDSR({ dayStart, dayEnd, dateLabel, todayStr }) {
         staff:           staffForPdf.length ? staffForPdf : scopedStaff,
         reportDateLabel: dateLabel,
         reportType:      "Daily",
-        generatedAt:     nowUtc.toISOString(),
+        generatedAt:     new Date().toISOString(),
       });
 
       // Build HTML and text bodies
