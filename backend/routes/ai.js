@@ -1,16 +1,16 @@
 const express = require("express");
 const router  = express.Router();
+const Groq    = require("groq-sdk");
 const { supabase }     = require("../config/db");
 const { authenticate } = require("../middleware/auth");
 
-const OR_MODEL       = "mistralai/mistral-small-3.2-24b-instruct:free";
-const OR_BASE_URL    = "https://openrouter.ai/api/v1/chat/completions";
-const MAX_ITERATIONS = 6;
+const GROQ_MODEL      = "llama-3.3-70b-versatile";
+const MAX_ITERATIONS  = 6;
 
 // Per-user conversation history (in-memory; resets on cold start)
 const conversationHistory = {};
 
-// ── Tool definitions (OpenAI-compatible) ──────────────────────────────────────
+// ── Tool definitions ──────────────────────────────────────────────────────────
 const CRM_TOOLS = [
   {
     type: "function",
@@ -172,34 +172,6 @@ async function executeTool(name, args, profile) {
   return { error: `Unknown tool: ${name}` };
 }
 
-// ── OpenRouter completion helper ───────────────────────────────────────────────
-async function callOpenRouter(apiKey, messages) {
-  const res = await fetch(OR_BASE_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type":  "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-      "HTTP-Referer":  "https://ccentrik-crm.web.app",
-      "X-Title":       "Ccentrik CRM",
-    },
-    body: JSON.stringify({
-      model:       OR_MODEL,
-      messages,
-      tools:       CRM_TOOLS,
-      tool_choice: "auto",
-      temperature: 0.35,
-      max_tokens:  2048,
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body?.error?.message || `OpenRouter error ${res.status}`);
-  }
-
-  return res.json();
-}
-
 // ── System prompt ─────────────────────────────────────────────────────────────
 function buildSystemPrompt(profile, pageContext) {
   const date = new Date().toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -260,8 +232,8 @@ router.post("/chat", authenticate, async (req, res) => {
   const { message, pageContext } = req.body;
   if (!message) return res.status(400).json({ error: "Message is required" });
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) return res.status(503).json({ error: "OpenRouter API key not configured." });
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: "Groq API key not configured." });
 
   const userId = req.profile.id;
   if (!conversationHistory[userId]) conversationHistory[userId] = [];
@@ -279,6 +251,8 @@ router.post("/chat", authenticate, async (req, res) => {
   };
 
   try {
+    const groq = new Groq({ apiKey });
+
     const messages = [
       { role: "system", content: buildSystemPrompt(req.profile, pageContext || null) },
       ...conversationHistory[userId].slice(-12),
@@ -289,8 +263,16 @@ router.post("/chat", authenticate, async (req, res) => {
     let finalContent = "";
 
     for (let i = 0; i < MAX_ITERATIONS; i++) {
-      const data   = await callOpenRouter(apiKey, messages);
-      const choice = data.choices[0];
+      const response = await groq.chat.completions.create({
+        model:       GROQ_MODEL,
+        messages,
+        tools:       CRM_TOOLS,
+        tool_choice: "auto",
+        temperature: 0.35,
+        max_tokens:  2048,
+      });
+
+      const choice = response.choices[0];
 
       if (choice.finish_reason === "tool_calls") {
         const toolCalls = choice.message.tool_calls;
@@ -318,7 +300,7 @@ router.post("/chat", authenticate, async (req, res) => {
 
     if (!finalContent) finalContent = "I couldn't complete the analysis. Please try again.";
 
-    // Stream final answer word by word for a smooth UX
+    // Stream final answer word by word for smooth UX
     const chunks = finalContent.match(/\S+\s*/g) || [finalContent];
     for (const chunk of chunks) {
       send({ type: "token", content: chunk });
