@@ -1932,18 +1932,6 @@ export default function Pipeline() {
           <option value="">All Sources</option>
           {LEAD_SOURCES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
         </select>
-        {/* Service filter */}
-        <select
-          className="crm-input"
-          style={{ height: 34, fontSize: 12, width: "auto", minWidth: 0, paddingLeft: 10, paddingRight: 28, borderColor: filterService.length ? "rgba(37,99,235,0.5)" : undefined }}
-          value={filterService.length === 1 ? filterService[0] : ""}
-          onChange={(e) => setFilterService(e.target.value ? [e.target.value] : [])}
-          title="Filter by Service"
-        >
-          <option value="">All Services</option>
-          {SAP_SERVICES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-
         {(search || leadIdSearch || filterStage.length || filterIndustry.length || filterCountry.length || filterSource.length || filterService.length || filterAssigned.length || filterDateFrom || filterDateTo) && (
           <button className="btn-secondary" style={{ height: 34, fontSize: 12, display: "flex", alignItems: "center", gap: 5 }} onClick={() => { setSearch(""); setLeadIdSearch(""); setFilterStage([]); setFilterIndustry([]); setFilterCountry([]); setFilterSource([]); setFilterService([]); setFilterAssigned([]); setFilterDateFrom(""); setFilterDateTo(""); }}>
             <X size={12} /> Clear Filters
@@ -2036,7 +2024,7 @@ export default function Pipeline() {
                       { colKey: "country",  label: "COUNTRY",     col: null,             filterKey: "country",   filterOpts: COUNTRIES.map((c) => ({ value: c.code, label: c.name })) },
                       { colKey: "poc",      label: "POC",         col: null,             filterKey: null         },
                       { colKey: "source",   label: "SOURCE",      col: null,             filterKey: "source",    filterOpts: LEAD_SOURCES.map((s) => ({ value: s.key, label: s.label })) },
-                      { colKey: "services", label: "SERVICES",    col: null,             filterKey: null         },
+                      { colKey: "services", label: "SERVICES",    col: null,             filterKey: "services",  filterOpts: SAP_SERVICES.map((s) => ({ value: s, label: s })) },
                       { colKey: "website",  label: "WEBSITE",     col: null,             filterKey: null         },
                       { colKey: "linkedin", label: "LINKEDIN",    col: null,             filterKey: null         },
                       { colKey: "stage",    label: "STAGE",       col: "pipeline_stage", filterKey: "stage",     filterOpts: PIPELINE_STAGES.map((s) => ({ value: s.key, label: s.label })) },
@@ -2060,13 +2048,14 @@ export default function Pipeline() {
                             <ColFilter
                               label={label}
                               options={filterOpts}
-                              value={filterKey === "industry" ? filterIndustry : filterKey === "country" ? filterCountry : filterKey === "source" ? filterSource : filterKey === "assigned" ? filterAssigned : filterKey === "stage" ? filterStage : []}
+                              value={filterKey === "industry" ? filterIndustry : filterKey === "country" ? filterCountry : filterKey === "source" ? filterSource : filterKey === "assigned" ? filterAssigned : filterKey === "stage" ? filterStage : filterKey === "services" ? filterService : []}
                               onChange={(v) => {
                                 if (filterKey === "industry") setFilterIndustry(v);
                                 else if (filterKey === "country") setFilterCountry(v);
                                 else if (filterKey === "source") setFilterSource(v);
                                 else if (filterKey === "assigned") setFilterAssigned(v);
                                 else if (filterKey === "stage") setFilterStage(v);
+                                else if (filterKey === "services") setFilterService(v);
                               }}
                             />
                           )}

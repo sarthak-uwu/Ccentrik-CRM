@@ -2144,21 +2144,6 @@ export default function Leads() {
           />
         </div>
 
-        {/* Service filter */}
-        <select
-          className="crm-input"
-          style={{ height: 34, fontSize: 12, width: "auto", minWidth: 0, paddingLeft: 10, paddingRight: 28, borderColor: filterService.length ? "rgba(37,99,235,0.5)" : undefined }}
-          value={filterService.length === 1 ? filterService[0] : ""}
-          onChange={(e) => setFilterService(e.target.value ? [e.target.value] : [])}
-          title="Filter by Service"
-        >
-          <option value="">All Services</option>
-          {SAP_SERVICES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        {filterService.length > 0 && (
-          <button type="button" onClick={() => setFilterService([])} style={{ background: "none", border: "none", cursor: "pointer", padding: "1px 4px", color: "#EF4444", lineHeight: 1 }}><X size={12} /></button>
-        )}
-
         <div style={{ flex: 1 }} />
 
         {/* Pagination — left of Date Filter */}
@@ -2228,7 +2213,7 @@ export default function Leads() {
                       { key: "country",  label: "COUNTRY",     filterKey: "country",  filterOpts: COUNTRIES.map((c) => ({ value: c.code, label: c.name })) },
                       { key: "poc",      label: "POC",         filterKey: null },
                       { key: "source",   label: "SOURCE",      filterKey: "source",   filterOpts: LEAD_SOURCES.map((s) => ({ value: s.key, label: s.label })) },
-                      { key: "services", label: "SERVICES",    filterKey: null },
+                      { key: "services", label: "SERVICES",    filterKey: "services", filterOpts: SAP_SERVICES.map((s) => ({ value: s, label: s })) },
                       { key: "website",  label: "WEBSITE",     filterKey: null },
                       { key: "linkedin", label: "LINKEDIN",    filterKey: null },
                       { key: "temp",   label: "LEAD STATUS", filterKey: "temp",   filterOpts: [{ value: "hot", label: "Hot" }, { value: "warm", label: "Warm" }, { value: "cold", label: "Cold" }] },
@@ -2243,7 +2228,7 @@ export default function Leads() {
                             <ColFilter
                               label={label}
                               options={filterOpts}
-                              value={filterKey === "industry" ? filterIndustry : filterKey === "country" ? filterCountry : filterKey === "source" ? filterSource : filterKey === "assigned" ? filterAssigned : filterKey === "temp" ? filterTemp : filterKey === "stage" ? filterStage : []}
+                              value={filterKey === "industry" ? filterIndustry : filterKey === "country" ? filterCountry : filterKey === "source" ? filterSource : filterKey === "assigned" ? filterAssigned : filterKey === "temp" ? filterTemp : filterKey === "stage" ? filterStage : filterKey === "services" ? filterService : []}
                               onChange={(v) => {
                                 if (filterKey === "industry") setFilterIndustry(v);
                                 else if (filterKey === "country") setFilterCountry(v);
@@ -2251,6 +2236,7 @@ export default function Leads() {
                                 else if (filterKey === "assigned") setFilterAssigned(v);
                                 else if (filterKey === "temp") setFilterTemp(v);
                                 else if (filterKey === "stage") setFilterStage(v);
+                                else if (filterKey === "services") setFilterService(v);
                               }}
                             />
                           )}
