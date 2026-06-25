@@ -826,7 +826,7 @@ router.get("/auto-dsr-cron", async (req, res) => {
     const salesHeadEmails = salesHeads.map((h) => h.email).filter(Boolean);
     const results         = [];
 
-    const rangeLabel = "00:00 – 20:00 IST";
+    const rangeLabel = "00:00 – 23:59 IST";
 
     // ── A: Field staff DSR → Sales Heads + Super Admins ────────────────────
     if (fieldStaff.length > 0) {

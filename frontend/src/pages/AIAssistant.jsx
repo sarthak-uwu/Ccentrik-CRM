@@ -619,7 +619,7 @@ export default function AIAssistant() {
               <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 400 }}>AI Executive Assistant</span>
               <span className="badge badge-purple" style={{ fontSize: 9.5 }}>BETA</span>
               <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "#10B981", fontWeight: 600 }}>
-                <span className="live-indicator" /> Gemini 2.0 · Agent
+                <span className="live-indicator" /> Llama 3.3 · Agent
               </span>
             </div>
             <motion.div
@@ -770,7 +770,7 @@ export default function AIAssistant() {
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
             <Activity size={10} style={{ color: "var(--text-muted)" }} />
             <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-              Powered by <strong style={{ color: "var(--accent)" }}>ARIA Agent</strong> · Gemini 2.0 Flash · {isMuted ? "Chat mode" : <span style={{ color: "#10B981", fontWeight: 600 }}>Voice mode ON</span>} · Enter to send · Actions require approval
+              Powered by <strong style={{ color: "var(--accent)" }}>ARIA Agent</strong> · Llama 3.3 on Groq · {isMuted ? "Chat mode" : <span style={{ color: "#10B981", fontWeight: 600 }}>Voice mode ON</span>} · Enter to send · Actions require approval
             </span>
           </div>
         </div>
