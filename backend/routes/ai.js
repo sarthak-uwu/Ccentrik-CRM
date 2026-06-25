@@ -4,8 +4,8 @@ const Groq    = require("groq-sdk");
 const { supabase }     = require("../config/db");
 const { authenticate } = require("../middleware/auth");
 
-const GROQ_MODEL      = "llama-3.3-70b-versatile";
-const MAX_ITERATIONS  = 6;
+const GROQ_MODEL      = "llama-3.1-8b-instant";
+const MAX_ITERATIONS  = 4;
 
 // Per-user conversation history (in-memory; resets on cold start)
 const conversationHistory = {};
@@ -208,8 +208,9 @@ AGENT BEHAVIOR:
 
 PROPOSING WRITE ACTIONS (require user approval before executing):
 If user asks to CREATE a lead, ASSIGN a lead, LOG an activity, or CREATE a task — include at the END of response:
+Valid lead sources: website, linkedin, referral, cold_call, email_campaign, event, partner, social_media, ads, walk_in, other — always use one of these exactly.
 <action>
-{"type":"create_lead","description":"Add new lead for [Company]","data":{"company_name":"...","contact_name":"...","phone":"...","email":"...","source":"manual","temperature":"warm"}}
+{"type":"create_lead","description":"Add new lead for [Company]","data":{"company_name":"...","contact_name":"...","phone":"...","email":"...","source":"other","temperature":"warm"}}
 </action>
 or
 <action>
@@ -255,7 +256,7 @@ router.post("/chat", authenticate, async (req, res) => {
 
     const messages = [
       { role: "system", content: buildSystemPrompt(req.profile, pageContext || null) },
-      ...conversationHistory[userId].slice(-12),
+      ...conversationHistory[userId].slice(-6),
       { role: "user", content: message },
     ];
 
@@ -269,7 +270,7 @@ router.post("/chat", authenticate, async (req, res) => {
         tools:       CRM_TOOLS,
         tool_choice: "auto",
         temperature: 0.35,
-        max_tokens:  2048,
+        max_tokens:  1024,
       });
 
       const choice = response.choices[0];

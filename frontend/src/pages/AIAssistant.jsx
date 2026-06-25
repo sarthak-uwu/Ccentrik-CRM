@@ -46,6 +46,13 @@ const HINGLISH_PROMPTS = [
 ];
 
 // ── Thinking status messages ──────────────────────────────────────────────────
+const VALID_LEAD_SOURCES = [
+  "website","linkedin","referral","cold_call","email_campaign",
+  "event","partner","social_media","ads","walk_in","other",
+  "call","email","social","exhibition",
+];
+const VALID_LEAD_TEMPS = ["hot","warm","cold"];
+
 const THINKING_STATUSES = [
   "Reviewing CRM data...",
   "Analyzing opportunities...",
@@ -423,6 +430,7 @@ export default function AIAssistant() {
   const inputRef         = useRef(null);
   const synthRef         = useRef(window.speechSynthesis);
   const thinkingTimer    = useRef(null);
+  const sendMessageRef   = useRef(null);
 
   // Rotate thinking status messages while AI is thinking
   useEffect(() => {
@@ -441,18 +449,25 @@ export default function AIAssistant() {
   // Web Speech API init
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SR) {
-      const rec = new SR();
-      rec.continuous = false; rec.interimResults = true; rec.lang = selectedLang.code;
-      rec.onresult = (e) => {
-        const t = Array.from(e.results).map((r) => r[0].transcript).join("");
-        setInput(t);
-        if (e.results[e.results.length - 1].isFinal) { setAiState("idle"); sendMessage(t); }
-      };
-      rec.onend   = () => { if (aiState === "listening") setAiState("idle"); };
-      rec.onerror = () => { setAiState("idle"); setIsVoiceOn(false); };
-      setRecognition(rec);
-    }
+    if (!SR) return;
+    const rec = new SR();
+    rec.continuous = false; rec.interimResults = true; rec.lang = selectedLang.code;
+    rec.onresult = (e) => {
+      const t = Array.from(e.results).map((r) => r[0].transcript).join("");
+      setInput(t);
+      if (e.results[e.results.length - 1].isFinal) {
+        setAiState("idle");
+        setIsVoiceOn(false);
+        sendMessageRef.current?.(t);
+      }
+    };
+    rec.onend   = () => { setAiState("idle"); setIsVoiceOn(false); };
+    rec.onerror = (e) => {
+      setAiState("idle"); setIsVoiceOn(false);
+      if (e.error === "not-allowed") alert("Microphone access denied. Please allow microphone permission in your browser and try again.");
+      else if (e.error === "no-speech") setInput("");
+    };
+    setRecognition(rec);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLang.code]);
 
@@ -499,9 +514,9 @@ export default function AIAssistant() {
         const { error } = await supabase.from("leads").insert({
           company_name: action.data.company_name || "New Lead",
           contact_name: action.data.contact_name || null,
-          source:       action.data.source || "other",
+          source:       VALID_LEAD_SOURCES.includes(action.data.source) ? action.data.source : "other",
           stage:        "new",
-          temperature:  "warm",
+          temperature:  VALID_LEAD_TEMPS.includes(action.data.temperature) ? action.data.temperature : "warm",
           assigned_to:  profile?.id,
           is_locked:    false,
         });
@@ -573,7 +588,7 @@ export default function AIAssistant() {
         onError: (err) => {
           const msg = err?.message || "Unknown error";
           const fallback = /rate.limit|429|quota/i.test(msg)
-            ? "**Rate limit hit.** Gemini API quota exceeded. Wait a moment and retry."
+            ? "**Rate limit reached.** ARIA is busy — please wait a moment and retry."
             : /AI service error/i.test(msg)
               ? `**${msg}**`
               : /401|unauthorized|not authenticated/i.test(msg)
@@ -587,6 +602,9 @@ export default function AIAssistant() {
       setAiState("idle");
     }
   };
+
+  // Keep ref always pointing to latest sendMessage (fixes stale closure in speech recognition)
+  useEffect(() => { sendMessageRef.current = sendMessage; });
 
   const clearChat = () => {
     setPendingAction(null);
@@ -619,7 +637,7 @@ export default function AIAssistant() {
               <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 400 }}>AI Executive Assistant</span>
               <span className="badge badge-purple" style={{ fontSize: 9.5 }}>BETA</span>
               <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "#10B981", fontWeight: 600 }}>
-                <span className="live-indicator" /> Llama 3.3 · Agent
+                <span className="live-indicator" /> Llama 3.1 · Agent
               </span>
             </div>
             <motion.div
@@ -770,7 +788,7 @@ export default function AIAssistant() {
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
             <Activity size={10} style={{ color: "var(--text-muted)" }} />
             <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-              Powered by <strong style={{ color: "var(--accent)" }}>ARIA Agent</strong> · Llama 3.3 on Groq · {isMuted ? "Chat mode" : <span style={{ color: "#10B981", fontWeight: 600 }}>Voice mode ON</span>} · Enter to send · Actions require approval
+              Powered by <strong style={{ color: "var(--accent)" }}>ARIA Agent</strong> · Llama 3.1 on Groq · {isMuted ? "Chat mode" : <span style={{ color: "#10B981", fontWeight: 600 }}>Voice mode ON</span>} · Enter to send · Actions require approval
             </span>
           </div>
         </div>

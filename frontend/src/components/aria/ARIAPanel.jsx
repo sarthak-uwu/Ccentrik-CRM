@@ -14,6 +14,13 @@ import { streamARIA } from "../../services/ariaService";
 import { useARIA } from "../../context/ARIAContext";
 import { format } from "date-fns";
 
+const VALID_LEAD_SOURCES = [
+  "website","linkedin","referral","cold_call","email_campaign",
+  "event","partner","social_media","ads","walk_in","other",
+  "call","email","social","exhibition",
+];
+const VALID_LEAD_TEMPS = ["hot","warm","cold"];
+
 // ── Page context map ──────────────────────────────────────────────────────────
 const PAGE_CTX = {
   "/dashboard":   { module: "Dashboard",   page: "Dashboard Overview",      prompts: ["What needs my attention today?", "Pipeline summary", "Hot leads this week", "Urgent alerts"] },
@@ -193,8 +200,8 @@ export default function ARIAPanel() {
           contact_name: action.data.contact_name || null,
           phone:        action.data.phone || null,
           email:        action.data.email || null,
-          source:       action.data.source || "other",
-          temperature:  action.data.temperature || "warm",
+          source:       VALID_LEAD_SOURCES.includes(action.data.source) ? action.data.source : "other",
+          temperature:  VALID_LEAD_TEMPS.includes(action.data.temperature) ? action.data.temperature : "warm",
           stage:        "new",
           assigned_to:  profile?.id,
           is_locked:    false,
@@ -397,7 +404,7 @@ export default function ARIAPanel() {
                   <span style={{ fontSize: 14, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.03em" }}>ARIA</span>
                   <span style={{ fontSize: 10, color: "#10B981", fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}>
                     <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#10B981", animation: "pulse 2s ease-in-out infinite", display: "inline-block" }} />
-                    Agent · Llama 3.3
+                    Agent · Llama 3.1
                   </span>
                 </div>
                 <div style={{ fontSize: 11, color: aiState === "thinking" ? "#A78BFA" : "var(--text-muted)", marginTop: 1, transition: "color 0.2s" }}>
