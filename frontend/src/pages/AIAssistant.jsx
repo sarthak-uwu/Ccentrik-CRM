@@ -9,7 +9,7 @@ import {
   Flame, AlertTriangle, Target, ChevronRight, Sparkles,
   XCircle, BarChart3, Mic, MicOff, Volume2, VolumeX,
   IndianRupee, BriefcaseBusiness, ArrowRight, Lightbulb, Activity,
-  Calendar, FileText, Check, X, Loader2, CheckCircle2,
+  Calendar, FileText, Check, X, Loader2, CheckCircle2, Copy,
 } from "lucide-react";
 import { streamARIA } from "../services/ariaService";
 import { auth } from "../firebase";
@@ -382,6 +382,50 @@ function SmartInsightsPanel({ onAskAI, fmtVal }) {
   );
 }
 
+// ── Markdown renderers ────────────────────────────────────────────────────────
+function renderInline(text) {
+  if (!text) return null;
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g).map((part, j) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4)
+      return <strong key={j} style={{ color: "var(--text)", fontWeight: 700 }}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 2)
+      return <code key={j} style={{ fontSize: "0.88em", background: "rgba(99,102,241,0.12)", padding: "1px 5px", borderRadius: 4, color: "#818CF8", fontFamily: "monospace" }}>{part.slice(1, -1)}</code>;
+    if (part.startsWith("*") && part.endsWith("*") && part.length > 2)
+      return <em key={j}>{part.slice(1, -1)}</em>;
+    return <span key={j}>{part}</span>;
+  });
+}
+
+function renderContent(text) {
+  if (!text) return null;
+  const lines = text.split("\n");
+  return lines.map((line, i, arr) => {
+    const h3 = line.match(/^###\s+(.+)/);
+    const h2 = line.match(/^##\s+(.+)/);
+    const h1 = line.match(/^#\s+(.+)/);
+    if (h3) return <div key={i} style={{ fontWeight: 700, fontSize: 13, color: "var(--text)", marginTop: 10, marginBottom: 3 }}>{renderInline(h3[1])}</div>;
+    if (h2) return <div key={i} style={{ fontWeight: 800, fontSize: 13.5, color: "var(--text)", marginTop: 12, marginBottom: 4 }}>{renderInline(h2[1])}</div>;
+    if (h1) return <div key={i} style={{ fontWeight: 800, fontSize: 14, color: "var(--text)", marginTop: 12, marginBottom: 4 }}>{renderInline(h1[1])}</div>;
+    const numMatch = line.match(/^(\d+)\.\s+(.+)/);
+    if (numMatch) return (
+      <div key={i} style={{ display: "flex", gap: 8, marginBottom: 3 }}>
+        <span style={{ color: "#818CF8", fontWeight: 700, fontSize: 12, minWidth: 18, flexShrink: 0 }}>{numMatch[1]}.</span>
+        <span>{renderInline(numMatch[2])}</span>
+      </div>
+    );
+    const bulletMatch = line.match(/^[-•*]\s+(.+)/);
+    if (bulletMatch) return (
+      <div key={i} style={{ display: "flex", gap: 8, marginBottom: 3 }}>
+        <span style={{ color: "#818CF8", fontSize: 17, lineHeight: "1.15", flexShrink: 0 }}>·</span>
+        <span>{renderInline(bulletMatch[1])}</span>
+      </div>
+    );
+    if (line.match(/^---+$/)) return <div key={i} style={{ borderTop: "1px solid var(--border)", margin: "8px 0" }} />;
+    if (line.trim() === "") return i < arr.length - 1 ? <div key={i} style={{ height: 6 }} /> : null;
+    return <div key={i} style={{ marginBottom: 1 }}>{renderInline(line)}</div>;
+  });
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function AIAssistant() {
   const { profile } = useAuth();
@@ -399,7 +443,7 @@ export default function AIAssistant() {
   const [messages, setMessages] = useState([{
     id: "welcome",
     role: "assistant",
-    content: "Initializing ARIA...",
+    content: "Initializing Ccentrik Copilot...",
     ts: new Date(),
   }]);
 
@@ -424,6 +468,7 @@ export default function AIAssistant() {
   const [thinkingStatus, setThinkingStatus] = useState(THINKING_STATUSES[0]);
   const [pendingAction, setPendingAction] = useState(null);
   const [isVoiceOn, setIsVoiceOn]         = useState(false);
+  const [copiedId, setCopiedId]           = useState(null);
   const [isMuted, setIsMuted]             = useState(true); // Voice OFF by default — chat-first experience
   const [selectedLang, setSelectedLang]   = useState(LANGUAGES[0]);
   const [recognition, setRecognition]     = useState(null);
@@ -575,7 +620,7 @@ export default function AIAssistant() {
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
     setAiState("thinking");
-    setThinkingStatus("Connecting to ARIA...");
+    setThinkingStatus("Connecting to Copilot...");
 
     const streamId = Date.now() + "a";
     setMessages((prev) => [...prev, { id: streamId, role: "assistant", content: "", ts: new Date(), streaming: true }]);
@@ -627,9 +672,16 @@ export default function AIAssistant() {
     }]);
   };
 
-  const statusText = aiState === "listening" ? "🎤 Listening..."
+  const handleCopy = (text, id) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    }).catch(() => toast.error("Could not copy to clipboard"));
+  };
+
+  const statusText = aiState === "listening" ? "Listening… speak now"
     : aiState === "thinking" ? thinkingStatus
-    : aiState === "speaking" ? "🔊 Speaking..."
+    : aiState === "speaking" ? "Speaking response…"
     : "Ask me anything about your leads, deals, pipeline, and tasks";
 
   return (
@@ -638,27 +690,29 @@ export default function AIAssistant() {
       {/* ── Left: Chat ── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, borderRight: "1px solid var(--border)" }}>
 
-        {/* Header */}
-        <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", background: "var(--surface)", display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
+        {/* ─── Header ─── */}
+        <div style={{
+          padding: "12px 20px",
+          borderBottom: "1px solid var(--border)",
+          background: "var(--surface)",
+          backgroundImage: "linear-gradient(135deg, rgba(99,102,241,0.04) 0%, transparent 70%)",
+          display: "flex", alignItems: "center", gap: 14, flexShrink: 0,
+        }}>
           <AIOrb state={aiState} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 16, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.03em" }}>ARIA</span>
-              <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 400 }}>AI Executive Assistant</span>
-              <span className="badge badge-purple" style={{ fontSize: 9.5 }}>BETA</span>
+              <span style={{ fontSize: 15, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.03em" }}>Ccentrik Copilot</span>
+              <span style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: "linear-gradient(135deg,rgba(99,102,241,0.15),rgba(139,92,246,0.08))", border: "1px solid rgba(99,102,241,0.22)", color: "#A78BFA", letterSpacing: "0.07em" }}>AI AGENT</span>
               <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "#10B981", fontWeight: 600 }}>
-                <span className="live-indicator" /> Llama 3.1 · Agent
+                <span className="live-indicator" /> Online
               </span>
             </div>
-            <motion.div
-              key={statusText}
-              initial={{ opacity: 0.6 }}
-              animate={{ opacity: 1 }}
-              style={{ fontSize: 11.5, color: aiState === "thinking" ? "#A78BFA" : "var(--text-muted)", marginTop: 1 }}>
+            <motion.div key={statusText} initial={{ opacity: 0.6 }} animate={{ opacity: 1 }}
+              style={{ fontSize: 11, color: aiState === "thinking" ? "#A78BFA" : "var(--text-muted)", marginTop: 2 }}>
               {statusText}
             </motion.div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ display: "flex", gap: 3 }}>
               {LANGUAGES.slice(0, 3).map((lang) => (
                 <button key={lang.label} className={`lang-chip${selectedLang.label === lang.label ? " active" : ""}`}
@@ -670,87 +724,107 @@ export default function AIAssistant() {
             </div>
             <motion.button className="icon-btn" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.88 }}
               onClick={() => { setIsMuted((v) => !v); if (!isMuted) synthRef.current?.cancel(); }}
-              title={isMuted ? "Enable Voice Mode — AI will speak responses" : "Voice Mode ON — click to disable"}
+              title={isMuted ? "Enable voice response" : "Voice mode ON — click to disable"}
               style={{ color: isMuted ? "var(--text-muted)" : "#10B981", position: "relative" }}>
               {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
               {!isMuted && <span style={{ position: "absolute", top: -2, right: -2, width: 6, height: 6, borderRadius: "50%", background: "#10B981", border: "1.5px solid var(--surface)" }} />}
             </motion.button>
-            <motion.button className="icon-btn" onClick={clearChat} whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.88 }} title="Clear chat">
+            <motion.button className="icon-btn" onClick={clearChat} whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.88 }} title="Clear conversation">
               <Trash2 size={15} strokeWidth={1.75} />
             </motion.button>
           </div>
         </div>
 
-        {/* Quick prompt chips */}
-        <div style={{ padding: "8px 20px", borderBottom: "1px solid var(--border)", display: "flex", gap: 6, overflowX: "auto", flexShrink: 0, background: "var(--surface-2)" }} className="custom-scroll">
+        {/* ─── Quick Prompt Chips ─── */}
+        <div style={{ padding: "7px 20px", borderBottom: "1px solid var(--border)", display: "flex", gap: 6, overflowX: "auto", flexShrink: 0, background: "var(--surface-2)" }} className="custom-scroll">
           {HINGLISH_PROMPTS.map((p) => (
-            <button key={p.text} className="hinglish-chip" onClick={() => sendMessage(p.prompt)}>
+            <button key={p.text} className="hinglish-chip" onClick={() => sendMessage(p.prompt)} disabled={loading}>
               <span className="hinglish-flag">{p.flag}</span> {p.text}
             </button>
           ))}
           {QUICK_PROMPTS.map((p) => (
-            <button key={p.label} className="hinglish-chip" onClick={() => sendMessage(p.prompt)} style={{ background: "var(--surface-2)" }}>
+            <button key={p.label} className="hinglish-chip" onClick={() => sendMessage(p.prompt)} disabled={loading} style={{ background: "var(--surface-2)" }}>
               <p.icon size={11} style={{ color: "var(--accent)" }} /> {p.label}
             </button>
           ))}
         </div>
 
-        {/* Messages */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "20px", display: "flex", flexDirection: "column", gap: 14 }} className="custom-scroll">
+        {/* ─── Message List ─── */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "24px 20px", display: "flex", flexDirection: "column", gap: 22 }} className="custom-scroll">
           <AnimatePresence initial={false}>
             {messages.map((msg) => (
               <motion.div key={msg.id}
-                initial={{ opacity: 0, y: 12, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ type: "spring", damping: 24, stiffness: 300 }}
-                style={{ display: "flex", gap: 10, alignItems: "flex-end", flexDirection: msg.role === "user" ? "row-reverse" : "row" }}>
-                <div style={{ width: 28, height: 28, borderRadius: "50%", flexShrink: 0, background: msg.role === "assistant" ? "linear-gradient(135deg,#6366F1,#8B5CF6)" : "linear-gradient(135deg,#2563EB,#4F46E5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                initial={{ opacity: 0, y: 14, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ type: "spring", damping: 22, stiffness: 280 }}
+                style={{ display: "flex", gap: 10, flexDirection: msg.role === "user" ? "row-reverse" : "row", alignItems: "flex-start" }}>
+
+                {/* Avatar */}
+                <div style={{
+                  width: 30, height: 30, borderRadius: "50%", flexShrink: 0, marginTop: 22,
+                  background: msg.role === "assistant" ? "linear-gradient(135deg,#6366F1,#8B5CF6)" : "linear-gradient(135deg,#2563EB,#4F46E5)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: msg.role === "assistant" ? "0 2px 12px rgba(99,102,241,0.4)" : "0 2px 12px rgba(37,99,235,0.35)",
+                }}>
                   {msg.role === "assistant"
-                    ? <Brain size={14} style={{ color: "#fff" }} />
-                    : <span style={{ fontSize: 10, fontWeight: 700, color: "#fff" }}>{profile?.full_name?.[0] || "U"}</span>}
+                    ? <Sparkles size={13} style={{ color: "#fff" }} />
+                    : <span style={{ fontSize: 11, fontWeight: 700, color: "#fff" }}>{profile?.full_name?.[0]?.toUpperCase() || "U"}</span>}
                 </div>
-                <div style={{ maxWidth: "72%", display: "flex", flexDirection: "column", gap: 2, alignItems: msg.role === "user" ? "flex-end" : "flex-start" }}>
+
+                {/* Bubble area */}
+                <div style={{ maxWidth: "75%", display: "flex", flexDirection: "column", gap: 4, alignItems: msg.role === "user" ? "flex-end" : "flex-start" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 700, color: msg.role === "assistant" ? "#A78BFA" : "var(--text-2)" }}>
+                      {msg.role === "assistant" ? "Ccentrik Copilot" : (profile?.full_name?.split(" ")[0] || "You")}
+                    </span>
+                    <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{format(new Date(msg.ts), "h:mm a")}</span>
+                  </div>
+
                   {msg.role === "assistant" ? (
-                    <div className="ai-message-bubble">
-                      {(msg.content || " ").split("\n").map((line, i, arr) => (
-                        <span key={i}>
-                          {line.split(/(\*\*.*?\*\*)/g).map((part, j) =>
-                            part.startsWith("**") && part.endsWith("**")
-                              ? <strong key={j} style={{ color: "var(--text)", fontWeight: 700 }}>{part.slice(2,-2)}</strong>
-                              : <span key={j}>{part}</span>
-                          )}
-                          {i < arr.length - 1 && <br />}
-                        </span>
-                      ))}
+                    <div className="copilot-ai-bubble">
+                      <div className="copilot-markdown">{renderContent(msg.content || " ")}</div>
                       {msg.streaming && (
-                        <span style={{ display: "inline-block", width: 8, height: 14, background: "var(--accent)", borderRadius: 2, marginLeft: 2, animation: "typing-dot 0.8s steps(1) infinite", verticalAlign: "middle" }} />
+                        <span style={{ display: "inline-block", width: 2, height: 16, background: "#818CF8", borderRadius: 2, marginLeft: 3, animation: "typing-dot 0.8s steps(1) infinite", verticalAlign: "middle" }} />
+                      )}
+                      {!msg.streaming && msg.content && (
+                        <button onClick={() => handleCopy(msg.content, msg.id)} className="copilot-copy-btn" title="Copy response">
+                          {copiedId === msg.id
+                            ? <><Check size={10} style={{ color: "#10B981" }} /> Copied</>
+                            : <><Copy size={10} /> Copy</>}
+                        </button>
                       )}
                     </div>
                   ) : (
-                    <div className="user-message-bubble">{msg.content}</div>
+                    <div className="copilot-user-bubble">{msg.content}</div>
                   )}
-                  <div style={{ fontSize: 9.5, color: "var(--text-muted)", padding: "0 4px" }}>
-                    {format(new Date(msg.ts), "h:mm a")}
-                  </div>
                 </div>
               </motion.div>
             ))}
           </AnimatePresence>
 
-          {/* Typing indicator */}
+          {/* Thinking indicator */}
           {loading && !messages.some((m) => m.streaming && m.content) && (
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-              <div style={{ width: 28, height: 28, borderRadius: "50%", background: "linear-gradient(135deg,#6366F1,#8B5CF6)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <Brain size={14} style={{ color: "#fff" }} />
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+              style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+              <div style={{ width: 30, height: 30, borderRadius: "50%", background: "linear-gradient(135deg,#6366F1,#8B5CF6)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 22, boxShadow: "0 2px 12px rgba(99,102,241,0.4)" }}>
+                <Sparkles size={13} style={{ color: "#fff" }} />
               </div>
-              <div className="typing-indicator">
-                <div className="typing-dot" /><div className="typing-dot" /><div className="typing-dot" />
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11.5, fontWeight: 700, color: "#A78BFA" }}>Ccentrik Copilot</span>
+                <div className="copilot-thinking">
+                  <div className="copilot-think-dot" />
+                  <div className="copilot-think-dot" />
+                  <div className="copilot-think-dot" />
+                  <span style={{ marginLeft: 6, fontSize: 12 }}>{thinkingStatus}</span>
+                </div>
               </div>
             </motion.div>
           )}
 
           {/* Action approval */}
           {pendingAction && (
-            <div style={{ paddingLeft: 38 }}>
+            <div style={{ paddingLeft: 40 }}>
               <ActionApprovalModal
                 action={pendingAction}
                 onApprove={() => executeAction(pendingAction)}
@@ -763,43 +837,67 @@ export default function AIAssistant() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Input bar */}
-        <div style={{ padding: "14px 20px", borderTop: "1px solid var(--border)", background: "var(--surface)", flexShrink: 0 }}>
+        {/* ─── Input Bar ─── */}
+        <div style={{ padding: "12px 20px 14px", borderTop: "1px solid var(--border)", background: "var(--surface)", flexShrink: 0 }}>
           {isVoiceOn && (
-            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10, gap: 14 }}>
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10, gap: 14, padding: "6px 0" }}>
               <VoiceBars active={aiState === "listening"} />
               <span style={{ fontSize: 12, color: aiState === "listening" ? "#EF4444" : "var(--text-muted)", fontWeight: 600 }}>
-                {aiState === "listening" ? "Listening... speak now" : "Tap mic to speak"}
+                {aiState === "listening" ? "Listening… speak now" : "Tap mic to speak"}
               </span>
               <VoiceBars active={aiState === "listening"} heights={[24, 18, 36, 28, 22, 32, 20]} />
             </motion.div>
           )}
           <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-            <motion.button className={`mic-btn${isVoiceOn && aiState === "listening" ? " listening" : ""}`}
+            <motion.button
+              className={`mic-btn${isVoiceOn && aiState === "listening" ? " listening" : ""}`}
               style={{ width: 42, height: 42, flexShrink: 0 }}
               onClick={isVoiceOn && aiState === "listening" ? stopVoice : startVoice}
-              whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.9 }}>
-              {isVoiceOn && aiState === "listening" ? <MicOff size={18} /> : <Mic size={18} />}
+              whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.9 }}
+              title={isVoiceOn ? "Stop listening" : "Start voice input"}>
+              {isVoiceOn && aiState === "listening" ? <MicOff size={17} /> : <Mic size={17} />}
             </motion.button>
             <div style={{ flex: 1, position: "relative" }}>
-              <textarea ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)}
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-                placeholder="Ask anything... 'Show hot leads', 'Create a follow-up task', 'Draft email for Acme Corp'"
-                className="crm-input" style={{ resize: "none", height: 42, maxHeight: 120, lineHeight: 1.5, paddingRight: 14, paddingTop: 11 }} rows={1}
+                placeholder="Ask anything about your leads, deals, pipeline, and tasks…"
+                className="crm-input"
+                style={{ resize: "none", height: 42, maxHeight: 120, lineHeight: 1.5, paddingTop: 11, paddingRight: 14 }}
+                rows={1}
+                disabled={loading}
               />
             </div>
-            <motion.button className="btn-primary" style={{ height: 42, padding: "0 16px", gap: 6, flexShrink: 0 }}
-              onClick={() => sendMessage()} disabled={!input.trim() || loading}
-              whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.92 }}>
-              <Send size={14} />
+            <motion.button
+              onClick={() => sendMessage()}
+              disabled={!input.trim() || loading}
+              whileHover={!input.trim() || loading ? {} : { scale: 1.04 }}
+              whileTap={!input.trim() || loading ? {} : { scale: 0.92 }}
+              style={{
+                height: 42, padding: "0 18px", flexShrink: 0,
+                background: (!input.trim() || loading) ? "var(--surface-2)" : "linear-gradient(135deg,#6366F1,#8B5CF6)",
+                color: (!input.trim() || loading) ? "var(--text-muted)" : "#fff",
+                border: `1px solid ${(!input.trim() || loading) ? "var(--border)" : "transparent"}`,
+                borderRadius: "var(--r-sm)", cursor: (!input.trim() || loading) ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", gap: 6, fontWeight: 600, fontSize: 13,
+                transition: "all 0.2s", fontFamily: "inherit",
+              }}>
+              {loading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Send size={14} />}
             </motion.button>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-            <Activity size={10} style={{ color: "var(--text-muted)" }} />
-            <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-              Powered by <strong style={{ color: "var(--accent)" }}>ARIA Agent</strong> · Llama 3.1 on Groq · {isMuted ? "Chat mode" : <span style={{ color: "#10B981", fontWeight: 600 }}>Voice mode ON</span>} · Enter to send · Actions require approval
-            </span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 7 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <Sparkles size={9} style={{ color: "var(--text-muted)" }} />
+              <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                Powered by <strong style={{ color: "var(--accent)" }}>Ccentrik Copilot</strong>
+                {!isMuted && <span style={{ color: "#10B981", fontWeight: 600 }}> · Voice ON</span>}
+                {" · "}Actions require approval
+              </span>
+            </div>
+            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Enter to send · Shift+Enter for newline</span>
           </div>
         </div>
       </div>
@@ -807,7 +905,7 @@ export default function AIAssistant() {
       {/* ── Right: Live Intelligence ── */}
       <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", background: "var(--surface-2)", borderLeft: "1px solid var(--border)" }}>
         <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", background: "var(--surface)", flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg,rgba(99,102,241,0.2),rgba(139,92,246,0.12))", border: "1px solid rgba(99,102,241,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Sparkles size={13} style={{ color: "#A78BFA" }} />
             </div>
