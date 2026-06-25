@@ -1591,4 +1591,484 @@ function buildTeamInactivityText(inactiveUsers) {
   return `${sep}\nTEAM INACTIVITY ALERT — ${ROLE_INACTIVITY_THRESHOLD}+ DAYS\n${sep}\n\n${lines}\n\n${sep}\nPlease follow up with inactive team members.\n— Ccentrik CRM`;
 }
 
+// ─── GET /api/reports/role-dsr-cron ──────────────────────────────────────────
+// Called every 30 min by GitHub Actions. Fires the role-based DSR distribution
+// at 09:00 PM IST (covering the 9:09 PM IST requirement).
+// Role hierarchy:
+//   owner       → receives DSR for ALL users
+//   sales_head  → receives DSR for sales_manager + inside_sales
+//   sales_manager → receives DSR for their direct reports (manager_id = their id)
+router.get("/role-dsr-cron", async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.headers.authorization !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const nowUtc      = new Date();
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+  const nowIst      = new Date(nowUtc.getTime() + istOffsetMs);
+  const h24         = nowIst.getUTCHours();
+  const rawMin      = nowIst.getUTCMinutes();
+  const slot_m      = rawMin < 30 ? 0 : 30;
+  const h12         = h24 % 12 || 12;
+  const ampm        = h24 < 12 ? "AM" : "PM";
+  const currentSlot = `${String(h12).padStart(2, "0")}:${String(slot_m).padStart(2, "0")} ${ampm}`;
+
+  console.log(`[RoleDSRCron] ${nowUtc.toISOString()} → IST slot: ${currentSlot}`);
+
+  if (currentSlot !== "09:00 PM") {
+    return res.json({ success: true, slot: currentSlot, sent: 0, message: "Not the 09:00 PM IST window — skipped" });
+  }
+
+  // Today's full day range in IST
+  const pad      = (n) => String(n).padStart(2, "0");
+  const todayStr = `${nowIst.getUTCFullYear()}-${pad(nowIst.getUTCMonth() + 1)}-${pad(nowIst.getUTCDate())}`;
+  const dayStart = new Date(`${todayStr}T00:00:00+05:30`).toISOString();
+  const dayEnd   = new Date(`${todayStr}T23:59:59+05:30`).toISOString();
+  const dateLabel = nowIst.toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
+
+  try {
+    const results = await sendRoleBasedDSR({ dayStart, dayEnd, dateLabel, todayStr });
+    return res.json({ success: true, slot: currentSlot, ...results });
+  } catch (err) {
+    console.error("[RoleDSRCron] Fatal error:", err.message);
+    return res.status(500).json({ error: err.message || "Role DSR cron failed" });
+  }
+});
+
+// ─── Role-based DSR engine ────────────────────────────────────────────────────
+async function sendRoleBasedDSR({ dayStart, dayEnd, dateLabel, todayStr }) {
+  const rl = (r) =>
+    r === "owner"         ? "Super Admin"
+    : r === "sales_head"  ? "Sales Head"
+    : r === "sales_manager" ? "Sales Manager"
+    : r === "inside_sales" ? "Inside Sales"
+    : (r || "Staff").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  // Load all active users
+  const { data: allUsers, error: usersErr } = await supabase
+    .from("profiles")
+    .select("id, full_name, email, role, manager_id")
+    .not("status", "in", '("deleted","inactive")')
+    .not("email", "is", null)
+    .order("full_name");
+
+  if (usersErr) throw usersErr;
+  if (!allUsers?.length) return { sent: 0, total_recipients: 0 };
+
+  // Determine which users receive emails (owner, sales_head, sales_manager)
+  const RECIPIENT_ROLES = ["owner", "sales_head", "sales_manager"];
+  const recipients = allUsers.filter((u) => RECIPIENT_ROLES.includes(u.role));
+  if (!recipients.length) return { sent: 0, total_recipients: 0 };
+
+  // Bulk fetch activity data for ALL non-owner users in one pass
+  const allStaffIds = allUsers.filter((u) => u.role !== "owner").map((u) => u.id);
+  const { employeeData, staff: allStaffData } = await generateEmployeeActivityData(allStaffIds, dayStart, dayEnd);
+
+  // Index staff by id for quick lookup
+  const staffById = {};
+  allStaffData.forEach((s) => { staffById[s.id] = s; });
+
+  let sent = 0;
+  const errors = [];
+
+  for (const recipient of recipients) {
+    try {
+      // Determine which staff this recipient supervises
+      let subordinateIds;
+
+      if (recipient.role === "owner") {
+        // Super Admin sees everyone
+        subordinateIds = allUsers.filter((u) => u.role !== "owner").map((u) => u.id);
+      } else if (recipient.role === "sales_head") {
+        // Sales Head sees all managers and individual contributors below
+        subordinateIds = allUsers
+          .filter((u) => ["sales_manager", "inside_sales", "sales"].includes(u.role))
+          .map((u) => u.id);
+      } else if (recipient.role === "sales_manager") {
+        // Sales Manager sees only their direct reports
+        subordinateIds = allUsers
+          .filter((u) => u.manager_id === recipient.id)
+          .map((u) => u.id);
+      }
+
+      if (!subordinateIds?.length) continue;
+
+      // Build scoped staff list (only those present in activity data)
+      // Include all subordinates even with zero activities (so we show "No Activity")
+      const scopedStaff = subordinateIds
+        .map((id) => staffById[id] || allUsers.find((u) => u.id === id))
+        .filter(Boolean)
+        .filter((s) => s.email); // must have email to appear
+
+      if (!scopedStaff.length) continue;
+
+      // Generate PDF (only includes staff with activity data)
+      const staffForPdf = scopedStaff.filter((s) => employeeData[s.id]);
+      const pdfBuffer = await generateActivityPdf({
+        employeeData,
+        staff:           staffForPdf.length ? staffForPdf : scopedStaff,
+        reportDateLabel: dateLabel,
+        reportType:      "Daily",
+        generatedAt:     nowUtc.toISOString(),
+      });
+
+      // Build HTML and text bodies
+      const firstName = (recipient.full_name || "").split(" ")[0] || "Team";
+
+      const empRows = scopedStaff.map((s) => {
+        const ed  = employeeData[s.id];
+        const st  = ed?.stats || {};
+        const hasActivity = st.total > 0;
+        return `<tr style="border-bottom:1px solid #F3F4F6;">
+          <td style="padding:11px 14px;font-size:13px;font-weight:600;color:#111827;">${s.full_name || s.email}</td>
+          <td style="padding:11px 14px;font-size:12px;color:#6B7280;">${rl(s.role)}</td>
+          <td style="padding:11px 14px;text-align:center;font-size:14px;font-weight:700;color:${hasActivity ? "#4F46E5" : "#D1D5DB"};">${st.total || 0}</td>
+          <td style="padding:11px 14px;text-align:center;font-size:13px;color:#2563EB;">${st.calls || 0}</td>
+          <td style="padding:11px 14px;text-align:center;font-size:13px;color:#0891B2;">${st.emails || 0}</td>
+          <td style="padding:11px 14px;text-align:center;font-size:13px;color:#059669;">${st.meetings || 0}</td>
+          <td style="padding:11px 14px;text-align:center;font-size:13px;font-weight:700;color:${hasActivity ? "#7C3AED" : "#D1D5DB"};">${hasActivity ? `${st.efficiency || 0}%` : "—"}</td>
+          <td style="padding:11px 14px;font-size:12px;color:${hasActivity ? "#6B7280" : "#EF4444"};font-style:${hasActivity ? "normal" : "italic"};">${hasActivity ? "Reported" : "No Activity Reported Today"}</td>
+        </tr>`;
+      }).join("");
+
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#F5F7FA;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;padding:32px 16px;"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:760px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #E5E7EB;">
+  <tr><td style="height:4px;background:linear-gradient(90deg,#4F46E5,#7C3AED);"></td></tr>
+  <tr><td style="padding:28px 32px 16px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td>
+        <div style="font-size:22px;font-weight:800;color:#111827;margin-bottom:4px;">Hi ${firstName}, — Daily Sales Report</div>
+        <div style="font-size:13px;color:#6B7280;">${dateLabel} &nbsp;&middot;&nbsp; ${scopedStaff.length} member${scopedStaff.length !== 1 ? "s" : ""} &nbsp;&middot;&nbsp; Full PDF attached</div>
+      </td>
+      <td style="text-align:right;vertical-align:top;">
+        <span style="font-size:11px;padding:4px 10px;background:#EEF2FF;color:#4F46E5;border-radius:99px;font-weight:700;border:1px solid #C7D2FE;">${rl(recipient.role)}</span>
+      </td>
+    </tr></table>
+  </td></tr>
+  <tr><td style="padding:0 32px 28px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;">
+      <tr style="background:#F9FAFB;">
+        <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;">Employee</th>
+        <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Role</th>
+        <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Activities</th>
+        <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Calls</th>
+        <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Emails</th>
+        <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Meetings</th>
+        <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Score</th>
+        <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Status</th>
+      </tr>
+      ${empRows}
+    </table>
+  </td></tr>
+  <tr><td style="background:#F9FAFB;padding:16px 32px;border-top:1px solid #E5E7EB;font-size:11.5px;color:#9CA3AF;">
+    &copy; ${new Date().getFullYear()} CCENTRIK &nbsp;&middot;&nbsp; Automated Daily DSR &nbsp;&middot;&nbsp; Sent at 9:00 PM IST &nbsp;&middot;&nbsp; Do not reply
+  </td></tr>
+</table></td></tr></table></body></html>`;
+
+      const text = [
+        `CCENTRIK DAILY SALES REPORT — ${dateLabel}`,
+        `Sent to: ${rl(recipient.role)} (${recipient.full_name || recipient.email})`,
+        "=".repeat(70),
+        ...scopedStaff.map((s) => {
+          const st = employeeData[s.id]?.stats || {};
+          return st.total > 0
+            ? `${(s.full_name || s.email).padEnd(28)} | ${rl(s.role).padEnd(14)} | Activities: ${st.total} | Calls: ${st.calls || 0} | Emails: ${st.emails || 0} | Meetings: ${st.meetings || 0} | Score: ${st.efficiency || 0}%`
+            : `${(s.full_name || s.email).padEnd(28)} | ${rl(s.role).padEnd(14)} | No Activity Reported Today`;
+        }),
+        "=".repeat(70),
+        "Full PDF report is attached.",
+        "— Ccentrik CRM",
+      ].join("\n");
+
+      await sendMail({
+        to:      [recipient.email],
+        subject: `Ccentrik Daily DSR — ${dateLabel}`,
+        html,
+        text,
+        attachments: [{
+          filename:     `Ccentrik-DSR-Daily-${todayStr}.pdf`,
+          content:      pdfBuffer.toString("base64"),
+          content_type: "application/pdf",
+        }],
+      });
+
+      console.log(`[RoleDSRCron] Sent to ${recipient.email} (${rl(recipient.role)}) — ${scopedStaff.length} subordinates`);
+      sent++;
+    } catch (err) {
+      console.error(`[RoleDSRCron] Error for ${recipient.email}:`, err.message);
+      errors.push({ email: recipient.email, error: err.message });
+    }
+  }
+
+  console.log(`[RoleDSRCron] Done — ${sent}/${recipients.length} emails sent`);
+  return { sent, total_recipients: recipients.length, errors: errors.length ? errors : undefined };
+}
+
+// ─── GET /api/reports/comprehensive-inactivity-cron ───────────────────────────
+// Runs every day at 10:30 AM IST (covering the 10:40 AM IST requirement).
+// Sends role-scoped inactivity emails with detailed HTML + PDF to ALL user tiers:
+//   owner        → all inactive users across the organisation
+//   sales_head   → inactive users in their full hierarchy
+//   sales_manager → self + direct reports
+//   inside_sales / employee → self only (only if they themselves are inactive)
+// Uses existing computeRoleUserInactivity + getRoleInactiveScope — unchanged.
+router.get("/comprehensive-inactivity-cron", async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.headers.authorization !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const nowUtc      = new Date();
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+  const nowIst      = new Date(nowUtc.getTime() + istOffsetMs);
+  const h24         = nowIst.getUTCHours();
+  const rawMin      = nowIst.getUTCMinutes();
+  const slot_m      = rawMin < 30 ? 0 : 30;
+  const h12         = h24 % 12 || 12;
+  const ampm        = h24 < 12 ? "AM" : "PM";
+  const currentSlot = `${String(h12).padStart(2, "0")}:${String(slot_m).padStart(2, "0")} ${ampm}`;
+
+  console.log(`[ComprehensiveInactivityCron] ${nowUtc.toISOString()} → IST slot: ${currentSlot}`);
+
+  if (currentSlot !== "10:30 AM") {
+    return res.json({ success: true, slot: currentSlot, sent: 0, message: "Not the 10:30 AM IST window — skipped" });
+  }
+
+  try {
+    const results = await sendComprehensiveInactivityAlerts(nowIst);
+    return res.json({ success: true, slot: currentSlot, ...results });
+  } catch (err) {
+    console.error("[ComprehensiveInactivityCron] Fatal error:", err.message);
+    return res.status(500).json({ error: err.message || "Comprehensive inactivity cron failed" });
+  }
+});
+
+// ─── Comprehensive inactivity engine ─────────────────────────────────────────
+async function sendComprehensiveInactivityAlerts(nowIst) {
+  const PDFDocument = require("pdfkit");
+  const rl = (r) =>
+    r === "owner"          ? "Super Admin"
+    : r === "sales_head"   ? "Sales Head"
+    : r === "sales_manager"? "Sales Manager"
+    : r === "inside_sales" ? "Inside Sales"
+    : (r || "Staff").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  const fmtTs = (ts) =>
+    ts ? new Date(ts).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "Never";
+
+  const generatedAt = nowIst.toLocaleString("en-IN", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) + " IST";
+  const pad = (n) => String(n).padStart(2, "0");
+  const todayStr = `${nowIst.getUTCFullYear()}-${pad(nowIst.getUTCMonth() + 1)}-${pad(nowIst.getUTCDate())}`;
+
+  // 1. Load all active users
+  const { data: allUsers, error: usersErr } = await supabase
+    .from("profiles")
+    .select("id, full_name, email, role, manager_id")
+    .not("status", "in", '("deleted","inactive")')
+    .not("email", "is", null)
+    .order("full_name");
+
+  if (usersErr) throw usersErr;
+  if (!allUsers?.length) return { sent: 0, total_users: 0 };
+
+  // Index users for manager name lookup
+  const userById = {};
+  allUsers.forEach((u) => { userById[u.id] = u; });
+
+  // 2. Compute inactivity for every user (reuses existing function — unchanged)
+  const inactivityMap = {};
+  for (const user of allUsers) {
+    inactivityMap[user.id] = await computeRoleUserInactivity(user, nowIst);
+  }
+
+  let sent = 0;
+  const errors = [];
+
+  // 3. For each user, determine their scope and send email
+  for (const user of allUsers) {
+    try {
+      // Reuses existing scope logic — unchanged
+      const scopeInactive = getRoleInactiveScope(user, allUsers, inactivityMap);
+
+      if (scopeInactive.length === 0) continue; // nothing to report
+
+      // Build enriched rows (add manager name + employee ID)
+      const enriched = scopeInactive.map((u) => ({
+        ...u,
+        shortId:     u.id.split("-")[0].toUpperCase(),
+        managerName: u.manager_id && userById[u.manager_id]
+          ? (userById[u.manager_id].full_name || userById[u.manager_id].email)
+          : (u.role === "owner" || u.role === "sales_head" ? "—" : "Unassigned"),
+      }));
+
+      const isSelfOnly = enriched.length === 1 && enriched[0].id === user.id;
+
+      // ── Build HTML ──────────────────────────────────────────────────────────
+      const firstName = (user.full_name || "").split(" ")[0] || "Team";
+
+      const tRows = enriched.map((e) => `
+        <tr style="border-bottom:1px solid #F3F4F6;">
+          <td style="padding:10px 12px;font-size:13px;font-weight:600;color:#111827;">${e.name}</td>
+          <td style="padding:10px 12px;font-size:11.5px;color:#6B7280;font-family:monospace;">${e.shortId}</td>
+          <td style="padding:10px 12px;font-size:12px;color:#374151;">${rl(e.role)}</td>
+          <td style="padding:10px 12px;font-size:12px;color:#374151;">${e.managerName}</td>
+          <td style="padding:10px 12px;font-size:12px;color:#374151;">${fmtTs(e.lastActivity)}</td>
+          <td style="padding:10px 12px;font-size:12px;color:#374151;">${fmtTs(e.lastLogin)}</td>
+          <td style="padding:10px 12px;text-align:center;font-size:13px;font-weight:700;color:#DC2626;">${e.daysInactive === 999 ? "Never active" : `${e.daysInactive}d`}</td>
+          <td style="padding:10px 12px;text-align:center;">
+            <span style="font-size:11px;padding:2px 8px;border-radius:99px;background:#FEF2F2;color:#DC2626;border:1px solid #FECACA;font-weight:600;">Inactive</span>
+          </td>
+        </tr>`).join("");
+
+      const subject = isSelfOnly
+        ? `Action Required: You have been inactive on Ccentrik CRM for ${enriched[0].daysInactive} day${enriched[0].daysInactive !== 1 ? "s" : ""}`
+        : `Inactivity Report — ${enriched.length} member${enriched.length !== 1 ? "s" : ""} inactive · ${generatedAt}`;
+
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#F5F7FA;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;padding:32px 16px;"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:820px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #E5E7EB;">
+  <tr><td style="height:4px;background:linear-gradient(90deg,#DC2626,#7C3AED);"></td></tr>
+  <tr><td style="padding:28px 32px 16px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td>
+        <div style="font-size:21px;font-weight:800;color:#111827;margin-bottom:4px;">
+          ${isSelfOnly ? `Hi ${firstName}, — Inactivity Notice` : `Hi ${firstName}, — Inactivity Report`}
+        </div>
+        <div style="font-size:13px;color:#6B7280;">
+          ${enriched.length} inactive member${enriched.length !== 1 ? "s" : ""} &nbsp;·&nbsp; Report generated: ${generatedAt} &nbsp;·&nbsp; PDF attached
+        </div>
+      </td>
+      <td style="text-align:right;vertical-align:top;">
+        <span style="font-size:11px;padding:4px 10px;background:#FEF2F2;color:#DC2626;border-radius:99px;font-weight:700;border:1px solid #FECACA;">${rl(user.role)}</span>
+      </td>
+    </tr></table>
+  </td></tr>
+  ${!isSelfOnly ? `
+  <tr><td style="padding:0 32px 14px;">
+    <div style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:8px;padding:12px 16px;font-size:12.5px;color:#92400E;line-height:1.6;">
+      The following ${enriched.length > 1 ? "members" : "member"} ${enriched.length > 1 ? "have" : "has"} not performed any CRM activity for <strong>${ROLE_INACTIVITY_THRESHOLD}+</strong> consecutive days.
+    </div>
+  </td></tr>` : ""}
+  <tr><td style="padding:0 32px 28px;overflow-x:auto;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;min-width:700px;">
+      <tr style="background:#F9FAFB;">
+        <th style="padding:9px 12px;text-align:left;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Name</th>
+        <th style="padding:9px 12px;text-align:left;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">ID</th>
+        <th style="padding:9px 12px;text-align:left;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Role</th>
+        <th style="padding:9px 12px;text-align:left;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Reporting Manager</th>
+        <th style="padding:9px 12px;text-align:left;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Last Activity</th>
+        <th style="padding:9px 12px;text-align:left;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Last Login</th>
+        <th style="padding:9px 12px;text-align:center;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Inactive Days</th>
+        <th style="padding:9px 12px;text-align:center;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Status</th>
+      </tr>
+      ${enriched.length > 0 ? tRows : `<tr><td colspan="8" style="padding:20px;text-align:center;color:#6B7280;font-size:13px;">No inactive users found.</td></tr>`}
+    </table>
+  </td></tr>
+  <tr><td style="background:#F9FAFB;padding:14px 32px;border-top:1px solid #E5E7EB;font-size:11.5px;color:#9CA3AF;">
+    &copy; ${new Date().getFullYear()} CCENTRIK &nbsp;·&nbsp; Automated Inactivity Report &nbsp;·&nbsp; Generated: ${generatedAt} &nbsp;·&nbsp; Do not reply
+  </td></tr>
+</table></td></tr></table></body></html>`;
+
+      // ── Build PDF ────────────────────────────────────────────────────────────
+      const pdfBuffer = await new Promise((resolve, reject) => {
+        try {
+          const doc    = new PDFDocument({ size: "A4", margin: 36 });
+          const chunks = [];
+          doc.on("data", (c) => chunks.push(c));
+          doc.on("end",  () => resolve(Buffer.concat(chunks)));
+          doc.on("error", reject);
+
+          const PW  = 595.28 - 72; // usable width
+          const COL = [PW * 0.18, PW * 0.1, PW * 0.12, PW * 0.18, PW * 0.17, PW * 0.13, PW * 0.07, PW * 0.05];
+
+          // Header
+          doc.rect(0, 0, 595.28, 50).fill("#1E293B");
+          doc.fillColor("#fff").fontSize(16).font("Helvetica-Bold").text("CCENTRIK — INACTIVITY REPORT", 36, 14);
+          doc.fontSize(9).font("Helvetica").fillColor("#CBD5E1").text(`Generated: ${generatedAt}`, 36, 34);
+
+          // Sub-header
+          doc.fillColor("#111827").fontSize(11).font("Helvetica-Bold")
+            .text(`Recipient: ${user.full_name || user.email} (${rl(user.role)})`, 36, 62);
+          doc.fontSize(9).font("Helvetica").fillColor("#6B7280")
+            .text(`${enriched.length} inactive member${enriched.length !== 1 ? "s" : ""} · Threshold: ${ROLE_INACTIVITY_THRESHOLD}+ days`, 36, 76);
+
+          // Table header
+          let y = 96;
+          doc.rect(36, y, PW, 20).fill("#F1F5F9");
+          const headers = ["Name", "ID", "Role", "Manager", "Last Activity", "Last Login", "Days", "Status"];
+          let x = 36;
+          headers.forEach((h, i) => {
+            doc.fillColor("#475569").fontSize(8).font("Helvetica-Bold").text(h, x + 2, y + 6, { width: COL[i] - 4, ellipsis: true });
+            x += COL[i];
+          });
+          y += 20;
+
+          // Table rows
+          enriched.forEach((e, idx) => {
+            const rowH = 28;
+            if (idx % 2 === 1) doc.rect(36, y, PW, rowH).fill("#F8FAFC");
+            doc.rect(36, y, PW, rowH).stroke("#E5E7EB");
+
+            const cells = [
+              e.name,
+              e.shortId,
+              rl(e.role),
+              e.managerName,
+              e.daysInactive === 999 ? "Never active" : fmtTs(e.lastActivity),
+              fmtTs(e.lastLogin),
+              e.daysInactive === 999 ? "N/A" : `${e.daysInactive}d`,
+              "Inactive",
+            ];
+            x = 36;
+            cells.forEach((cell, i) => {
+              doc.fillColor(i === 6 ? "#DC2626" : "#0F172A")
+                .fontSize(8).font(i === 0 ? "Helvetica-Bold" : "Helvetica")
+                .text(String(cell), x + 3, y + 10, { width: COL[i] - 6, ellipsis: true });
+              x += COL[i];
+            });
+            y += rowH;
+            if (y > 770) { doc.addPage(); y = 50; }
+          });
+
+          if (enriched.length === 0) {
+            doc.fillColor("#6B7280").fontSize(11).font("Helvetica").text("No inactive users found.", 36, y + 14, { align: "center", width: PW });
+          }
+
+          // Footer
+          doc.fontSize(8).fillColor("#94A3B8")
+            .text(`Ccentrik CRM · Automated Inactivity Report · ${todayStr}`, 36, 800, { align: "center", width: PW });
+
+          doc.end();
+        } catch (e) { reject(e); }
+      });
+
+      // ── Send mail ────────────────────────────────────────────────────────────
+      await sendMail({
+        to:      user.email,
+        subject,
+        html,
+        text:    `CCENTRIK INACTIVITY REPORT — ${generatedAt}\n\n${enriched.map(e => `${e.name} (${rl(e.role)}) | Manager: ${e.managerName} | Last Activity: ${fmtTs(e.lastActivity)} | Last Login: ${fmtTs(e.lastLogin)} | Inactive: ${e.daysInactive === 999 ? "Never active" : e.daysInactive + " days"}`).join("\n") || "No inactive users found."}\n\n— Ccentrik CRM`,
+        attachments: [{
+          filename:     `Ccentrik-Inactivity-Report-${todayStr}.pdf`,
+          content:      pdfBuffer.toString("base64"),
+          content_type: "application/pdf",
+        }],
+      });
+
+      console.log(`[ComprehensiveInactivityCron] Sent to ${user.email} (${rl(user.role)}) — ${enriched.length} inactive`);
+      sent++;
+    } catch (err) {
+      console.error(`[ComprehensiveInactivityCron] Error for ${user.id}:`, err.message);
+      errors.push({ user_id: user.id, error: err.message });
+    }
+  }
+
+  console.log(`[ComprehensiveInactivityCron] Done — ${sent}/${allUsers.length} emails sent`);
+  return { sent, total_users: allUsers.length, errors: errors.length ? errors : undefined };
+}
+
 module.exports = router;
