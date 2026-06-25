@@ -1,0 +1,45 @@
+name: DSR & Inactivity Alert Scheduler
+
+on:
+  schedule:
+    # Runs every 30 minutes — triggers both the DSR scheduler and inactivity alert cron.
+    # Each endpoint checks the current IST half-hour slot against saved configs.
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}   # allow manual trigger from GitHub UI
+
+jobs:
+  trigger-scheduler:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger DSR scheduler cron
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            https://backend-gamma-nine-32.vercel.app/api/reports/scheduler-cron)
+          echo "DSR scheduler response status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "DSR scheduler cron returned non-200 status: $STATUS"
+            exit 1
+          fi
+
+      - name: Trigger inactivity alert cron
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            https://backend-gamma-nine-32.vercel.app/api/reports/inactivity-cron)
+          echo "Inactivity alert response status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "Inactivity alert cron returned non-200 status: $STATUS"
+            exit 1
+          fi
+
+      - name: Trigger role-based inactivity cron (9:00 AM IST)
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            https://backend-gamma-nine-32.vercel.app/api/reports/role-inactivity-cron)
+          echo "Role inactivity cron response status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "Role inactivity cron returned non-200 status: $STATUS"
+            exit 1
+          fi

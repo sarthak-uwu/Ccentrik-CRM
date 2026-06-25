@@ -1280,4 +1280,315 @@ function buildInactivityAlertText(employees, thresholdDays) {
   return `${sep}\nEMPLOYEE INACTIVITY ALERT\nThreshold: ${thresholdDays} days\n${sep}\n\n${lines}\n\n${sep}\nPlease review and take necessary action.\n— Ccentrik CRM`;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROLE-BASED INACTIVITY EMAIL WORKFLOW
+// Fires daily at 09:00 AM IST. Each user receives email about inactive users
+// within their role scope. Zero changes to any existing endpoint or helper.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ROLE_INACTIVITY_THRESHOLD = 3; // consecutive inactive days before email starts
+
+// ─── GET /api/reports/role-inactivity-cron ───────────────────────────────────
+router.get("/role-inactivity-cron", async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.headers.authorization !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  // Compute current IST half-hour slot (mirrors existing inactivity-cron logic)
+  const nowUtc      = new Date();
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+  const nowIst      = new Date(nowUtc.getTime() + istOffsetMs);
+  const h24         = nowIst.getUTCHours();
+  const rawMin      = nowIst.getUTCMinutes();
+  const slot_m      = rawMin < 30 ? 0 : 30;
+  const h12         = h24 % 12 || 12;
+  const ampm        = h24 < 12 ? "AM" : "PM";
+  const currentSlot = `${String(h12).padStart(2, "0")}:${String(slot_m).padStart(2, "0")} ${ampm}`;
+
+  console.log(`[RoleInactivityCron] ${nowUtc.toISOString()} → IST slot: ${currentSlot}`);
+
+  // Only execute at the 09:00 AM IST window (GitHub Actions fires at 03:30 UTC = 09:00 IST)
+  if (currentSlot !== "09:00 AM") {
+    return res.json({ success: true, slot: currentSlot, sent: 0, message: "Not the 09:00 AM IST window — skipped" });
+  }
+
+  try {
+    const results = await sendRoleBasedInactivityAlerts(nowIst);
+    return res.json({ success: true, slot: currentSlot, ...results });
+  } catch (err) {
+    console.error("[RoleInactivityCron] Fatal error:", err.message);
+    return res.status(500).json({ error: err.message || "Role inactivity cron failed" });
+  }
+});
+
+// ─── Core engine ─────────────────────────────────────────────────────────────
+async function sendRoleBasedInactivityAlerts(nowIst) {
+  // 1. Load all active users with their manager relationship
+  const { data: allUsers, error: usersErr } = await supabase
+    .from("profiles")
+    .select("id, full_name, email, role, manager_id")
+    .not("status", "in", '("deleted","inactive")')
+    .not("email", "is", null)
+    .order("full_name");
+
+  if (usersErr) throw usersErr;
+  if (!allUsers?.length) return { sent: 0, total_users: 0 };
+
+  // 2. Compute inactivity days for every user (sequential to avoid DB overload)
+  const inactivityMap = {};
+  for (const user of allUsers) {
+    inactivityMap[user.id] = await computeRoleUserInactivity(user, nowIst);
+  }
+
+  // 3. For each user determine their role-based scope and send email if needed
+  const results = [];
+
+  for (const user of allUsers) {
+    try {
+      const scopeInactive = getRoleInactiveScope(user, allUsers, inactivityMap);
+
+      if (scopeInactive.length === 0) {
+        results.push({ user_id: user.id, status: "skipped", reason: "no_inactive_in_scope" });
+        continue;
+      }
+
+      const isSelfOnlyReminder =
+        scopeInactive.length === 1 && scopeInactive[0].id === user.id;
+
+      let html, text, subject;
+
+      if (isSelfOnlyReminder) {
+        const days = inactivityMap[user.id].daysInactive;
+        subject = `Action Required: You have been inactive on Ccentrik CRM for ${days} day${days !== 1 ? "s" : ""}`;
+        html    = buildSelfInactivityHtml(user, days, nowIst);
+        text    = buildSelfInactivityText(user, days);
+      } else {
+        subject = `Inactivity Alert — ${scopeInactive.length} member${scopeInactive.length !== 1 ? "s" : ""} inactive for ${ROLE_INACTIVITY_THRESHOLD}+ days`;
+        html    = buildTeamInactivityHtml(user, scopeInactive, nowIst);
+        text    = buildTeamInactivityText(scopeInactive);
+      }
+
+      await sendMail({ to: user.email, subject, html, text });
+      results.push({ user_id: user.id, status: "sent", inactive_count: scopeInactive.length });
+      console.log(`[RoleInactivityCron] Sent to ${user.email} (${user.role}) — ${scopeInactive.length} inactive in scope`);
+    } catch (itemErr) {
+      console.error(`[RoleInactivityCron] Failed for user ${user.id}:`, itemErr.message);
+      results.push({ user_id: user.id, status: "error", error: itemErr.message });
+    }
+  }
+
+  const sent = results.filter(r => r.status === "sent").length;
+  console.log(`[RoleInactivityCron] Done — ${sent}/${allUsers.length} emails sent`);
+  return { sent, total_users: allUsers.length, results };
+}
+
+// ─── Compute inactivity days for one user ────────────────────────────────────
+async function computeRoleUserInactivity(user, nowIst) {
+  const { data: lastLoginRow } = await supabase
+    .from("login_logs")
+    .select("logged_in_at")
+    .eq("user_id", user.id)
+    .order("logged_in_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const [
+    { data: lastAct     },
+    { data: lastLead    },
+    { data: lastDeal    },
+    { data: lastMeeting },
+    { data: lastTask    },
+  ] = await Promise.all([
+    supabase.from("activities").select("created_at").eq("created_by", user.id)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("leads").select("created_at").eq("owner_id", user.id)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("deals").select("created_at").eq("created_by", user.id)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("meetings").select("created_at").eq("created_by", user.id)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("tasks").select("updated_at").eq("assigned_to", user.id)
+      .order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+
+  const loginTs    = lastLoginRow?.logged_in_at || null;
+  const activityTs = [
+    lastAct?.created_at,
+    lastLead?.created_at,
+    lastDeal?.created_at,
+    lastMeeting?.created_at,
+    lastTask?.updated_at,
+  ].filter(Boolean).reduce((max, ts) => (ts > max ? ts : max), "") || null;
+
+  const candidates = [loginTs, activityTs].filter(Boolean);
+  const lastSeenTs = candidates.length > 0
+    ? candidates.reduce((max, ts) => (ts > max ? ts : max))
+    : null;
+
+  const daysInactive = lastSeenTs
+    ? Math.floor((nowIst.getTime() - new Date(lastSeenTs).getTime()) / (24 * 60 * 60 * 1000))
+    : 999;
+
+  return {
+    id:           user.id,
+    name:         user.full_name || user.email,
+    email:        user.email,
+    role:         user.role,
+    manager_id:   user.manager_id,
+    lastLogin:    loginTs,
+    lastActivity: activityTs,
+    lastSeen:     lastSeenTs,
+    daysInactive,
+  };
+}
+
+// ─── Determine inactive users within a user's role-based scope ───────────────
+function getRoleInactiveScope(user, allUsers, inactivityMap) {
+  const allInactive = Object.values(inactivityMap)
+    .filter(u => u.daysInactive >= ROLE_INACTIVITY_THRESHOLD);
+
+  if (user.role === "owner") {
+    // Super Admin sees ALL inactive users across the organisation
+    return allInactive;
+  }
+
+  if (user.role === "sales_head") {
+    // Sales Head sees: self + direct reports + their reports (2-level tree)
+    const level1Ids = allUsers
+      .filter(u => u.manager_id === user.id)
+      .map(u => u.id);
+    const level2Ids = allUsers
+      .filter(u => level1Ids.includes(u.manager_id))
+      .map(u => u.id);
+    const scopeIds = new Set([user.id, ...level1Ids, ...level2Ids]);
+    return allInactive.filter(u => scopeIds.has(u.id));
+  }
+
+  if (user.role === "sales_manager") {
+    // Sales Manager sees: self + direct reports only
+    const directIds = allUsers
+      .filter(u => u.manager_id === user.id)
+      .map(u => u.id);
+    const scopeIds = new Set([user.id, ...directIds]);
+    return allInactive.filter(u => scopeIds.has(u.id));
+  }
+
+  if (user.role === "employee" || user.role === "inside_sales") {
+    // Sales/Inside Sales Employee sees only themselves
+    return allInactive.filter(u => u.id === user.id);
+  }
+
+  return [];
+}
+
+// ─── Email: personal inactivity reminder (employee / inside_sales) ────────────
+function buildSelfInactivityHtml(user, daysInactive, nowIst) {
+  const todayStr  = nowIst.toISOString().slice(0, 10);
+  const firstName = (user.full_name || user.email).split(" ")[0];
+  const urgency   = daysInactive >= 7 ? "#DC2626" : "#D97706";
+  const crmUrl    = process.env.FRONTEND_URL || "https://ccentrik-crm.web.app";
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#F5F7FA;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;padding:32px 16px;"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #E5E7EB;">
+  <tr><td style="height:4px;background:#1E3A5F;"></td></tr>
+  <tr><td style="padding:32px 36px 20px;">
+    <div style="font-size:20px;font-weight:800;color:#111827;margin-bottom:6px;">Hi ${firstName},</div>
+    <div style="font-size:14px;color:#6B7280;line-height:1.6;margin-bottom:20px;">
+      You have not logged into <strong style="color:#111827;">Ccentrik CRM</strong> for
+      <strong style="color:${urgency};font-size:16px;"> ${daysInactive} consecutive day${daysInactive !== 1 ? "s" : ""}</strong>.
+    </div>
+    <div style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:8px;padding:14px 18px;font-size:13px;color:#92400E;line-height:1.6;margin-bottom:24px;">
+      Regular login ensures you stay updated on leads, deals, meetings, and team activity.
+      Staying active helps you and your team hit targets on time.
+    </div>
+    <a href="${crmUrl}" style="display:inline-block;background:#1E3A5F;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-size:14px;font-weight:700;">
+      Log In to Ccentrik CRM →
+    </a>
+  </td></tr>
+  <tr><td style="background:#F9FAFB;padding:16px 36px;border-top:1px solid #E5E7EB;font-size:11.5px;color:#9CA3AF;">
+    This reminder was sent on ${todayStr} because your account has been inactive for ${daysInactive}+ days.
+    It will stop automatically once you log in. &nbsp;&middot;&nbsp; Ccentrik CRM
+  </td></tr>
+</table></td></tr></table></body></html>`;
+}
+
+function buildSelfInactivityText(user, daysInactive) {
+  const firstName = (user.full_name || user.email).split(" ")[0];
+  const crmUrl    = process.env.FRONTEND_URL || "https://ccentrik-crm.web.app";
+  return `Hi ${firstName},\n\nYou have not logged into Ccentrik CRM for ${daysInactive} consecutive day${daysInactive !== 1 ? "s" : ""}.\n\nPlease log in to stay updated on your leads, deals, and team activity.\n\n${crmUrl}\n\nThis reminder stops automatically once you log in.\n— Ccentrik CRM`;
+}
+
+// ─── Email: team / org-wide inactivity report (for managers/heads/owners) ─────
+function buildTeamInactivityHtml(recipient, inactiveUsers, nowIst) {
+  const todayStr  = nowIst.toISOString().slice(0, 10);
+  const firstName = (recipient.full_name || recipient.email).split(" ")[0];
+  const rl        = r => r === "owner" ? "Super Admin" : r === "sales_head" ? "Sales Head" : r === "sales_manager" ? "Sales Manager" : r === "inside_sales" ? "Inside Sales" : "Sales Employee";
+  const fmtDate   = ts => {
+    if (!ts) return "Never";
+    return new Date(ts).toLocaleDateString("en-IN", {
+      day: "2-digit", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit", hour12: true,
+    });
+  };
+
+  const rows = inactiveUsers.map(e => {
+    const daysLabel = e.daysInactive === 999 ? "Never active" : `${e.daysInactive} days`;
+    const color     = e.daysInactive >= 7 ? "#DC2626" : "#D97706";
+    const selfTag   = e.id === recipient.id ? ` <span style="background:#EEF2FF;color:#4F46E5;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600;">You</span>` : "";
+    return `
+      <tr style="border-bottom:1px solid #F3F4F6;">
+        <td style="padding:11px 14px;font-size:13px;font-weight:600;color:#111827;">${e.name}${selfTag}</td>
+        <td style="padding:11px 14px;font-size:12px;color:#6B7280;">${rl(e.role)}</td>
+        <td style="padding:11px 14px;font-size:12px;color:#6B7280;">${fmtDate(e.lastLogin)}</td>
+        <td style="padding:11px 14px;font-size:12px;color:#6B7280;">${fmtDate(e.lastActivity)}</td>
+        <td style="padding:11px 14px;text-align:center;font-size:13px;font-weight:700;color:${color};">${daysLabel}</td>
+      </tr>`;
+  }).join("");
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#F5F7FA;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;padding:32px 16px;"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:700px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #E5E7EB;">
+  <tr><td style="height:4px;background:#1E3A5F;"></td></tr>
+  <tr><td style="padding:28px 32px 16px;">
+    <div style="font-size:20px;font-weight:800;color:#111827;margin-bottom:4px;">Hi ${firstName}, — Inactivity Alert</div>
+    <div style="font-size:13px;color:#6B7280;">${inactiveUsers.length} member${inactiveUsers.length !== 1 ? "s" : ""} inactive for ${ROLE_INACTIVITY_THRESHOLD}+ days &nbsp;&middot;&nbsp; ${todayStr}</div>
+  </td></tr>
+  <tr><td style="padding:0 32px 20px;">
+    <div style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:8px;padding:12px 16px;font-size:12.5px;color:#92400E;line-height:1.6;">
+      The following member${inactiveUsers.length !== 1 ? "s" : ""} within your team ${inactiveUsers.length !== 1 ? "have" : "has"} not logged in or performed any CRM activity
+      for <strong>${ROLE_INACTIVITY_THRESHOLD}</strong> or more consecutive days. Please follow up.
+    </div>
+  </td></tr>
+  <tr><td style="padding:0 32px 28px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;">
+      <tr style="background:#F9FAFB;">
+        <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;">Name</th>
+        <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Role</th>
+        <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Last Login</th>
+        <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Last Activity</th>
+        <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Inactive Days</th>
+      </tr>
+      ${rows}
+    </table>
+  </td></tr>
+  <tr><td style="background:#F9FAFB;padding:16px 32px;border-top:1px solid #E5E7EB;font-size:11.5px;color:#9CA3AF;">
+    &copy; ${new Date().getFullYear()} CCENTRIK &nbsp;&middot;&nbsp; Role-Based Inactivity Alert &nbsp;&middot;&nbsp; Sent daily at 9:00 AM IST until users log in &nbsp;&middot;&nbsp; Do not reply
+  </td></tr>
+</table></td></tr></table></body></html>`;
+}
+
+function buildTeamInactivityText(inactiveUsers) {
+  const rl   = r => r === "owner" ? "Super Admin" : r === "sales_head" ? "Sales Head" : r === "sales_manager" ? "Sales Manager" : r === "inside_sales" ? "Inside Sales" : "Sales Employee";
+  const fmtDt = ts => ts ? new Date(ts).toLocaleString("en-IN") : "Never";
+  const sep   = "=".repeat(80);
+  const lines = inactiveUsers.map(e =>
+    `  ${(e.name).padEnd(28)} | ${rl(e.role).padEnd(14)} | Last Login: ${fmtDt(e.lastLogin).padEnd(22)} | Inactive: ${e.daysInactive === 999 ? "Never active" : e.daysInactive + " days"}`
+  ).join("\n");
+  return `${sep}\nTEAM INACTIVITY ALERT — ${ROLE_INACTIVITY_THRESHOLD}+ DAYS\n${sep}\n\n${lines}\n\n${sep}\nPlease follow up with inactive team members.\n— Ccentrik CRM`;
+}
+
 module.exports = router;
