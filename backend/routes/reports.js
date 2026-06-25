@@ -1891,7 +1891,13 @@ async function sendComprehensiveInactivityAlerts(nowIst) {
   for (const user of allUsers) {
     try {
       // Reuses existing scope logic — unchanged
-      const scopeInactive = getRoleInactiveScope(user, allUsers, inactivityMap);
+      let scopeInactive = getRoleInactiveScope(user, allUsers, inactivityMap);
+
+      // getRoleInactiveScope uses "employee" but the DB role is "sales" — handle both
+      if (scopeInactive.length === 0 && (user.role === "sales" || user.role === "employee")) {
+        const self = inactivityMap[user.id];
+        if (self && self.daysInactive >= ROLE_INACTIVITY_THRESHOLD) scopeInactive = [self];
+      }
 
       if (scopeInactive.length === 0) continue; // nothing to report
 
