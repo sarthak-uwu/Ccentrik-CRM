@@ -1,24 +1,22 @@
 const API_URL = import.meta.env.VITE_API_URL || "https://backend-gamma-nine-32.vercel.app";
 
 const TOOL_STATUS = {
-  get_leads:           "Querying leads...",
-  get_deals:           "Analyzing deals...",
-  get_tasks:           "Checking tasks...",
-  get_activities:      "Reviewing activities...",
+  get_leads:            "Querying leads...",
+  get_deals:            "Analyzing deals...",
+  get_tasks:            "Checking tasks...",
+  get_activities:       "Reviewing activities...",
   get_pipeline_summary: "Computing pipeline...",
 };
 
-export async function streamARIA({ message, pageContext, getToken, onStatus, onToken, onDone, onError }) {
+export async function streamARIA({ message, pageContext, getToken, onStatus, onToken, onDone, onError, signal }) {
   try {
     const token = await getToken();
 
     const res = await fetch(`${API_URL}/api/ai/chat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ message, pageContext: pageContext || null }),
+      method:  "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body:    JSON.stringify({ message, pageContext: pageContext || null }),
+      signal,
     });
 
     if (!res.ok) {
@@ -28,8 +26,8 @@ export async function streamARIA({ message, pageContext, getToken, onStatus, onT
 
     const reader  = res.body.getReader();
     const decoder = new TextDecoder();
-    let buffer   = "";
-    let fullText = "";
+    let buffer    = "";
+    let fullText  = "";
 
     while (true) {
       const { done, value } = await reader.read();
@@ -42,7 +40,7 @@ export async function streamARIA({ message, pageContext, getToken, onStatus, onT
       for (const line of lines) {
         if (!line.startsWith("data: ")) continue;
         const raw = line.slice(6).trim();
-        if (raw === "[DONE]") { onDone(fullText); return; }
+        if (raw === "[DONE]") { onDone?.(fullText); return; }
 
         try {
           const parsed = JSON.parse(raw);
@@ -50,19 +48,29 @@ export async function streamARIA({ message, pageContext, getToken, onStatus, onT
             onStatus?.(TOOL_STATUS[parsed.name] || "Analyzing...");
           } else if (parsed.type === "token") {
             fullText += parsed.content;
-            onToken(parsed.content, fullText);
+            onToken?.(parsed.content, fullText);
           } else if (parsed.type === "error") {
             throw new Error(parsed.message);
           }
         } catch (e) {
-          // Skip JSON parse errors from incomplete chunks
           if (e.message && !e.message.includes("JSON") && !e.message.includes("Unexpected")) throw e;
         }
       }
     }
 
-    onDone(fullText);
+    onDone?.(fullText);
   } catch (err) {
-    onError(err);
+    if (err.name === "AbortError") return; // User stopped generation — ignore silently
+    onError?.(err);
   }
+}
+
+export async function clearARIAHistory(getToken) {
+  try {
+    const token = await getToken();
+    await fetch(`${API_URL}/api/ai/clear-history`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    });
+  } catch { /* non-critical */ }
 }

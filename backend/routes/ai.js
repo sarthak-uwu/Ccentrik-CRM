@@ -201,21 +201,32 @@ async function executeTool(name, args, profile) {
 function buildSystemPrompt(profile, pageContext, docContext) {
   const date = new Date().toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
-  const pageSection = pageContext
+  // Handle both old page-context format and new Ccentrik AI mode format
+  const isAIModule = pageContext?.module === "Ccentrik AI";
+  const pageSection = pageContext && !isAIModule
     ? `
 ━━━ CURRENT PAGE CONTEXT ━━━
 • Module: ${pageContext.module}
-• Page: ${pageContext.page}
-• Path: ${pageContext.path}
+• Page: ${pageContext.page || ""}
+• Path: ${pageContext.path || ""}
 
 The user has the **${pageContext.module}** page open right now. When they say "here", "this page", "current records", or similar — they mean ${pageContext.module}. Prioritize ${pageContext.module}-related tools and responses. Be specific and actionable for this module.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
     : "";
 
-  return `You are ARIA (AI Revenue Intelligence Assistant) — the AI agent inside Ccentrik CRM, built for the Indian sales market.
+  const aiModeSection = isAIModule
+    ? `
+━━━ CCENTRIK AI MODE ━━━
+Mode: ${pageContext.mode || "CRM Assistant"}
+${pageContext.modeHint || "Help the user with their CRM."}
+Response Language: Always respond in ${pageContext.language || "English"}.
+━━━━━━━━━━━━━━━━━━━━━━━`
+    : "";
+
+  return `You are ARIA (Ccentrik AI) — the intelligent AI agent inside Ccentrik CRM, built for the Indian sales market.
 
 USER: ${profile.full_name} | Role: ${profile.role} | ${date}
-${pageSection}
+${pageSection}${aiModeSection}
 
 YOU ARE A LIVE AGENT. You have real-time tools to query the CRM database. ALWAYS call tools to get fresh data before answering any question — never guess or make up numbers.
 
@@ -360,6 +371,15 @@ router.post("/chat", authenticate, async (req, res) => {
     res.write("data: [DONE]\n\n");
     res.end();
   }
+});
+
+// POST /api/ai/clear-history
+router.post("/clear-history", authenticate, (req, res) => {
+  const userId = req.profile.id;
+  if (conversationHistory[userId]) {
+    conversationHistory[userId] = [];
+  }
+  res.json({ success: true });
 });
 
 module.exports = router;
