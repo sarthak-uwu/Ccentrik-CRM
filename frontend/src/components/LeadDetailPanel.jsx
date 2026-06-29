@@ -191,7 +191,7 @@ function SourceChip({ activity }) {
 }
 
 /* ─── Add Activity Form ───────────────────────────────────────────────────── */
-function AddActivityForm({ leadId, profile, onSuccess, services = [], existingActivities = [] }) {
+function AddActivityForm({ leadId, profile, onSuccess, services = [], existingActivities = [], editingActivity = null, onCancelEdit }) {
   const [saving, setSaving]           = useState(false);
   const [actType, setActType]         = useState("follow_up_call");
   const [actTypeOpen, setActTypeOpen] = useState(false);
@@ -214,6 +214,25 @@ function AddActivityForm({ leadId, profile, onSuccess, services = [], existingAc
     return () => document.removeEventListener("mousedown", handle);
   }, [actTypeOpen]);
 
+  useEffect(() => {
+    if (editingActivity) {
+      const meta = editingActivity.metadata || {};
+      setActType(editingActivity.type || "follow_up_call");
+      setRemarks(meta.remarks || "");
+      if (editingActivity.due_date) {
+        const d = new Date(editingActivity.due_date);
+        setDate(d.toISOString().slice(0, 10));
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mm = String(d.getMinutes()).padStart(2, "0");
+        setTime(hh === "00" && mm === "00" ? "" : `${hh}:${mm}`);
+      } else { setDate(""); setTime(""); }
+      if (meta.service) setActService(meta.service);
+    } else {
+      setActType("follow_up_call"); setRemarks(""); setDate(""); setTime("");
+      setActService(svcOptions.length === 1 ? svcOptions[0] : "");
+    }
+  }, [editingActivity]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!remarks.trim()) { toast.error("Remarks are required"); return; }
@@ -224,30 +243,50 @@ function AddActivityForm({ leadId, profile, onSuccess, services = [], existingAc
       const typeLabel   = typeInfo?.label || actType;
       const scheduledAt = date ? (time ? `${date}T${time}` : date) : null;
       const token = await auth.currentUser?.getIdToken();
-      const res = await fetch(`${API}/api/activities`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          lead_id:      leadId,
-          related_type: "lead",
-          related_id:   leadId,
-          user_id:      profile?.id,
-          type:         actType,
-          title:        `${typeLabel}: ${remarks.trim()}`,
-          description:  `[${typeLabel}] ${remarks.trim()}`,
-          status:       scheduledAt ? "todo" : "done",
-          priority:     "medium",
-          due_date:     scheduledAt || null,
-          metadata:     { activity_type: actType, remarks: remarks.trim(), scheduled_at: scheduledAt, ...(actService ? { service: actService } : {}) },
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Failed to log activity");
+      if (editingActivity) {
+        const res = await fetch(`${API}/api/activities/${editingActivity.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            type:        actType,
+            title:       `${typeLabel}: ${remarks.trim()}`,
+            description: `[${typeLabel}] ${remarks.trim()}`,
+            due_date:    scheduledAt || null,
+            metadata:    { activity_type: actType, remarks: remarks.trim(), scheduled_at: scheduledAt, ...(actService ? { service: actService } : {}) },
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || "Failed to update activity");
+        }
+        toast.success("Activity updated");
+        onCancelEdit?.();
+      } else {
+        const res = await fetch(`${API}/api/activities`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            lead_id:      leadId,
+            related_type: "lead",
+            related_id:   leadId,
+            user_id:      profile?.id,
+            type:         actType,
+            title:        `${typeLabel}: ${remarks.trim()}`,
+            description:  `[${typeLabel}] ${remarks.trim()}`,
+            status:       scheduledAt ? "todo" : "done",
+            priority:     "medium",
+            due_date:     scheduledAt || null,
+            metadata:     { activity_type: actType, remarks: remarks.trim(), scheduled_at: scheduledAt, ...(actService ? { service: actService } : {}) },
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || "Failed to log activity");
+        }
+        toast.success("Activity logged");
+        setRemarks(""); setDate(""); setTime(""); setActType("follow_up_call");
+        setActService(svcOptions.length === 1 ? svcOptions[0] : "");
       }
-      toast.success("Activity logged");
-      setRemarks(""); setDate(""); setTime(""); setActType("follow_up_call");
-      setActService(svcOptions.length === 1 ? svcOptions[0] : "");
       onSuccess?.();
     } catch (err) {
       toast.error("Failed: " + (err.message || "Unknown error"));
@@ -259,7 +298,8 @@ function AddActivityForm({ leadId, profile, onSuccess, services = [], existingAc
   return (
     <form onSubmit={handleSubmit} style={{ padding: "16px", background: "var(--surface-2)", borderRadius: 12, border: "1px solid var(--border)", marginBottom: 20 }}>
       <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text)", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
-        <Plus size={13} style={{ color: "var(--accent)" }} strokeWidth={2.5} />Log Activity
+        {editingActivity ? <Pencil size={13} style={{ color: "var(--accent)" }} strokeWidth={2.5} /> : <Plus size={13} style={{ color: "var(--accent)" }} strokeWidth={2.5} />}
+        {editingActivity ? "Edit Activity" : "Log Activity"}
       </div>
       <div style={{ marginBottom: 12 }} ref={actTypeRef}>
         <label style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 5 }}>Activity Type</label>
@@ -333,15 +373,23 @@ function AddActivityForm({ leadId, profile, onSuccess, services = [], existingAc
           <input className="crm-input" type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ height: 36 }} />
         </div>
       </div>
-      <button type="submit" className="btn-primary" disabled={saving || !remarks.trim()} style={{ height: 36, fontSize: 12.5, width: "100%" }}>
-        {saving ? "Saving..." : "Log Activity"}
-      </button>
+      <div style={{ display: "flex", gap: 8 }}>
+        {editingActivity && (
+          <button type="button" onClick={onCancelEdit}
+            style={{ flex: 1, height: 36, fontSize: 12.5, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", color: "var(--text-muted)", fontWeight: 600 }}>
+            Cancel
+          </button>
+        )}
+        <button type="submit" className="btn-primary" disabled={saving || !remarks.trim()} style={{ flex: 1, height: 36, fontSize: 12.5 }}>
+          {saving ? "Saving..." : editingActivity ? "Update Activity" : "Log Activity"}
+        </button>
+      </div>
     </form>
   );
 }
 
 /* ─── Activity Timeline Item ──────────────────────────────────────────────── */
-function ActivityItem({ activity, isLast }) {
+function ActivityItem({ activity, isLast, onEdit }) {
   const key    = activity.type?.toLowerCase().replace(/[^a-z_]/g, "") || "follow_up";
   const info   = ACT_TYPE_MAP[key] || ACT_TYPE_MAP.follow_up;
   const color  = info.color;
@@ -349,6 +397,7 @@ function ActivityItem({ activity, isLast }) {
   const meta   = activity.metadata || {};
   const sched  = meta.scheduled_at;
   const text   = activity.title || activity.description || "";
+  const isSystemType = ["stage_change", "deal_created", "email_contact", "email_sent"].includes(activity.type);
 
   return (
     <div style={{ display: "flex", gap: 12, position: "relative" }}>
@@ -359,7 +408,15 @@ function ActivityItem({ activity, isLast }) {
         <TIcon size={13} style={{ color }} strokeWidth={1.8} />
       </div>
       <div style={{ flex: 1, paddingBottom: isLast ? 0 : 18 }}>
-        <div style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.55, fontWeight: 500 }}>{text}</div>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.55, fontWeight: 500, flex: 1 }}>{text}</div>
+          {!isSystemType && onEdit && (
+            <button type="button" onClick={() => onEdit(activity)} title="Edit activity"
+              style={{ flexShrink: 0, padding: "2px 6px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--surface)", cursor: "pointer", color: "var(--text-muted)", display: "inline-flex", alignItems: "center", fontFamily: "inherit" }}>
+              <Pencil size={10} strokeWidth={2} />
+            </button>
+          )}
+        </div>
         {sched && (
           <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -645,6 +702,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
   const { profile, isSalesHead } = useAuth();
   const qc          = useQueryClient();
   const [activeTab, setActiveTab] = useState("details");
+  const [editingActivity, setEditingActivity] = useState(null);
   const navigate = useNavigate();
 
   const openComposer = (to, toName = "") => navigate("/activities", {
@@ -1179,6 +1237,8 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                 );
               })()}
               <AddActivityForm leadId={lead.id} profile={profile} services={extra.services || []} existingActivities={activities || []}
+                editingActivity={editingActivity}
+                onCancelEdit={() => setEditingActivity(null)}
                 onSuccess={() => {
                   qc.invalidateQueries({ queryKey: ["unified-timeline-lead", lead.id] });
                   qc.invalidateQueries({ queryKey: ["activities"] });
@@ -1202,7 +1262,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
               ) : (
                 <div style={{ display: "flex", flexDirection: "column" }}>
                   {activities.map((act, i) => (
-                    <ActivityItem key={act.id} activity={act} isLast={i === activities.length - 1} />
+                    <ActivityItem key={act.id} activity={act} isLast={i === activities.length - 1} onEdit={(a) => setEditingActivity(a)} />
                   ))}
                 </div>
               )}
@@ -1248,7 +1308,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                         {recs.map((item, i) => {
                           const isLast = gi === groups.length - 1 && i === recs.length - 1;
                           return item._type === "activity"
-                            ? <ActivityItem key={item.id} activity={item} isLast={isLast} />
+                            ? <ActivityItem key={item.id} activity={item} isLast={isLast} onEdit={(a) => setEditingActivity(a)} />
                             : <HistoryItem key={item.id} record={item} isLast={isLast} />;
                         })}
                       </div>
