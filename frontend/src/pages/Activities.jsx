@@ -1926,7 +1926,11 @@ export default function Activities() {
     return { company: null, contact: null };
   }, [leads, deals]);
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["activities"] });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["activities"] });
+    qc.invalidateQueries({ queryKey: ["my-pending-activities"] });
+    qc.invalidateQueries({ queryKey: ["my-completed-activities"] });
+  };
 
   // Real-time subscription — refresh when any activity changes
   useEffect(() => {
@@ -1934,6 +1938,8 @@ export default function Activities() {
       .channel("activities-global")
       .on("postgres_changes", { event: "*", schema: "public", table: "activities" }, () => {
         qc.invalidateQueries({ queryKey: ["activities"] });
+        qc.invalidateQueries({ queryKey: ["my-pending-activities"] });
+        qc.invalidateQueries({ queryKey: ["my-completed-activities"] });
       })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
@@ -1968,8 +1974,21 @@ export default function Activities() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, ...payload }) => actService.update(id, payload),
-    onSuccess: () => { invalidate(); toast.success("Activity updated"); setEditActivity(null); },
-    onError: (e) => toast.error(e.message),
+    onMutate: async ({ id, ...payload }) => {
+      await qc.cancelQueries({ queryKey: ["activities"] });
+      const prev = qc.getQueryData(["activities"]);
+      qc.setQueryData(["activities"], (old) => {
+        if (!Array.isArray(old)) return old;
+        return old.map((a) => a.id === id ? { ...a, ...payload } : a);
+      });
+      return { prev };
+    },
+    onError: (e, _, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["activities"], ctx.prev);
+      toast.error(e.message);
+    },
+    onSuccess: () => { toast.success("Activity updated"); setEditActivity(null); },
+    onSettled: () => { invalidate(); },
   });
 
   const deleteMutation = useMutation({

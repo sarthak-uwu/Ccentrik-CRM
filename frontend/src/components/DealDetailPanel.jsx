@@ -997,7 +997,12 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
               <AddActivityForm dealId={deal.id} profile={profile}
                 services={parseJSON(deal?.notes).services || (linkedLead ? parseJSON(linkedLead?.other_notes || "{}").services : []) || []}
                 existingActivities={activities || []}
-                onSuccess={() => qc.invalidateQueries({ queryKey: ["unified-timeline-deal", deal.id] })}
+                onSuccess={() => {
+                  qc.invalidateQueries({ queryKey: ["unified-timeline-deal", deal.id] });
+                  qc.invalidateQueries({ queryKey: ["activities"] });
+                  qc.invalidateQueries({ queryKey: ["my-pending-activities"] });
+                  qc.invalidateQueries({ queryKey: ["my-completed-activities"] });
+                }}
               />
 
               <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>

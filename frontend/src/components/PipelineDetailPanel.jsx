@@ -1125,6 +1125,7 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
                 onSuccess={() => {
                   qc.invalidateQueries({ queryKey: ["unified-timeline-pipeline", entry.id] });
                   qc.invalidateQueries({ queryKey: ["my-pending-activities"] });
+                  qc.invalidateQueries({ queryKey: ["my-completed-activities"] });
                   qc.invalidateQueries({ queryKey: ["activities"] });
                 }}
               />
