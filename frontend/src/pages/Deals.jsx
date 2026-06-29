@@ -2005,9 +2005,9 @@ export default function Deals() {
                               return (
                                 <td>
                                   {(svcs.length > 0 || customSvc) ? (
-                                    <div style={{ fontSize: 11, color: "var(--text-main)", lineHeight: 1.7 }}>
+                                    <div style={{ fontSize: 11, lineHeight: 1.7 }}>
                                       {[...svcs, ...(customSvc ? [customSvc] : [])].map((svc, i) => (
-                                        <div key={svc}>{i + 1}. {svc}</div>
+                                        <div key={svc} style={{ color: ["#3B82F6","#10B981","#F59E0B","#EF4444","#8B5CF6","#06B6D4","#EC4899","#84CC16"][i % 8] }}>{i + 1}. {svc}</div>
                                       ))}
                                     </div>
                                   ) : <span style={{ color: "var(--text-muted)", fontSize: 11 }}>—</span>}
