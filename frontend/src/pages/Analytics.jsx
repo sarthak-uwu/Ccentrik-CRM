@@ -3,14 +3,22 @@ import { analyticsService } from "../services/analyticsService";
 import { useCurrency } from "../context/CurrencyContext";
 import { useAuth } from "../context/AuthContext";
 import DSRPanel from "../components/DSRPanel";
+import { supabase } from "../supabaseClient";
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, FunnelChart, Funnel, LabelList
 } from "recharts";
 import { format } from "date-fns";
-import { TrendingUp, IndianRupee, Users, Target, Award, CheckSquare } from "lucide-react";
+import { TrendingUp, IndianRupee, Users, Target, Award, CheckSquare, Layers } from "lucide-react";
 
 const COLORS = ["#1B76D3", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#3B82F6"];
+
+const SAP_SERVICES = [
+  "SAP Implementation", "SAP Migration ECC→S/4HANA", "SAP Version Upgrade",
+  "SAP Resource Augmentation", "Other Project Services",
+];
+const parseJSON = (str) => { try { return str ? JSON.parse(str) : {}; } catch { return {}; } };
+const SVC_COLORS = ["#3B82F6", "#8B5CF6", "#10B981", "#F59E0B", "#EF4444"];
 
 const CustomTooltip = ({ active, payload, label, formatCompact }) => {
   if (!active || !payload?.length) return null;
@@ -95,6 +103,45 @@ export default function Analytics() {
   const canViewTeamPerf = !isFieldUser;
   const { data: teamPerf } = useQuery({ queryKey: ["team-performance"], queryFn: analyticsService.getTeamPerformance, enabled: canViewTeamPerf });
   const { data: targetProgress } = useQuery({ queryKey: ["target-progress"], queryFn: analyticsService.getTargetProgress });
+
+  const { data: leadsWithServices } = useQuery({
+    queryKey: ["leads-by-service"],
+    queryFn: async () => {
+      const { data } = await supabase.from("leads").select("id, other_notes, stage");
+      return data || [];
+    },
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const { data: activitiesWithService } = useQuery({
+    queryKey: ["activities-by-service"],
+    queryFn: async () => {
+      const { data } = await supabase.from("activities").select("id, metadata, type")
+        .not("metadata", "is", null);
+      return data || [];
+    },
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const serviceLeadsData = SAP_SERVICES.map((svc, i) => {
+    const matched = (leadsWithServices || []).filter((l) => (parseJSON(l.other_notes).services || []).includes(svc));
+    return {
+      name: svc.length > 24 ? svc.slice(0, 24) + "…" : svc,
+      fullName: svc,
+      total: matched.length,
+      won: matched.filter((l) => l.stage === "won").length,
+      fill: SVC_COLORS[i % SVC_COLORS.length],
+    };
+  }).filter((d) => d.total > 0);
+
+  const serviceActData = SAP_SERVICES.map((svc, i) => ({
+    name: svc.length > 24 ? svc.slice(0, 24) + "…" : svc,
+    fullName: svc,
+    count: (activitiesWithService || []).filter((a) => a.metadata?.service === svc).length,
+    fill: SVC_COLORS[i % SVC_COLORS.length],
+  })).filter((d) => d.count > 0);
+
+  const cumulativeActCount = (activitiesWithService || []).filter((a) => a.metadata?.service === "Cumulative").length;
 
   const fmtRevenue = revenueData?.map((r) => ({
     month: r.month ? format(new Date(r.month + "-01"), "MMM yy") : r.month,
@@ -231,6 +278,61 @@ export default function Analytics() {
           <TargetTracker progress={targetProgress} />
         </SectionCard>
       </div>
+
+      {/* Service Analytics */}
+      {(serviceLeadsData.length > 0 || serviceActData.length > 0) && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+          {/* Leads by Service */}
+          {serviceLeadsData.length > 0 && (
+            <SectionCard title="Leads by SAP Service">
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={serviceLeadsData} layout="vertical" margin={{ left: 8, right: 28 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
+                  <XAxis type="number" tick={{ fontSize: 10, fill: "#94A3B8" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 10.5, fill: "#475569" }} axisLine={false} tickLine={false} width={120} />
+                  <Tooltip content={<CustomTooltip />} formatter={(v, n, p) => [v, n + " — " + (p.payload.fullName || p.payload.name)]} />
+                  <Legend formatter={(v) => <span style={{ fontSize: 10.5, color: "#64748B" }}>{v}</span>} iconSize={7} />
+                  <Bar dataKey="total" name="Total Leads" fill="#3B82F6" radius={[0, 3, 3, 0]} maxBarSize={14} />
+                  <Bar dataKey="won" name="Won" fill="#10B981" radius={[0, 3, 3, 0]} maxBarSize={14} />
+                </BarChart>
+              </ResponsiveContainer>
+            </SectionCard>
+          )}
+
+          {/* Activities by Service */}
+          {serviceActData.length > 0 && (
+            <SectionCard title="Activities by SAP Service">
+              <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 4 }}>
+                {serviceActData.map((d, i) => {
+                  const max = Math.max(...serviceActData.map((x) => x.count));
+                  return (
+                    <div key={d.fullName}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                        <span style={{ fontSize: 11.5, color: "#475569" }} title={d.fullName}>{d.name}</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: d.fill }}>{d.count}</span>
+                      </div>
+                      <div style={{ height: 5, background: "#F1F5F9", borderRadius: 3 }}>
+                        <div style={{ height: "100%", background: d.fill, borderRadius: 3, width: `${max > 0 ? (d.count / max) * 100 : 0}%`, transition: "width 0.4s" }} />
+                      </div>
+                    </div>
+                  );
+                })}
+                {cumulativeActCount > 0 && (
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                      <span style={{ fontSize: 11.5, color: "#475569" }}>Cumulative</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "#8B5CF6" }}>{cumulativeActCount}</span>
+                    </div>
+                    <div style={{ height: 5, background: "#F1F5F9", borderRadius: 3 }}>
+                      <div style={{ height: "100%", background: "#8B5CF6", borderRadius: 3, width: `${Math.max(...serviceActData.map((x) => x.count)) > 0 ? (cumulativeActCount / Math.max(...serviceActData.map((x) => x.count))) * 100 : 0}%`, transition: "width 0.4s" }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </SectionCard>
+          )}
+        </div>
+      )}
 
       {/* Team Performance Table — hidden for field users unless granted access */}
       {!canViewTeamPerf ? null : <SectionCard title="Team Performance">

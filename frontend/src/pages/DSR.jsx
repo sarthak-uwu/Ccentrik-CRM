@@ -1,4 +1,7 @@
 import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback, Fragment } from "react";
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -40,6 +43,50 @@ const CORE_TYPES = {
   meeting_person:  { label: "In-Person Meeting", short: "In-Person", icon: Users,     color: "#8B5CF6", bg: "rgba(139,92,246,0.1)"  },
   meeting_virtual: { label: "Virtual Meeting",   short: "Virtual",   icon: Video,     color: "#6366F1", bg: "rgba(99,102,241,0.1)"  },
 };
+
+const DSR_CARD_FIELDS = [
+  { key: "company",   label: "Company & Module" },
+  { key: "contact",   label: "Contact Person"   },
+  { key: "type",      label: "Activity Type"    },
+  { key: "service",   label: "Service"          },
+  { key: "notes",     label: "Notes / Outcome"  },
+  { key: "status",    label: "Status"           },
+  { key: "timestamp", label: "Timestamp"        },
+  { key: "employee",  label: "Employee"         },
+];
+
+function loadCardLayout(userId) {
+  try {
+    const saved = localStorage.getItem(`dsr_layout_${userId || "default"}`);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      const existingKeys = parsed.map((f) => f.key);
+      return [...parsed, ...DSR_CARD_FIELDS.filter((f) => !existingKeys.includes(f.key))];
+    }
+  } catch {}
+  return DSR_CARD_FIELDS.map((f) => ({ ...f, visible: true }));
+}
+
+function saveCardLayout(userId, fields) {
+  try { localStorage.setItem(`dsr_layout_${userId || "default"}`, JSON.stringify(fields)); } catch {}
+}
+
+function SortableField({ field, onToggle }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: field.key });
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
+  return (
+    <div ref={setNodeRef} style={{ ...style, display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", marginBottom: 5 }}>
+      <span {...attributes} {...listeners} style={{ cursor: "grab", color: "var(--text-muted)", display: "flex", alignItems: "center" }}>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><circle cx="4" cy="3" r="1.2"/><circle cx="8" cy="3" r="1.2"/><circle cx="4" cy="6" r="1.2"/><circle cx="8" cy="6" r="1.2"/><circle cx="4" cy="9" r="1.2"/><circle cx="8" cy="9" r="1.2"/></svg>
+      </span>
+      <span style={{ flex: 1, fontSize: 12.5, color: field.visible !== false ? "var(--text)" : "var(--text-muted)" }}>{field.label}</span>
+      <button type="button" onClick={() => onToggle(field.key)}
+        style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 99, border: "1px solid var(--border)", background: field.visible !== false ? "rgba(99,102,241,0.08)" : "var(--surface)", color: field.visible !== false ? "var(--accent)" : "var(--text-muted)", cursor: "pointer", fontFamily: "inherit" }}>
+        {field.visible !== false ? "Visible" : "Hidden"}
+      </button>
+    </div>
+  );
+}
 
 function resolveType(t) {
   if (!t) return "note";
@@ -290,8 +337,13 @@ const MODULE_BADGE = {
   Deal:     { color: "#10B981", bg: "rgba(16,185,129,0.08)"  },
 };
 
-function DSRActivityCard({ act, cfg, timestampFmt, selectedUser }) {
+function DSRActivityCard({ act, cfg, timestampFmt, selectedUser, cardLayout }) {
   const [expanded, setExpanded] = useState(false);
+  const isVisible = (key) => {
+    if (!cardLayout) return true;
+    const f = cardLayout.find((x) => x.key === key);
+    return f ? f.visible !== false : true;
+  };
 
   // Company / contact from joined lead or deal
   const company = act.lead?.company_name || act.deal?.company_name || act.deal?.title || null;
@@ -340,29 +392,40 @@ function DSRActivityCard({ act, cfg, timestampFmt, selectedUser }) {
         <div style={{ flex: 1, minWidth: 0 }}>
 
           {/* Company + Module badge */}
-          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: company ? "var(--text)" : "var(--text-muted)", fontStyle: company ? "normal" : "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
-              {company || "No record linked"}
-            </span>
-            {modStyle && (
-              <span style={{ fontSize: 9.5, fontWeight: 700, color: modStyle.color, background: modStyle.bg, padding: "1px 7px", borderRadius: 99, flexShrink: 0 }}>{module}</span>
-            )}
-          </div>
+          {isVisible("company") && (
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: company ? "var(--text)" : "var(--text-muted)", fontStyle: company ? "normal" : "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
+                {company || "No record linked"}
+              </span>
+              {modStyle && (
+                <span style={{ fontSize: 9.5, fontWeight: 700, color: modStyle.color, background: modStyle.bg, padding: "1px 7px", borderRadius: 99, flexShrink: 0 }}>{module}</span>
+              )}
+            </div>
+          )}
 
           {/* Contact */}
-          {contact && (
+          {isVisible("contact") && contact && (
             <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 3, marginBottom: 5 }}>
               <User size={9} strokeWidth={2} /> {contact}
             </div>
           )}
 
-          {/* Activity type badge — shown exactly once */}
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: cfg.color, background: cfg.bg, padding: "2px 8px", borderRadius: 99, marginBottom: notes ? 6 : 0 }}>
-            <cfg.icon size={9} strokeWidth={2} /> {cfg.label}
-          </span>
+          {/* Activity type badge + service badge */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center", marginBottom: notes ? 6 : 0 }}>
+            {isVisible("type") && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: cfg.color, background: cfg.bg, padding: "2px 8px", borderRadius: 99 }}>
+                <cfg.icon size={9} strokeWidth={2} /> {cfg.label}
+              </span>
+            )}
+            {isVisible("service") && act.metadata?.service && (
+              <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: act.metadata.service === "Cumulative" ? "rgba(139,92,246,0.1)" : "rgba(37,99,235,0.08)", color: act.metadata.service === "Cumulative" ? "#8B5CF6" : "#3B82F6", border: `1px solid ${act.metadata.service === "Cumulative" ? "rgba(139,92,246,0.25)" : "rgba(37,99,235,0.2)"}` }}>
+                {act.metadata.service}
+              </span>
+            )}
+          </div>
 
           {/* Outcome / Notes */}
-          {notes && (
+          {isVisible("notes") && notes && (
             <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.55, marginTop: 5 }}>
               {expanded || !hasLong ? notes : notes.slice(0, 130) + "…"}
               {hasLong && (
@@ -377,14 +440,18 @@ function DSRActivityCard({ act, cfg, timestampFmt, selectedUser }) {
 
         {/* Time + Status + Employee */}
         <div style={{ textAlign: "right", flexShrink: 0, minWidth: 90 }}>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>
-            {format(new Date(act.created_at), timestampFmt)}
-          </div>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 99, fontSize: 10, fontWeight: 700, background: `${stColor}12`, color: stColor, marginBottom: 4 }}>
-            {done ? <CheckCircle2 size={8} /> : <Clock size={8} />}
-            {stLabel}
-          </div>
-          {selectedUser?.full_name && (
+          {isVisible("timestamp") && (
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>
+              {format(new Date(act.created_at), timestampFmt)}
+            </div>
+          )}
+          {isVisible("status") && (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 99, fontSize: 10, fontWeight: 700, background: `${stColor}12`, color: stColor, marginBottom: 4 }}>
+              {done ? <CheckCircle2 size={8} /> : <Clock size={8} />}
+              {stLabel}
+            </div>
+          )}
+          {isVisible("employee") && selectedUser?.full_name && (
             <div style={{ fontSize: 10, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 3, justifyContent: "flex-end", marginTop: 2 }}>
               <User size={9} /> {selectedUser.full_name}
             </div>
@@ -2353,9 +2420,33 @@ export default function DSRPage() {
   const [customEnd, setCustomEnd]           = useState(format(new Date(), "yyyy-MM-dd"));
   const [calMonth, setCalMonth]             = useState(startOfMonth(new Date()));
   const [selectedCalDay, setSelectedCalDay] = useState(null);
-  const [actTypeFilter, setActTypeFilter]   = useState("all");
+  const [actTypeFilter, setActTypeFilter]     = useState("all");
   const [actStatusFilter, setActStatusFilter] = useState("all");
-  const [actSearch, setActSearch]           = useState("");
+  const [actSearch, setActSearch]             = useState("");
+  const [actServiceFilter, setActServiceFilter] = useState("");
+  const [actSourceFilter, setActSourceFilter] = useState("");
+  const [actCountryFilter, setActCountryFilter] = useState("");
+  const [showLayoutPanel, setShowLayoutPanel] = useState(false);
+  const [cardLayout, setCardLayout] = useState(() => loadCardLayout(profile?.id));
+  const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const handleLayoutDragEnd = (event) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setCardLayout((prev) => {
+      const oldIdx = prev.findIndex((f) => f.key === active.id);
+      const newIdx = prev.findIndex((f) => f.key === over.id);
+      const next = arrayMove(prev, oldIdx, newIdx);
+      saveCardLayout(profile?.id, next);
+      return next;
+    });
+  };
+  const toggleFieldVisibility = (key) => {
+    setCardLayout((prev) => {
+      const next = prev.map((f) => f.key === key ? { ...f, visible: f.visible === false } : f);
+      saveCardLayout(profile?.id, next);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const h = (e) => {
@@ -2413,7 +2504,7 @@ export default function DSRPage() {
     queryKey: ["dsr-acts", userId, rangeStart, rangeEnd],
     queryFn: async () => {
       const { data } = await supabase.from("activities")
-        .select("id, type, title, description, created_at, status, due_date, lead_id, deal_id, related_type, related_id, lead:leads!activities_lead_id_fkey(id,company_name,contact_name,stage), deal:deals!activities_deal_id_fkey(id,company_name,contact_name,title)")
+        .select("id, type, title, description, created_at, status, due_date, lead_id, deal_id, related_type, related_id, metadata, lead:leads!activities_lead_id_fkey(id,company_name,contact_name,stage,source,other_notes), deal:deals!activities_deal_id_fkey(id,company_name,contact_name,title,notes)")
         .or(`created_by.eq.${userId},user_id.eq.${userId}`)
         .gte("created_at", rangeStart).lte("created_at", rangeEnd)
         .neq("type", "email_contact").order("created_at", { ascending: false });
@@ -2580,9 +2671,22 @@ export default function DSRPage() {
         const contact = (a.lead?.contact_name || a.deal?.contact_name || "").toLowerCase();
         if (!a.title?.toLowerCase().includes(q) && !a.description?.toLowerCase().includes(q) && !company.includes(q) && !contact.includes(q)) return false;
       }
+      if (actServiceFilter) {
+        const svc = a.metadata?.service;
+        if (actServiceFilter === "Cumulative" ? svc !== "Cumulative" : svc !== actServiceFilter) return false;
+      }
+      if (actSourceFilter) {
+        const src = a.lead?.source || "";
+        if (src.toLowerCase() !== actSourceFilter.toLowerCase()) return false;
+      }
+      if (actCountryFilter) {
+        const parseJ = (s) => { try { return s ? JSON.parse(s) : {}; } catch { return {}; } };
+        const country = parseJ(a.lead?.other_notes).country || parseJ(a.deal?.notes).country || "";
+        if (country.toLowerCase() !== actCountryFilter.toLowerCase()) return false;
+      }
       return true;
     });
-  }, [acts, actTypeFilter, actStatusFilter, actSearch]);
+  }, [acts, actTypeFilter, actStatusFilter, actSearch, actServiceFilter, actSourceFilter, actCountryFilter]);
 
   /* Timeline groups */
   const timelineGroups = useMemo(() => {
@@ -3059,14 +3163,67 @@ export default function DSRPage() {
                     <option value="in_progress">In Progress</option>
                     <option value="done">Done</option>
                   </select>
-                  {(actTypeFilter !== "all" || actStatusFilter !== "all" || actSearch) && (
-                    <button onClick={() => { setActTypeFilter("all"); setActStatusFilter("all"); setActSearch(""); }}
+                  <select value={actServiceFilter} onChange={(e) => setActServiceFilter(e.target.value)}
+                    style={{ padding: "4px 8px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 11.5, cursor: "pointer" }}>
+                    <option value="">All Services</option>
+                    <option value="SAP Implementation">SAP Implementation</option>
+                    <option value="SAP Migration ECC→S/4HANA">SAP Migration</option>
+                    <option value="SAP Version Upgrade">Version Upgrade</option>
+                    <option value="SAP Resource Augmentation">Resource Augmentation</option>
+                    <option value="Other Project Services">Other Services</option>
+                    <option value="Cumulative">Cumulative</option>
+                  </select>
+                  <select value={actSourceFilter} onChange={(e) => setActSourceFilter(e.target.value)}
+                    style={{ padding: "4px 8px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 11.5, cursor: "pointer" }}>
+                    <option value="">All Sources</option>
+                    {["Website","Facebook","Instagram","LinkedIn","Referral","Cold Call","Event","Other"].map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                  {(() => {
+                    const parseJ = (s) => { try { return s ? JSON.parse(s) : {}; } catch { return {}; } };
+                    const countries = [...new Set(acts.map((a) => parseJ(a.lead?.other_notes).country || parseJ(a.deal?.notes).country).filter(Boolean))].sort();
+                    if (!countries.length) return null;
+                    return (
+                      <select value={actCountryFilter} onChange={(e) => setActCountryFilter(e.target.value)}
+                        style={{ padding: "4px 8px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 11.5, cursor: "pointer" }}>
+                        <option value="">All Countries</option>
+                        {countries.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    );
+                  })()}
+                  <button onClick={() => setShowLayoutPanel((v) => !v)}
+                    style={{ display: "flex", alignItems: "center", gap: 3, padding: "4px 8px", borderRadius: 7, border: `1px solid ${showLayoutPanel ? "var(--accent)" : "var(--border)"}`, background: showLayoutPanel ? "rgba(99,102,241,0.08)" : "var(--surface)", cursor: "pointer", fontSize: 11, color: showLayoutPanel ? "var(--accent)" : "var(--text-muted)", fontFamily: "inherit" }}>
+                    <Settings size={10} /> Layout
+                  </button>
+                  {(actTypeFilter !== "all" || actStatusFilter !== "all" || actSearch || actServiceFilter || actSourceFilter || actCountryFilter) && (
+                    <button onClick={() => { setActTypeFilter("all"); setActStatusFilter("all"); setActSearch(""); setActServiceFilter(""); setActSourceFilter(""); setActCountryFilter(""); }}
                       style={{ display: "flex", alignItems: "center", gap: 3, padding: "4px 8px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--surface)", cursor: "pointer", fontSize: 11, color: "var(--text-muted)" }}>
                       <X size={10} /> Clear
                     </button>
                   )}
                 </div>
               </div>
+
+              {showLayoutPanel && (
+                <div style={{ marginBottom: 14, padding: "14px 16px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>Customize Card Layout</span>
+                    <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>Drag to reorder · Click to toggle visibility</span>
+                  </div>
+                  <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleLayoutDragEnd}>
+                    <SortableContext items={cardLayout.map((f) => f.key)} strategy={verticalListSortingStrategy}>
+                      {cardLayout.map((field) => (
+                        <SortableField key={field.key} field={field} onToggle={toggleFieldVisibility} />
+                      ))}
+                    </SortableContext>
+                  </DndContext>
+                  <button type="button" onClick={() => { const reset = DSR_CARD_FIELDS.map((f) => ({ ...f, visible: true })); setCardLayout(reset); saveCardLayout(profile?.id, reset); }}
+                    style={{ marginTop: 8, fontSize: 11, padding: "4px 10px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--surface)", cursor: "pointer", color: "var(--text-muted)", fontFamily: "inherit" }}>
+                    Reset to default
+                  </button>
+                </div>
+              )}
 
               {filteredActs.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "52px 0", color: "var(--text-muted)" }}>
@@ -3090,7 +3247,7 @@ export default function DSRPage() {
                             initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }}
                             transition={{ delay: Math.min(idx * 0.02, 0.18), duration: 0.16 }}
                           >
-                            <DSRActivityCard act={act} cfg={cfg} timestampFmt={timestampFmt} selectedUser={selectedUser} />
+                            <DSRActivityCard act={act} cfg={cfg} timestampFmt={timestampFmt} selectedUser={selectedUser} cardLayout={cardLayout} />
                           </motion.div>
                         );
                       })}

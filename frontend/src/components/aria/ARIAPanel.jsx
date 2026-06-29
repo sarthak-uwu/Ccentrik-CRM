@@ -159,7 +159,7 @@ export default function ARIAPanel() {
       setMessages([{
         id: "welcome",
         role: "assistant",
-        content: `Hi ${fn}! I'm ARIA, your CRM AI Agent.\n\nI can see you're on the **${pi.module}** page. I can help you:\n• Search, filter, and view ${pi.module.toLowerCase()} records\n• Create leads, tasks, and activities\n• Get insights and recommendations\n• Execute multi-step workflows\n\nWhat would you like to do?`,
+        content: `Hi ${fn}! I'm **CCENTRIK AI**, your CRM Intelligence Agent.\n\nI can see you're on the **${pi.module}** page. I can help you:\n• Search, filter, and view ${pi.module.toLowerCase()} records\n• Create leads, tasks, and activities\n• Get insights and recommendations\n• Execute multi-step workflows\n\nWhat would you like to do?`,
         ts: new Date(),
       }]);
     }
@@ -279,7 +279,7 @@ export default function ARIAPanel() {
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
     setAiState("thinking");
-    setThinkingStatus("Connecting to ARIA...");
+    setThinkingStatus("Connecting to CCENTRIK AI...");
 
     const streamId = Date.now() + "a";
     setMessages((prev) => [...prev, { id: streamId, role: "assistant", content: "", ts: new Date(), streaming: true }]);
@@ -401,10 +401,10 @@ export default function ARIAPanel() {
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 14, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.03em" }}>ARIA</span>
+                  <span style={{ fontSize: 14, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.03em" }}>CCENTRIK AI</span>
                   <span style={{ fontSize: 10, color: "#10B981", fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}>
                     <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#10B981", animation: "pulse 2s ease-in-out infinite", display: "inline-block" }} />
-                    Agent · Llama 3.1
+                    AI Agent · Online
                   </span>
                 </div>
                 <div style={{ fontSize: 11, color: aiState === "thinking" ? "#A78BFA" : "var(--text-muted)", marginTop: 1, transition: "color 0.2s" }}>
@@ -516,7 +516,7 @@ export default function ARIAPanel() {
               <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 6 }}>
                 <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#10B981", flexShrink: 0 }} />
                 <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                  ARIA Agent · {pageInfo.module} context · Enter to send · Actions require approval
+                  CCENTRIK AI · {pageInfo.module} context · Enter to send · Actions require approval
                 </span>
               </div>
             </div>

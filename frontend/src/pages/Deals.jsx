@@ -16,7 +16,7 @@ import {
   LayoutList, Columns, MoreVertical, CheckCircle2, XCircle, Calendar,
   Clock, IndianRupee, AlertTriangle, Building2, Trophy,
   Flame, Thermometer, Snowflake, Lock, LockOpen, Undo2, ArrowRightLeft,
-  Filter, ArrowUpDown, ArrowUp, ArrowDown, Globe, ExternalLink,
+  Filter, ArrowUpDown, ArrowUp, ArrowDown, Globe, ExternalLink, ChevronDown,
 } from "lucide-react";
 import { auth } from "../firebase";
 import SkeletonTable from "../components/SkeletonTable";
@@ -359,6 +359,11 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
   const selectedStage = watch("stage");
   const selectedTemp  = watch("temperature");
 
+  const [selectedServices, setSelectedServices] = useState(() => extra.services || []);
+  const [svcOpen, setSvcOpen] = useState(false);
+  const toggleService = (svc) =>
+    setSelectedServices((p) => p.includes(svc) ? p.filter((s) => s !== svc) : [...p, svc]);
+
   const handleSave = async (fd) => {
     if (!fd.email?.trim() && !fd.contact?.trim()) {
       toast.error("Please provide at least one contact detail — Email or Phone is required");
@@ -373,7 +378,7 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
       value:        fd.value ? Number(fd.value) : null,
       close_date:   fd.close_date || null,
       assigned_to:  fd.assigned_to || null,
-      notes: toJSON({ headquarters: fd.headquarters, country: fd.country, designation: fd.designation, email: fd.email, contact: fd.contact, remarks: fd.remarks, lead_code: extra.lead_code || undefined, source: extra.source || undefined, industry: extra.industry || undefined }),
+      notes: toJSON({ headquarters: fd.headquarters, country: fd.country, designation: fd.designation, email: fd.email, contact: fd.contact, remarks: fd.remarks, lead_code: extra.lead_code || undefined, source: extra.source || undefined, industry: extra.industry || undefined, services: selectedServices.length ? selectedServices : undefined }),
     });
   };
 
@@ -490,6 +495,41 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
             <div style={{ gridColumn: "1 / -1" }}>
               <label className="crm-label">Remarks</label>
               <textarea className="crm-input" {...register("remarks")} rows={3} placeholder="Deal notes..." style={{ resize: "vertical" }} />
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label className="crm-label">SAP Services</label>
+              <button type="button" onClick={() => setSvcOpen((o) => !o)}
+                style={{ width: "100%", height: 38, padding: "0 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", fontSize: 13, fontWeight: 500, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", fontFamily: "inherit", marginTop: 4 }}>
+                <span style={{ color: selectedServices.length ? "var(--text)" : "var(--text-muted)" }}>
+                  {selectedServices.length ? selectedServices.join(", ") : "Select SAP services..."}
+                </span>
+                <ChevronDown size={14} style={{ color: "var(--text-muted)", transform: svcOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
+              </button>
+              {svcOpen && (
+                <div style={{ marginTop: 4, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", overflow: "hidden" }}>
+                  {SAP_SERVICES.map((svc) => {
+                    const checked = selectedServices.includes(svc);
+                    return (
+                      <label key={svc} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", cursor: "pointer", borderBottom: "1px solid var(--border)", background: checked ? "rgba(99,102,241,0.06)" : "transparent", transition: "background 0.12s" }}>
+                        <input type="checkbox" checked={checked} onChange={() => toggleService(svc)} style={{ width: 15, height: 15, accentColor: "var(--accent)", cursor: "pointer" }} />
+                        <span style={{ fontSize: 13, color: checked ? "var(--accent)" : "var(--text)", fontWeight: checked ? 600 : 400 }}>{svc}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {selectedServices.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
+                  {selectedServices.map((svc) => (
+                    <span key={svc} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600, padding: "2px 9px", borderRadius: 99, background: "rgba(99,102,241,0.08)", color: "var(--accent)", border: "1px solid rgba(99,102,241,0.2)" }}>
+                      {svc}
+                      <button type="button" onClick={() => toggleService(svc)} style={{ display: "inline-flex", alignItems: "center", background: "none", border: "none", cursor: "pointer", padding: 0, color: "var(--accent)", lineHeight: 1 }}>
+                        <X size={10} strokeWidth={2.5} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             {canReassign && (
               <div style={{ gridColumn: "1 / -1" }}>
@@ -1535,7 +1575,7 @@ export default function Deals() {
     if (filterValueMin !== "" && Number(d.value) < Number(filterValueMin)) return false;
     if (filterValueMax !== "" && Number(d.value) > Number(filterValueMax)) return false;
     if (filterService.length) {
-      const svcs = parseJSON(d.linked_lead?.other_notes).services || [];
+      const svcs = parseJSON(d.notes).services || parseJSON(d.linked_lead?.other_notes).services || [];
       if (!filterService.some((f) => svcs.includes(f))) return false;
     }
     return true;
@@ -1960,7 +2000,7 @@ export default function Deals() {
                               <td>{srcLabel !== "—" ? <SourceBadge source={srcLabel} plain /> : <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>}</td>
                             )}
                             {isVisible("services") && (() => {
-                              const svcs = parseJSON(d.linked_lead?.other_notes).services || [];
+                              const svcs = parseJSON(d.notes).services || parseJSON(d.linked_lead?.other_notes).services || [];
                               const customSvc = parseJSON(d.linked_lead?.other_notes).custom_service;
                               return (
                                 <td>

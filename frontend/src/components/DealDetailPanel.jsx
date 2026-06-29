@@ -159,16 +159,25 @@ function SourceChip({ activity }) {
 }
 
 /* ─── Add Activity Form ───────────────────────────────────────────────────── */
-function AddActivityForm({ dealId, profile, onSuccess }) {
+function AddActivityForm({ dealId, profile, onSuccess, services = [], existingActivities = [] }) {
   const [saving, setSaving]   = useState(false);
   const [actType, setActType] = useState("follow_up_call");
   const [remarks, setRemarks] = useState("");
   const [date, setDate]       = useState("");
   const [time, setTime]       = useState("");
 
+  const svcOptions = services.length > 0
+    ? (services.length === 1 ? services : [...services, "Cumulative"])
+    : [];
+  const [actService, setActService] = useState(() => svcOptions.length === 1 ? svcOptions[0] : "");
+  const coveredServices = existingActivities.map((a) => a.metadata?.service).filter((s) => s && s !== "Cumulative");
+  const pureServices = svcOptions.filter((s) => s !== "Cumulative");
+  const pendingServices = pureServices.filter((s) => !coveredServices.includes(s));
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!remarks.trim()) { toast.error("Remarks are required"); return; }
+    if (svcOptions.length > 0 && !actService) { toast.error("Please select a service"); return; }
     setSaving(true);
     try {
       const typeInfo    = ACTIVITY_TYPES.find((t) => t.key === actType);
@@ -189,7 +198,7 @@ function AddActivityForm({ dealId, profile, onSuccess }) {
           status:       scheduledAt ? "todo" : "done",
           priority:     "medium",
           due_date:     scheduledAt || null,
-          metadata:     { activity_type: actType, remarks: remarks.trim(), scheduled_at: scheduledAt },
+          metadata:     { activity_type: actType, remarks: remarks.trim(), scheduled_at: scheduledAt, ...(actService ? { service: actService } : {}) },
         }),
       });
       if (!res.ok) {
@@ -198,6 +207,7 @@ function AddActivityForm({ dealId, profile, onSuccess }) {
       }
       toast.success("Activity logged");
       setRemarks(""); setDate(""); setTime(""); setActType("follow_up_call");
+      setActService(svcOptions.length === 1 ? svcOptions[0] : "");
       onSuccess?.();
     } catch (err) {
       toast.error("Failed: " + (err.message || "Unknown error"));
@@ -220,6 +230,35 @@ function AddActivityForm({ dealId, profile, onSuccess }) {
           ))}
         </select>
       </div>
+
+      {pendingServices.length > 0 && pureServices.length > 1 && (
+        <div style={{ marginBottom: 10, padding: "7px 10px", borderRadius: 8, background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.2)" }}>
+          <div style={{ fontSize: 9.5, fontWeight: 700, color: "#B45309", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5 }}>Pending Services</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {pendingServices.map((svc) => (
+              <span key={svc} onClick={() => setActService(svc)} style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 99, background: "rgba(245,158,11,0.1)", color: "#D97706", fontWeight: 600, border: "1px solid rgba(245,158,11,0.25)", cursor: "pointer" }}>
+                {svc}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {svcOptions.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 5 }}>
+            Service *
+          </label>
+          <select
+            className="crm-input"
+            style={{ height: 36, fontSize: 13, width: "100%", borderColor: svcOptions.length > 1 && !actService ? "rgba(239,68,68,0.5)" : undefined }}
+            value={actService}
+            onChange={(e) => setActService(e.target.value)}
+          >
+            {svcOptions.length > 1 && <option value="">Select service...</option>}
+            {svcOptions.map((svc) => <option key={svc} value={svc}>{svc}</option>)}
+          </select>
+        </div>
+      )}
 
       <div style={{ marginBottom: 10 }}>
         <label style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 5 }}>Remarks *</label>
@@ -278,8 +317,13 @@ function ActivityItem({ activity, isLast }) {
             </button>
           </div>
         )}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
           <SourceChip activity={activity} />
+          {meta.service && (
+            <span style={{ fontSize: 10.5, fontWeight: 700, padding: "1px 7px", borderRadius: 99, background: meta.service === "Cumulative" ? "rgba(139,92,246,0.1)" : "rgba(37,99,235,0.08)", color: meta.service === "Cumulative" ? "#8B5CF6" : "#3B82F6", border: `1px solid ${meta.service === "Cumulative" ? "rgba(139,92,246,0.25)" : "rgba(37,99,235,0.2)"}` }}>
+              {meta.service}
+            </span>
+          )}
           {activity.user?.full_name && (
             <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 700, padding: "1px 7px", borderRadius: 99, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
               {activity.user.full_name}
@@ -759,6 +803,25 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
               })()}
               {extra.lost_reason && <InfoRow icon={AlertTriangle} label="Lost Reason" value={extra.lost_reason} />}
 
+              {(() => {
+                const svcs = extra.services?.length
+                  ? extra.services
+                  : (linkedLead ? parseJSON(linkedLead?.other_notes || "{}").services : []) || [];
+                if (!svcs.length) return null;
+                return (
+                  <>
+                    <SectionHead label="Services" />
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4, marginBottom: 6 }}>
+                      {svcs.map((svc) => (
+                        <span key={svc} style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 99, background: "rgba(37,99,235,0.08)", color: "#3B82F6", border: "1px solid rgba(37,99,235,0.2)" }}>
+                          {svc}
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
+
               {extra.remarks && (
                 <>
                   <SectionHead label="Notes" />
@@ -912,7 +975,30 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
                 </div>
               )}
 
+              {(() => {
+                const dealSvcs = parseJSON(deal?.notes).services || (linkedLead ? parseJSON(linkedLead?.other_notes || "{}").services : []) || [];
+                if (!dealSvcs.length || !activities?.length) return null;
+                const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+                const recentSvcs = activities.filter((a) => new Date(a.created_at) >= sevenDaysAgo).map((a) => a.metadata?.service).filter(Boolean);
+                const staleSvcs = dealSvcs.filter((s) => !recentSvcs.includes(s));
+                if (!staleSvcs.length) return null;
+                return (
+                  <div style={{ marginBottom: 12, padding: "9px 12px", borderRadius: 9, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.18)", display: "flex", gap: 8, alignItems: "flex-start" }}>
+                    <AlertTriangle size={12} style={{ color: "#EF4444", flexShrink: 0, marginTop: 1 }} strokeWidth={2} />
+                    <div>
+                      <div style={{ fontSize: 10.5, fontWeight: 700, color: "#DC2626", marginBottom: 4 }}>No activity in 7 days</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {staleSvcs.map((svc) => (
+                          <span key={svc} style={{ fontSize: 10.5, padding: "1px 7px", borderRadius: 99, background: "rgba(239,68,68,0.08)", color: "#DC2626", fontWeight: 600, border: "1px solid rgba(239,68,68,0.15)" }}>{svc}</span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
               <AddActivityForm dealId={deal.id} profile={profile}
+                services={parseJSON(deal?.notes).services || (linkedLead ? parseJSON(linkedLead?.other_notes || "{}").services : []) || []}
+                existingActivities={activities || []}
                 onSuccess={() => qc.invalidateQueries({ queryKey: ["unified-timeline-deal", deal.id] })}
               />
 

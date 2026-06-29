@@ -24,7 +24,7 @@ export default function Settings() {
 
   // Team State
   const [team, setTeam] = useState([
-    { id: 1, name: "Sarthak Tyagi", email: "sarthak@ccentrik.com", role: "Owner", status: "Active" },
+    { id: 1, name: "Sarthak Tyagi", email: "sarthak@ccentrik.com", role: "Super Admin", status: "Active" },
   ]);
   const [showInvite, setShowInvite] = useState(false);
   const [inviteData, setInviteData] = useState({ name: "", email: "", role: "Employee" });
@@ -125,7 +125,7 @@ export default function Settings() {
                     <option>Employee</option>
                     <option>Sales Manager</option>
                     <option>Sales Head</option>
-                    <option>Owner</option>
+                    <option value="owner">Super Admin</option>
                   </select>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>

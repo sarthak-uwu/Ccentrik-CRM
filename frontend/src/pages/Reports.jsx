@@ -22,6 +22,13 @@ import {
 } from "lucide-react";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
+const SAP_SERVICES = [
+  "SAP Implementation", "SAP Migration ECC→S/4HANA", "SAP Version Upgrade",
+  "SAP Resource Augmentation", "Other Project Services",
+];
+
+const parseJSON = (str) => { try { return str ? JSON.parse(str) : {}; } catch { return {}; } };
+
 const STAGE_COLORS = {
   new: "#6B7280", contacted: "#3B82F6", qualified: "#8B5CF6",
   proposal: "#F59E0B", won: "#10B981", lost: "#EF4444",
@@ -41,10 +48,10 @@ const DATE_PRESETS = [
 // ─── Raw data fetch ───────────────────────────────────────────────────────────
 async function fetchAll() {
   const [leadsRes, dealsRes, profilesRes, activitiesRes] = await Promise.all([
-    supabase.from("leads").select("id, stage, source, temperature, priority, created_at, assigned_to, budget"),
+    supabase.from("leads").select("id, stage, source, temperature, priority, created_at, assigned_to, budget, other_notes"),
     supabase.from("deals").select("id, stage, value, created_at, assigned_to, closed_at"),
     supabase.from("profiles").select("id, full_name, role, status").eq("status", "active"),
-    supabase.from("activities").select("id, type, user_id, created_at"),
+    supabase.from("activities").select("id, type, user_id, created_at, metadata"),
   ]);
   return {
     leads: leadsRes.data || [],
@@ -113,6 +120,8 @@ export default function Reports() {
   const [filterEmployee, setFilterEmployee] = useState("");
   const [filterSource, setFilterSource] = useState("");
   const [filterStage, setFilterStage] = useState("");
+  const [filterService, setFilterService] = useState("");
+  const [filterCountry, setFilterCountry] = useState("");
   const [filterDays, setFilterDays] = useState(180);
   const [showFilters, setShowFilters] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
@@ -156,9 +165,22 @@ export default function Reports() {
     }
     if (filterSource) leads = leads.filter((l) => l.source === filterSource);
     if (filterStage) leads = leads.filter((l) => l.stage === filterStage);
+    if (filterService) {
+      leads = leads.filter((l) => {
+        const svcs = parseJSON(l.other_notes).services || [];
+        return filterService === "Cumulative"
+          ? svcs.length > 1
+          : svcs.includes(filterService);
+      });
+      activities = activities.filter((a) => {
+        const svc = a.metadata?.service;
+        return filterService === "Cumulative" ? svc === "Cumulative" : svc === filterService;
+      });
+    }
+    if (filterCountry) leads = leads.filter((l) => parseJSON(l.other_notes).country === filterCountry);
 
     return { leads, deals, activities };
-  }, [raw, filterEmployee, filterSource, filterStage, filterDays]);
+  }, [raw, filterEmployee, filterSource, filterStage, filterService, filterCountry, filterDays]);
 
   const computed = useMemo(() => {
     const { leads, deals, activities } = filtered;
@@ -286,7 +308,14 @@ export default function Reports() {
     if (topPerformer) aiInsights.push(`${topPerformer.name} leads the team with ${topPerformer.won} won deals.`);
     if (avgWonPerMonth > 0) aiInsights.push(`Forecast: ~${forecastLeads} won leads next month based on current trend.`);
 
-    return { totalLeads, wonLeads, lostLeads, convRate, hotLeads, totalRevenue, openDeals, monthlyLeads, stageFunnel, sourceData, tempData, actData, teamPerf, forecastLeads, forecastData, funnelConversions, aiInsights };
+    // Service breakdown
+    const serviceData = SAP_SERVICES.map((svc) => ({
+      name: svc.length > 22 ? svc.slice(0, 22) + "…" : svc,
+      fullName: svc,
+      value: leads.filter((l) => (parseJSON(l.other_notes).services || []).includes(svc)).length,
+    })).filter((d) => d.value > 0);
+
+    return { totalLeads, wonLeads, lostLeads, convRate, hotLeads, totalRevenue, openDeals, monthlyLeads, stageFunnel, sourceData, tempData, actData, teamPerf, forecastLeads, forecastData, funnelConversions, aiInsights, serviceData };
   }, [filtered, raw]);
 
   if (isLoading) return (
@@ -296,7 +325,8 @@ export default function Reports() {
     </div>
   );
 
-  const activeFilters = [filterEmployee, filterSource, filterStage].filter(Boolean).length;
+  const activeFilters = [filterEmployee, filterSource, filterStage, filterService, filterCountry].filter(Boolean).length;
+  const uniqueCountries = [...new Set((raw?.leads || []).map((l) => parseJSON(l.other_notes).country).filter(Boolean))].sort();
   const dateLabel = DATE_PRESETS.find((d) => d.days === filterDays)?.label || "Custom";
 
   return (
@@ -387,8 +417,27 @@ export default function Reports() {
               {LEAD_STAGES.map((s) => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
             </select>
           </div>
+          {/* Service */}
+          <div>
+            <label className="crm-label" style={{ display: "flex", alignItems: "center", gap: 5 }}><Layers size={11} /> SAP Service</label>
+            <select className="crm-input" value={filterService} onChange={(e) => setFilterService(e.target.value)} style={{ height: 36, width: "auto" }}>
+              <option value="">All services</option>
+              {SAP_SERVICES.map((s) => <option key={s} value={s}>{s}</option>)}
+              <option value="Cumulative">Cumulative</option>
+            </select>
+          </div>
+          {/* Country */}
+          {uniqueCountries.length > 0 && (
+            <div>
+              <label className="crm-label" style={{ display: "flex", alignItems: "center", gap: 5 }}><Filter size={11} /> Country</label>
+              <select className="crm-input" value={filterCountry} onChange={(e) => setFilterCountry(e.target.value)} style={{ height: 36, width: "auto" }}>
+                <option value="">All countries</option>
+                {uniqueCountries.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          )}
           {activeFilters > 0 && (
-            <button className="btn-secondary" onClick={() => { setFilterEmployee(""); setFilterSource(""); setFilterStage(""); setFilterDays(180); }} style={{ height: 36 }}>
+            <button className="btn-secondary" onClick={() => { setFilterEmployee(""); setFilterSource(""); setFilterStage(""); setFilterService(""); setFilterCountry(""); setFilterDays(180); }} style={{ height: 36 }}>
               Clear filters
             </button>
           )}
@@ -511,6 +560,23 @@ export default function Reports() {
           )}
         </ChartCard>
       </div>
+
+      {/* ── Leads by Service ── */}
+      {computed.serviceData.length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <ChartCard title="Leads by SAP Service" icon={Layers} iconColor="#3B82F6">
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={computed.serviceData} layout="vertical" margin={{ left: 8, right: 24 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "var(--text-2)" }} axisLine={false} tickLine={false} width={130} />
+                <Tooltip content={<CrmTooltip />} formatter={(v, n, p) => [v, p.payload.fullName || p.payload.name]} />
+                <Bar dataKey="value" name="Leads" fill="#3B82F6" radius={[0, 4, 4, 0]} maxBarSize={20} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        </div>
+      )}
 
       {/* ── Revenue Forecast + Funnel Conversion ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 18, marginBottom: 18 }}>

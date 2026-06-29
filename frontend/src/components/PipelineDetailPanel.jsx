@@ -18,7 +18,7 @@ import {
   Plus, PhoneCall, Video, FileText, CheckCircle2,
   Bell, RefreshCw, Download, History, RotateCcw,
   ChevronRight, ChevronDown, MessageCircle, Users, ArrowRightLeft,
-  MapPin, Star, Trash2, Lock, LockOpen,
+  MapPin, Star, Trash2, Lock, LockOpen, AlertTriangle,
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 
@@ -229,7 +229,7 @@ function InfoRow({ icon: Icon, label, value, isLink, isEmail, isPhone, onCompose
 }
 
 // ── Activity Form ─────────────────────────────────────────────────────────────
-function AddActivityForm({ entryId, profile, onSuccess, services = [] }) {
+function AddActivityForm({ entryId, profile, onSuccess, services = [], existingActivities = [] }) {
   const [saving, setSaving]       = useState(false);
   const [actType, setActType]     = useState("follow_up_call");
   const [actTypeOpen, setActTypeOpen] = useState(false);
@@ -241,6 +241,9 @@ function AddActivityForm({ entryId, profile, onSuccess, services = [] }) {
     ? (services.length === 1 ? services : [...services, "Cumulative"])
     : [];
   const [actService, setActService] = useState(() => svcOptions.length === 1 ? svcOptions[0] : "");
+  const coveredServices = existingActivities.map((a) => a.metadata?.service).filter((s) => s && s !== "Cumulative");
+  const pureServices = svcOptions.filter((s) => s !== "Cumulative");
+  const pendingServices = pureServices.filter((s) => !coveredServices.includes(s));
 
   useEffect(() => {
     if (!actTypeOpen) return;
@@ -323,6 +326,18 @@ function AddActivityForm({ entryId, profile, onSuccess, services = [] }) {
           )}
         </div>
       </div>
+      {pendingServices.length > 0 && pureServices.length > 1 && (
+        <div style={{ marginBottom: 10, padding: "7px 10px", borderRadius: 8, background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.2)" }}>
+          <div style={{ fontSize: 9.5, fontWeight: 700, color: "#B45309", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 5 }}>Pending Services</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {pendingServices.map((svc) => (
+              <span key={svc} onClick={() => setActService(svc)} style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 99, background: "rgba(245,158,11,0.1)", color: "#D97706", fontWeight: 600, border: "1px solid rgba(245,158,11,0.25)", cursor: "pointer" }}>
+                {svc}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       {svcOptions.length > 0 && (
         <div style={{ marginBottom: 12 }}>
           <label style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 5 }}>
@@ -1086,7 +1101,27 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
                 )}
               </div>
 
-              <AddActivityForm entryId={entry.id} profile={profile} services={extra.services || []}
+              {(() => {
+                if (!extra.services?.length || !activities?.length) return null;
+                const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+                const recentSvcs = activities.filter((a) => new Date(a.created_at) >= sevenDaysAgo).map((a) => a.metadata?.service).filter(Boolean);
+                const staleSvcs = extra.services.filter((s) => !recentSvcs.includes(s));
+                if (!staleSvcs.length) return null;
+                return (
+                  <div style={{ marginBottom: 12, padding: "9px 12px", borderRadius: 9, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.18)", display: "flex", gap: 8, alignItems: "flex-start" }}>
+                    <AlertTriangle size={12} style={{ color: "#EF4444", flexShrink: 0, marginTop: 1 }} strokeWidth={2} />
+                    <div>
+                      <div style={{ fontSize: 10.5, fontWeight: 700, color: "#DC2626", marginBottom: 4 }}>No activity in 7 days</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {staleSvcs.map((svc) => (
+                          <span key={svc} style={{ fontSize: 10.5, padding: "1px 7px", borderRadius: 99, background: "rgba(239,68,68,0.08)", color: "#DC2626", fontWeight: 600, border: "1px solid rgba(239,68,68,0.15)" }}>{svc}</span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+              <AddActivityForm entryId={entry.id} profile={profile} services={extra.services || []} existingActivities={activities || []}
                 onSuccess={() => {
                   qc.invalidateQueries({ queryKey: ["unified-timeline-pipeline", entry.id] });
                   qc.invalidateQueries({ queryKey: ["my-pending-activities"] });

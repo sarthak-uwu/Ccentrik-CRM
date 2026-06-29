@@ -504,7 +504,7 @@ router.patch("/log/:id", authenticate, async (req, res) => {
 router.delete("/log/:id", authenticate, async (req, res) => {
   const role = req.profile.role;
   if (!["owner", "sales_head"].includes(role)) {
-    return res.status(403).json({ error: "Only Sales Head or Owner can delete email activity records." });
+    return res.status(403).json({ error: "Only Sales Head or Super Admin can delete email activity records." });
   }
   const { error } = await supabase.from("email_sync_log").delete().eq("id", req.params.id);
   if (error) return res.status(400).json({ error: error.message });
