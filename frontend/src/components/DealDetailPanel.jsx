@@ -1000,8 +1000,6 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
                 onSuccess={() => {
                   qc.invalidateQueries({ queryKey: ["unified-timeline-deal", deal.id] });
                   qc.invalidateQueries({ queryKey: ["activities"] });
-                  qc.invalidateQueries({ queryKey: ["my-pending-activities"] });
-                  qc.invalidateQueries({ queryKey: ["my-completed-activities"] });
                 }}
               />
 

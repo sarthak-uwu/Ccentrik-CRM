@@ -65,7 +65,7 @@ router.get("/", authenticate, async (req, res) => {
   let query = supabase
     .from("activities")
     .select(
-      "*, created_by_profile:profiles!activities_created_by_fkey(id,full_name,avatar_url,role), assigned_profile:profiles!activities_assigned_to_fkey(id,full_name,avatar_url), lead:leads(id,contact_name,company_name)",
+      "*, created_by_profile:profiles!activities_created_by_fkey(id,full_name,avatar_url,role), assigned_profile:profiles!activities_assigned_to_fkey(id,full_name,avatar_url), lead:leads(id,contact_name,company_name,stage)",
       { count: "exact" }
     )
     .order("created_at", { ascending: false })

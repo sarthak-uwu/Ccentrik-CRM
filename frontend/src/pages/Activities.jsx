@@ -104,7 +104,7 @@ const CALL_RESPONSES  = ["Interested", "Not Interested", "Call Back", "No Respon
 
 // ─── Service ──────────────────────────────────────────────────────────────────
 
-const actService = {
+export const actService = {
   async getAll() {
     const token = await auth.currentUser?.getIdToken();
     const res = await fetch(`${API}/api/activities?limit=500`, {
@@ -1928,8 +1928,6 @@ export default function Activities() {
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["activities"] });
-    qc.invalidateQueries({ queryKey: ["my-pending-activities"] });
-    qc.invalidateQueries({ queryKey: ["my-completed-activities"] });
   };
 
   // Real-time subscription — refresh when any activity changes
@@ -1938,8 +1936,6 @@ export default function Activities() {
       .channel("activities-global")
       .on("postgres_changes", { event: "*", schema: "public", table: "activities" }, () => {
         qc.invalidateQueries({ queryKey: ["activities"] });
-        qc.invalidateQueries({ queryKey: ["my-pending-activities"] });
-        qc.invalidateQueries({ queryKey: ["my-completed-activities"] });
       })
       .subscribe();
     return () => { supabase.removeChannel(ch); };

@@ -1181,8 +1181,6 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
               <AddActivityForm leadId={lead.id} profile={profile} services={extra.services || []} existingActivities={activities || []}
                 onSuccess={() => {
                   qc.invalidateQueries({ queryKey: ["unified-timeline-lead", lead.id] });
-                  qc.invalidateQueries({ queryKey: ["my-pending-activities"] });
-                  qc.invalidateQueries({ queryKey: ["my-completed-activities"] });
                   qc.invalidateQueries({ queryKey: ["activities"] });
                 }}
               />

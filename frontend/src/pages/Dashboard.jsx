@@ -19,6 +19,7 @@ import { tasksService } from "../services/tasksService";
 import { leadsService } from "../services/leadsService";
 import { teamService } from "../services/teamService";
 import { LeadModal } from "./Leads";
+import { actService } from "./Activities";
 import { supabase } from "../supabaseClient";
 import toast from "react-hot-toast";
 import {
@@ -1532,55 +1533,23 @@ export default function Dashboard() {
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });
-  const { data: pendingActivities = [] } = useQuery({
-    queryKey: ["my-pending-activities", profile?.id, isSalesHead],
-    queryFn: async () => {
-      if (!profile?.id) return [];
-      // Admin/Sales Head see all pending team activities; others see only own
-      let q = supabase.from("activities")
-        .select("id, title, due_date, priority, status, type, assigned_to, created_by, lead_id, deal_id, related_type, related_id, lead:leads!activities_lead_id_fkey(id,company_name,contact_name,stage), assigned_profile:profiles!activities_assigned_to_fkey(id,full_name,avatar_url), created_by_profile:profiles!activities_created_by_fkey(id,full_name,avatar_url)")
-        .neq("status", "done").neq("status", "completed").neq("status", "cancelled")
-        .neq("type", "email_contact")
-        .order("due_date", { ascending: true, nullsFirst: false }).limit(50);
-
-      if (!isSalesHead) {
-        q = q.or(`assigned_to.eq.${profile.id},created_by.eq.${profile.id}`);
-      }
-
-      const { data, error } = await q;
-      if (error) {
-        // Fallback without joins
-        let qFallback = supabase.from("activities")
-          .select("id, title, due_date, priority, status, type, assigned_to, created_by, lead_id, deal_id, related_type, related_id")
-          .neq("status", "done").neq("status", "completed").neq("status", "cancelled")
-          .neq("type", "email_contact")
-          .order("due_date", { ascending: true, nullsFirst: false }).limit(50);
-        if (!isSalesHead) qFallback = qFallback.or(`assigned_to.eq.${profile.id},created_by.eq.${profile.id}`);
-        const { data: fb } = await qFallback;
-        return (fb || []).map((a) => ({ ...a, _source: "activity" }));
-      }
-      return (data || []).map((a) => ({ ...a, _source: "activity" }));
-    },
+  const { data: _allActivities = [] } = useQuery({
+    queryKey: ["activities"],
+    queryFn: actService.getAll,
     enabled: !!profile?.id,
     staleTime: 0,
+    refetchInterval: 15000,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });
-  const { data: completedActivities = [] } = useQuery({
-    queryKey: ["my-completed-activities", profile?.id, isSalesHead],
-    queryFn: async () => {
-      if (!profile?.id) return [];
-      let q = supabase.from("activities")
-        .select("id, title, due_date, priority, status, type, assigned_to, created_by, lead_id, deal_id, related_type, related_id, updated_at, lead:leads!activities_lead_id_fkey(id,company_name,contact_name,stage)")
-        .in("status", ["done", "completed"])
-        .order("updated_at", { ascending: false }).limit(20);
-      if (!isSalesHead) q = q.or(`assigned_to.eq.${profile.id},created_by.eq.${profile.id}`);
-      const { data } = await q;
-      return (data || []).map((a) => ({ ...a, _source: "activity" }));
-    },
-    enabled: !!profile?.id,
-    staleTime: 30000,
-  });
+  const pendingActivities = useMemo(
+    () => _allActivities.filter((a) => !["done", "completed", "cancelled"].includes(a.status) && a.type !== "email_contact").map((a) => ({ ...a, _source: "activity" })),
+    [_allActivities]
+  );
+  const completedActivities = useMemo(
+    () => _allActivities.filter((a) => ["done", "completed"].includes(a.status) && a.type !== "email_contact").map((a) => ({ ...a, _source: "activity" })),
+    [_allActivities]
+  );
 
   const { data: dealsData = [] }  = useQuery({ queryKey: ["deals-all"], queryFn: () => supabase.from("deals").select("id, stage, value, company_name, title, close_date, updated_at, created_at, assigned_to").then((r) => r.data || []) });
   const { data: myDeals = [] }    = useQuery({ queryKey: ["my-deals", profile?.id], queryFn: () => supabase.from("deals").select("id, stage, value, company_name, title, close_date, updated_at").eq("assigned_to", profile.id).order("updated_at", { ascending: false }).limit(10).then((r) => r.data || []), enabled: !!profile?.id });
@@ -1592,8 +1561,7 @@ export default function Dashboard() {
     if (!profile?.id) return;
     const ch = supabase.channel("dash-rt")
       .on("postgres_changes", { event: "*", schema: "public", table: "activities" }, () => {
-        qc.invalidateQueries({ queryKey: ["my-pending-activities", profile.id] });
-        qc.invalidateQueries({ queryKey: ["my-completed-activities", profile.id] });
+        qc.invalidateQueries({ queryKey: ["activities"] });
         qc.invalidateQueries({ queryKey: ["recent-activity"] });
         qc.invalidateQueries({ queryKey: ["dsr-snap-acts", profile.id] });
       })
@@ -1604,22 +1572,18 @@ export default function Dashboard() {
         qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
         qc.invalidateQueries({ queryKey: ["deals-all"] });
         qc.invalidateQueries({ queryKey: ["my-deals", profile.id] });
-        // Deal changes (including deletions) can orphan linked activities and tasks
-        qc.invalidateQueries({ queryKey: ["my-pending-activities", profile.id] });
+        qc.invalidateQueries({ queryKey: ["activities"] });
         qc.invalidateQueries({ queryKey: ["my-tasks"] });
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "leads" }, () => {
         qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
-        qc.invalidateQueries({ queryKey: ["my-pending-activities", profile.id] });
-        qc.invalidateQueries({ queryKey: ["my-completed-activities", profile.id] });
-        qc.invalidateQueries({ queryKey: ["my-tasks"] });
-        // Cascade: lead deletion may remove linked activities
         qc.invalidateQueries({ queryKey: ["activities"] });
+        qc.invalidateQueries({ queryKey: ["my-tasks"] });
         qc.invalidateQueries({ queryKey: ["recent-activity"] });
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "meetings" }, () => {
         qc.invalidateQueries({ queryKey: ["upcoming-meetings"] });
-        qc.invalidateQueries({ queryKey: ["my-pending-activities", profile.id] });
+        qc.invalidateQueries({ queryKey: ["activities"] });
         qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
       })
       .subscribe();
