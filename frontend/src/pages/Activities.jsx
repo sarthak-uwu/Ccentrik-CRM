@@ -212,6 +212,19 @@ function groupByTimeline(activities) {
   return groups;
 }
 
+// ─── Status Engine ────────────────────────────────────────────────────────────
+// Types that are always "completed" regardless of status field
+const AUTO_COMPLETED_TYPES = new Set(["note", "email_sent", "stage_change", "deal_created", "email_contact"]);
+
+// Derives display status for a single activity.
+// ONLY this function decides Pending / Overdue / Completed — nowhere else.
+function deriveStatus(activity) {
+  if (AUTO_COMPLETED_TYPES.has(activity.type)) return "completed";
+  if (activity.status === "done") return "completed";
+  if (activity.due_date && new Date(activity.due_date) < new Date()) return "overdue";
+  return "pending";
+}
+
 // ─── Group Activities By Entity (Company + POC) ───────────────────────────────
 function groupActivitiesByEntity(activities) {
   const groups = new Map();
@@ -233,10 +246,34 @@ function groupActivitiesByEntity(activities) {
     const d = new Date(a.created_at || 0);
     if (!g.latestDate || d > new Date(g.latestDate)) { g.latestDate = a.created_at; g.latestEvent = a; }
   }
+
   for (const g of groups.values()) {
+    // Sort events: newest first
     g.events.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+    // Open = not auto-completed AND not status "done"
+    const openEvents = g.events.filter(a => !AUTO_COMPLETED_TYPES.has(a.type) && a.status !== "done");
+
+    // ONLY the latest open event drives the group status — historical activities never do
+    g.currentActivity = openEvents.length > 0 ? openEvents[0] : null;
+    g.openEvents      = openEvents;
+    g.completedEvents = g.events.filter(a => deriveStatus(a) === "completed");
+
+    if (g.currentActivity) {
+      g.effectiveStatus = deriveStatus(g.currentActivity); // "overdue" | "pending"
+    } else {
+      g.effectiveStatus = "completed"; // No open events → all done
+    }
   }
-  return Array.from(groups.values()).sort((a, b) => new Date(b.latestDate || 0) - new Date(a.latestDate || 0));
+
+  // Sort: overdue first → pending → completed, then newest-first within each bucket
+  const PRIORITY = { overdue: 0, pending: 1, completed: 2 };
+  return Array.from(groups.values()).sort((a, b) => {
+    const pa = PRIORITY[a.effectiveStatus] ?? 3;
+    const pb = PRIORITY[b.effectiveStatus] ?? 3;
+    if (pa !== pb) return pa - pb;
+    return new Date(b.latestDate || 0) - new Date(a.latestDate || 0);
+  });
 }
 
 // ─── Micro Components ─────────────────────────────────────────────────────────
@@ -453,8 +490,9 @@ function ConversationEventRow({ event, isLast, onEdit, onDelete, onStatusChange 
 
   const def      = ACT_TYPES[typeKey(event.type)] || ACT_TYPES.task;
   const Icon     = def.icon;
-  const isDone   = event.status === "done";
-  const isOverdue = !isDone && event.due_date && new Date(event.due_date) < new Date();
+  const derived  = deriveStatus(event);
+  const isDone   = derived === "completed";
+  const isOverdue = derived === "overdue";
 
   const desc     = parseJSON(event.description);
   const notes    = desc.remarks || desc.notes || desc.outcome || desc.agenda || desc.body || "";
@@ -466,12 +504,10 @@ function ConversationEventRow({ event, isLast, onEdit, onDelete, onStatusChange 
     : null;
 
   const statusCfg = isOverdue
-    ? { label: "Overdue",     color: "#EF4444", bg: "#FEF2F2" }
+    ? { label: "Overdue",   color: "#EF4444", bg: "#FEF2F2" }
     : isDone
-    ? { label: "Completed",   color: "#10B981", bg: "#ECFDF5" }
-    : event.status === "in_progress"
-    ? { label: "In Progress", color: "#3B82F6", bg: "#EFF6FF" }
-    : { label: "Pending",     color: "#F59E0B", bg: "#FFFBEB" };
+    ? { label: "Completed", color: "#10B981", bg: "#ECFDF5" }
+    : { label: "Pending",   color: "#F59E0B", bg: "#FFFBEB" };
 
   const assignedPerson = event.assigned_profile || event.created_by_profile;
 
@@ -533,25 +569,41 @@ function ConversationEventRow({ event, isLast, onEdit, onDelete, onStatusChange 
 // ─── Grouped Conversation Card ────────────────────────────────────────────────
 
 function GroupedConversationCard({ group, onEdit, onDelete, onStatusChange, resolveEntityFull }) {
-  const [expanded, setExpanded] = useState(false);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const { profile } = useAuth();
+  const myRank      = ROLE_RANK[profile?.role] || 0;
 
-  const latestEvent = group.latestEvent;
-  const latestDef   = latestEvent ? (ACT_TYPES[typeKey(latestEvent.type)] || ACT_TYPES.task) : null;
-  const latestDate  = group.latestDate
-    ? new Date(group.latestDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+  const entityInfo = (!group.companyName && resolveEntityFull && group.latestEvent) ? resolveEntityFull(group.latestEvent) : null;
+  const company    = group.companyName || entityInfo?.company || "Standalone Activity";
+  const poc        = group.pocName     || entityInfo?.contact || null;
+
+  // currentActivity is the ONE open event that drives status
+  const current      = group.currentActivity;
+  const history      = group.completedEvents || [];
+  const otherOpen    = (group.openEvents || []).filter(e => e.id !== current?.id);
+
+  const es = group.effectiveStatus;
+  const statusCfg = es === "overdue"
+    ? { label: "Overdue",   color: "#EF4444", bg: "#FEF2F2", icon: AlertCircle }
+    : es === "pending"
+    ? { label: "Pending",   color: "#F59E0B", bg: "#FFFBEB", icon: Clock }
+    : { label: "Completed", color: "#10B981", bg: "#ECFDF5", icon: CheckCircle2 };
+  const SIcon = statusCfg.icon;
+
+  const currentDef   = current ? (ACT_TYPES[typeKey(current.type)] || ACT_TYPES.task) : null;
+  const currentNotes = current ? (() => { const d = parseJSON(current.description); return d.remarks || d.notes || d.outcome || d.agenda || d.body || ""; })() : null;
+  const currentBody  = currentNotes || (current ? (cleanDescription(current.title, current.type) || current.title) : null);
+
+  const canEditCurrent   = current && (profile?.id === current.created_by || profile?.id === current.assigned_to || myRank >= 3);
+  const canDeleteCurrent = current && (profile?.role === "owner" || profile?.role === "sales_head");
+
+  const isOverdueCurrent  = es === "overdue";
+  const isDueTodayCurrent = !isOverdueCurrent && current?.due_date
+    && new Date(current.due_date).toDateString() === new Date().toDateString();
+
+  const dueDateStr = current?.due_date
+    ? new Date(current.due_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
     : null;
-
-  const entityInfo  = (!group.companyName && resolveEntityFull && latestEvent) ? resolveEntityFull(latestEvent) : null;
-  const company     = group.companyName || entityInfo?.company || "Standalone Activity";
-  const poc         = group.pocName     || entityInfo?.contact || null;
-
-  const total        = group.events.length;
-  const doneCount    = group.events.filter((e) => e.status === "done").length;
-  const overdueCount = group.events.filter((e) => e.status !== "done" && e.due_date && new Date(e.due_date) < new Date()).length;
-  const pendingCount = total - doneCount;
-
-  const accentColor = overdueCount > 0 ? "#EF4444" : pendingCount > 0 ? "#F59E0B" : "#10B981";
-  const statusLabel = overdueCount > 0 ? "Overdue" : pendingCount > 0 ? "In Progress" : "Completed";
 
   return (
     <motion.div
@@ -560,49 +612,125 @@ function GroupedConversationCard({ group, onEdit, onDelete, onStatusChange, reso
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -4, scale: 0.97 }}
       transition={{ duration: 0.18 }}
-      style={{ background: "#FFFFFF", border: `1px solid ${overdueCount > 0 ? "#FCA5A5" : "#E5E7EB"}`, borderLeft: `4px solid ${accentColor}`, borderRadius: 14, boxShadow: "0 2px 8px rgba(0,0,0,0.06)", overflow: "hidden" }}
+      style={{
+        background: "#FFFFFF",
+        border: `1px solid ${es === "overdue" ? "#FCA5A5" : "#E5E7EB"}`,
+        borderLeft: `4px solid ${statusCfg.color}`,
+        borderRadius: 14,
+        boxShadow: es === "overdue" ? "0 2px 12px rgba(239,68,68,0.07)" : "0 2px 8px rgba(0,0,0,0.05)",
+        overflow: "hidden",
+      }}
     >
-      <div
-        style={{ padding: "14px 18px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: expanded ? "#FAFBFF" : "#FFFFFF", borderBottom: expanded ? "1px solid #F3F4F6" : "none", transition: "background 0.15s" }}
-        onClick={() => setExpanded((v) => !v)}
-        onMouseEnter={(e) => { if (!expanded) e.currentTarget.style.background = "#F9FAFB"; }}
-        onMouseLeave={(e) => { if (!expanded) e.currentTarget.style.background = "#FFFFFF"; }}
-      >
+      {/* ── Header ── */}
+      <div style={{ padding: "12px 16px 10px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, borderBottom: "1px solid #F3F4F6" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 15, fontWeight: 800, color: "#0F172A", letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>{company}</span>
+            <span style={{ fontSize: 14.5, fontWeight: 800, color: "#0F172A", letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 240 }}>
+              {company}
+            </span>
             {poc && (
               <>
-                <span style={{ fontSize: 13, color: "#94A3B8", fontWeight: 400 }}>—</span>
-                <span style={{ fontSize: 13, fontWeight: 500, color: "#475569" }}>{poc}</span>
+                <span style={{ fontSize: 12, color: "#94A3B8" }}>—</span>
+                <span style={{ fontSize: 12.5, fontWeight: 500, color: "#475569" }}>{poc}</span>
               </>
             )}
           </div>
-          {latestDef && (
-            <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: latestDef.color, display: "inline-flex", alignItems: "center", gap: 3 }}>
-                <latestDef.icon size={10} strokeWidth={2} />{latestDef.label}
-              </span>
-              {latestDate && <span style={{ fontSize: 11, color: "#9CA3AF" }}>· {latestDate}</span>}
-            </div>
-          )}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 99, background: `${accentColor}12`, color: accentColor, border: `1px solid ${accentColor}25`, whiteSpace: "nowrap" }}>
-            {statusLabel}
-          </span>
-          <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 99, background: "rgba(99,102,241,0.08)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", whiteSpace: "nowrap" }}>
-            {total} {total === 1 ? "Activity" : "Activities"}
-          </span>
-          <ChevronDown size={14} style={{ color: "#9CA3AF", transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.2s", flexShrink: 0 }} />
+          <div style={{ marginTop: 5, display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 99, fontSize: 10.5, fontWeight: 700, background: statusCfg.bg, color: statusCfg.color }}>
+              <SIcon size={9} strokeWidth={2.5} />{statusCfg.label}
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 99, fontSize: 10.5, fontWeight: 700, background: "rgba(99,102,241,0.07)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.18)" }}>
+              {group.events.length} {group.events.length === 1 ? "activity" : "activities"}
+            </span>
+          </div>
         </div>
       </div>
-      {expanded && (
-        <div style={{ padding: "4px 18px 12px" }}>
-          {group.events.map((event, i) => (
-            <ConversationEventRow key={event.id} event={event} isLast={i === group.events.length - 1} onEdit={onEdit} onDelete={onDelete} onStatusChange={onStatusChange} />
+
+      {/* ── Current Activity (always visible — only this drives status) ── */}
+      {current && (
+        <div style={{
+          padding: "10px 16px",
+          background: isOverdueCurrent ? "#FFF8F8" : isDueTodayCurrent ? "#FFFCEB" : "#FAFBFF",
+          borderBottom: (otherOpen.length > 0 || history.length > 0) ? "1px solid #F0F0F5" : "none",
+        }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3, flexWrap: "wrap" }}>
+                {currentDef && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 99, fontSize: 10.5, fontWeight: 700, background: currentDef.bg, color: currentDef.color, border: `1px solid ${currentDef.border}` }}>
+                    <currentDef.icon size={9} strokeWidth={2} />{currentDef.label}
+                  </span>
+                )}
+                {dueDateStr && (
+                  <span style={{ fontSize: 10.5, fontWeight: isOverdueCurrent ? 700 : 500, color: isOverdueCurrent ? "#EF4444" : isDueTodayCurrent ? "#D97706" : "#6B7280", display: "inline-flex", alignItems: "center", gap: 3 }}>
+                    <CalendarClock size={9} />
+                    {isOverdueCurrent ? `Overdue · ${dueDateStr}` : isDueTodayCurrent ? `Today · ${dueDateStr}` : dueDateStr}
+                  </span>
+                )}
+              </div>
+              {currentBody && currentBody !== currentDef?.label && (
+                <div style={{ fontSize: 12.5, color: "#374151", lineHeight: 1.5, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                  {currentBody}
+                </div>
+              )}
+              {(current.assigned_profile || current.created_by_profile) && (
+                <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                  <Avatar user={current.assigned_profile || current.created_by_profile} size={14} />
+                  <span style={{ fontSize: 10.5, color: "#9CA3AF" }}>{(current.assigned_profile || current.created_by_profile).full_name}</span>
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+              {canEditCurrent && (
+                <button onClick={() => onStatusChange(current.id, "done")} title="Mark done"
+                  style={{ height: 26, padding: "0 9px", borderRadius: 6, border: "1px solid #D1FAE5", background: "#ECFDF5", color: "#10B981", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 3, whiteSpace: "nowrap" }}>
+                  <CheckCircle2 size={10} strokeWidth={2} /> Done
+                </button>
+              )}
+              {canEditCurrent && (
+                <button onClick={() => onEdit(current)} title="Edit"
+                  style={{ height: 26, width: 26, borderRadius: 6, border: "1px solid #E5E7EB", background: "#fff", color: "#6B7280", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                  <Pencil size={10} strokeWidth={2} />
+                </button>
+              )}
+              {canDeleteCurrent && (
+                <button onClick={() => onDelete(current.id)} title="Delete"
+                  style={{ height: 26, width: 26, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#EF4444", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                  <Trash2 size={10} strokeWidth={2} />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Other open events (beside currentActivity) ── */}
+      {otherOpen.length > 0 && (
+        <div style={{ padding: "4px 16px 0" }}>
+          {otherOpen.map((event, i) => (
+            <ConversationEventRow key={event.id} event={event} isLast={i === otherOpen.length - 1 && history.length === 0} onEdit={onEdit} onDelete={onDelete} onStatusChange={onStatusChange} />
           ))}
         </div>
+      )}
+
+      {/* ── History (completed events) — collapsible ── */}
+      {history.length > 0 && (
+        <>
+          <button
+            onClick={() => setHistoryExpanded(v => !v)}
+            style={{ width: "100%", padding: "7px 16px", display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", borderTop: "1px solid #F3F4F6", cursor: "pointer", fontFamily: "inherit", color: "#6B7280", fontSize: 11.5, fontWeight: 600 }}
+          >
+            <ChevronDown size={12} style={{ color: "#9CA3AF", transform: historyExpanded ? "rotate(180deg)" : "none", transition: "transform 0.18s", flexShrink: 0 }} />
+            {historyExpanded ? "Hide" : "Show"} {history.length} completed {history.length === 1 ? "activity" : "activities"}
+          </button>
+          {historyExpanded && (
+            <div style={{ padding: "4px 16px 10px", borderTop: "1px solid #F5F5F5", background: "#FAFAFA" }}>
+              {history.map((event, i) => (
+                <ConversationEventRow key={event.id} event={event} isLast={i === history.length - 1} onEdit={onEdit} onDelete={onDelete} onStatusChange={onStatusChange} />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </motion.div>
   );
@@ -763,9 +891,6 @@ function TableView({ activities, onEdit, onDelete, onStatusChange, resolveEntity
               const latestEvent  = group.latestEvent;
               const def          = latestEvent ? (ACT_TYPES[typeKey(latestEvent.type)] || ACT_TYPES.task) : ACT_TYPES.task;
               const Icon         = def.icon;
-              const allDone      = group.events.every((e) => e.status === "done");
-              const overdueCount = group.events.filter((e) => e.status !== "done" && e.due_date && new Date(e.due_date) < new Date()).length;
-              const isOverdue    = overdueCount > 0;
 
               const entityInfo   = (!group.companyName && resolveEntityFull && latestEvent) ? resolveEntityFull(latestEvent) : null;
               const company      = group.companyName || entityInfo?.company || "—";
@@ -776,10 +901,12 @@ function TableView({ activities, onEdit, onDelete, onStatusChange, resolveEntity
                 ? new Date(group.latestDate).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })
                 : null;
 
-              const statusColor = isOverdue ? "#EF4444" : allDone ? "#10B981" : "#F59E0B";
-              const statusBg    = isOverdue ? "#FEF2F2" : allDone ? "#ECFDF5" : "#FFFBEB";
-              const statusLabel = isOverdue ? "Overdue" : allDone ? "Completed" : "In Progress";
-              const StatusIcon  = isOverdue ? AlertCircle : allDone ? CheckCircle2 : Clock;
+              // effectiveStatus from the engine — only the latest open activity decides this
+              const es          = group.effectiveStatus;
+              const statusColor = es === "overdue" ? "#EF4444" : es === "completed" ? "#10B981" : "#F59E0B";
+              const statusBg    = es === "overdue" ? "#FEF2F2" : es === "completed" ? "#ECFDF5" : "#FFFBEB";
+              const statusLabel = es === "overdue" ? "Overdue" : es === "completed" ? "Completed" : "Pending";
+              const StatusIcon  = es === "overdue" ? AlertCircle : es === "completed" ? CheckCircle2 : Clock;
 
               const isExpanded      = expandedGroup === group.key;
               const visibleColCount = ACT_TBL_COLS.filter((c) => isColVisible(c.key)).length + 2;
