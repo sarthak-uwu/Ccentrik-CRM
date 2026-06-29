@@ -24,6 +24,7 @@ const ALLOWED_COLUMNS = new Set([
   "type", "description", "user_id", "lead_id", "deal_id", "customer_id",
   "task_id", "meeting_id", "metadata", "assigned_to", "title",
   "status", "priority", "due_date", "related_type", "related_id",
+  "next_follow_up_date",
 ]);
 
 const CAN_EDIT   = ["owner", "sales_head"];
