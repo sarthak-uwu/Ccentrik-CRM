@@ -1,14 +1,34 @@
 const API_URL = import.meta.env.VITE_API_URL || "https://backend-gamma-nine-32.vercel.app";
 
 const TOOL_STATUS = {
-  get_leads:            "Querying leads...",
-  get_deals:            "Analyzing deals...",
-  get_tasks:            "Checking tasks...",
-  get_activities:       "Reviewing activities...",
-  get_pipeline_summary: "Computing pipeline...",
+  // Read tools
+  get_leads:             "Querying leads...",
+  get_prospects:         "Scanning prospects...",
+  get_deals:             "Analyzing deals...",
+  get_tasks:             "Checking tasks...",
+  get_activities:        "Reviewing activities...",
+  get_meetings:          "Checking meetings...",
+  get_pipeline_summary:  "Computing pipeline...",
+  get_analytics_summary: "Running analytics...",
+  search_crm:            "Searching CRM...",
+  get_ai_recommendations:"Generating recommendations...",
+  get_release_notes:     "Loading release notes...",
+  get_team_performance:  "Analyzing team performance...",
+  // Write tools
+  create_lead:           "Creating lead...",
+  update_lead:           "Updating lead...",
+  assign_lead:           "Assigning lead...",
+  update_lead_stage:     "Updating stage...",
+  create_activity:       "Logging activity...",
+  schedule_follow_up:    "Scheduling follow-up...",
+  schedule_meeting:      "Scheduling meeting...",
+  create_task:           "Creating task...",
+  create_deal:           "Creating deal...",
+  update_deal:           "Updating deal...",
+  draft_email:           "Composing email...",
 };
 
-export async function streamARIA({ message, pageContext, getToken, onStatus, onToken, onDone, onError, signal }) {
+export async function streamARIA({ message, pageContext, getToken, onStatus, onToken, onDone, onError, onEmailDraft, signal }) {
   try {
     const token = await getToken();
 
@@ -45,10 +65,12 @@ export async function streamARIA({ message, pageContext, getToken, onStatus, onT
         try {
           const parsed = JSON.parse(raw);
           if (parsed.type === "tool") {
-            onStatus?.(TOOL_STATUS[parsed.name] || "Analyzing...");
+            onStatus?.(TOOL_STATUS[parsed.name] || "Working...");
           } else if (parsed.type === "token") {
             fullText += parsed.content;
             onToken?.(parsed.content, fullText);
+          } else if (parsed.type === "email_draft") {
+            onEmailDraft?.(parsed.data);
           } else if (parsed.type === "error") {
             throw new Error(parsed.message);
           }
@@ -60,7 +82,7 @@ export async function streamARIA({ message, pageContext, getToken, onStatus, onT
 
     onDone?.(fullText);
   } catch (err) {
-    if (err.name === "AbortError") return; // User stopped generation — ignore silently
+    if (err.name === "AbortError") return;
     onError?.(err);
   }
 }
@@ -73,4 +95,16 @@ export async function clearARIAHistory(getToken) {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     });
   } catch { /* non-critical */ }
+}
+
+export async function executeAction(action_type, data, getToken) {
+  const token = await getToken();
+  const res = await fetch(`${API_URL}/api/ai/execute-action`, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body:    JSON.stringify({ action_type, data }),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json?.error || `Action failed (${res.status})`);
+  return json;
 }

@@ -27,8 +27,8 @@ async function searchDocuments(query) {
   }
 }
 
-const GROQ_MODEL      = "llama-3.1-8b-instant";
-const MAX_ITERATIONS  = 6;
+const GROQ_MODEL      = "llama-3.3-70b-versatile";
+const MAX_ITERATIONS  = 8;
 
 // Per-user conversation history (in-memory; resets on cold start)
 const conversationHistory = {};
@@ -248,6 +248,213 @@ const CRM_TOOLS = [
         properties: {
           limit: { type: "number", description: "Max team members to return (default 10)" },
         },
+      },
+    },
+  },
+
+  // ── WRITE TOOLS ──────────────────────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "create_lead",
+      description: "Create a new lead in the CRM. Use when user asks to add a new prospect, company, or contact as a lead. Always search first to avoid duplicates.",
+      parameters: {
+        type: "object",
+        properties: {
+          company_name:  { type: "string", description: "Company name" },
+          contact_name:  { type: "string", description: "Contact person's full name" },
+          phone:         { type: "string", description: "Phone number" },
+          email:         { type: "string", description: "Email address" },
+          source:        { type: "string", description: "Lead source: website, linkedin, referral, cold_call, email_campaign, event, partner, social_media, ads, walk_in, other" },
+          temperature:   { type: "string", enum: ["hot", "warm", "cold"], description: "Lead temperature" },
+          stage:         { type: "string", description: "Stage: new, contacted, qualified, proposal, negotiation (default: new)" },
+          budget:        { type: "number", description: "Budget amount in INR (optional)" },
+          remarks:       { type: "string", description: "Additional notes or context" },
+        },
+        required: ["company_name", "contact_name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_lead",
+      description: "Update an existing lead's details, stage, follow-up date, remarks, or temperature. Always search for the lead first to get the lead_id.",
+      parameters: {
+        type: "object",
+        properties: {
+          lead_id:        { type: "string", description: "Lead UUID (required)" },
+          stage:          { type: "string", description: "New stage: new, contacted, qualified, proposal, negotiation, won, lost" },
+          temperature:    { type: "string", enum: ["hot", "warm", "cold"] },
+          follow_up_date: { type: "string", description: "Next follow-up date (YYYY-MM-DD)" },
+          remarks:        { type: "string", description: "Updated remarks or notes" },
+          priority:       { type: "string", enum: ["high", "medium", "low"] },
+        },
+        required: ["lead_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "assign_lead",
+      description: "Assign or reassign a lead to a team member. Requires manager role. Always search for the lead first.",
+      parameters: {
+        type: "object",
+        properties: {
+          lead_id:       { type: "string", description: "Lead UUID" },
+          employee_name: { type: "string", description: "Team member's name to assign to" },
+        },
+        required: ["lead_id", "employee_name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_lead_stage",
+      description: "Move a lead to a new pipeline stage and optionally log a note about the stage change.",
+      parameters: {
+        type: "object",
+        properties: {
+          lead_id: { type: "string", description: "Lead UUID" },
+          stage:   { type: "string", description: "New stage: new, contacted, qualified, proposal, negotiation, won, lost" },
+          note:    { type: "string", description: "Optional note about why the stage changed" },
+        },
+        required: ["lead_id", "stage"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_activity",
+      description: "Log a sales activity — call, meeting, email, note, follow-up, demo, visit, WhatsApp message. Always log an activity after the AI interacts with or reports on a lead or deal.",
+      parameters: {
+        type: "object",
+        properties: {
+          type:     { type: "string", description: "Activity type: call, email, note, meeting_person, meeting_virtual, follow_up_call, follow_up_email, whatsapp, task, visit, demo" },
+          title:    { type: "string", description: "Short activity title (e.g. 'Follow-up Call with Anjani Kumar')" },
+          note:     { type: "string", description: "Detailed notes about the activity outcome" },
+          lead_id:  { type: "string", description: "Lead UUID to link this activity to (optional)" },
+          deal_id:  { type: "string", description: "Deal UUID to link (optional)" },
+          due_date: { type: "string", description: "Due/scheduled date-time ISO 8601 (set for future activities)" },
+          status:   { type: "string", enum: ["todo", "done"], description: "todo for scheduled/future, done for past/completed. Notes should always be done." },
+        },
+        required: ["type", "title"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "schedule_follow_up",
+      description: "Schedule a follow-up activity for a lead. Use when the user says 'schedule follow-up', 'remind me', 'add follow-up for X days'.",
+      parameters: {
+        type: "object",
+        properties: {
+          lead_id:        { type: "string", description: "Lead UUID (optional)" },
+          follow_up_date: { type: "string", description: "Follow-up date (YYYY-MM-DD)" },
+          follow_up_time: { type: "string", description: "Follow-up time in 24h format (HH:MM, optional — default 10:00)" },
+          note:           { type: "string", description: "What the follow-up is about" },
+          type:           { type: "string", enum: ["follow_up_call", "follow_up_email", "whatsapp", "meeting_person", "meeting_virtual"], description: "Type of follow-up" },
+        },
+        required: ["follow_up_date"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "schedule_meeting",
+      description: "Schedule a new meeting. Use for formal meetings with clients, demos, review calls.",
+      parameters: {
+        type: "object",
+        properties: {
+          title:        { type: "string", description: "Meeting title" },
+          company_name: { type: "string", description: "Company name" },
+          contact_name: { type: "string", description: "Contact person's name" },
+          scheduled_at: { type: "string", description: "Date and time ISO 8601 (YYYY-MM-DDTHH:MM:SS)" },
+          location:     { type: "string", description: "Physical location or video link (optional)" },
+          agenda:       { type: "string", description: "Meeting agenda or purpose (optional)" },
+          lead_id:      { type: "string", description: "Related lead UUID (optional)" },
+        },
+        required: ["title", "scheduled_at"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_task",
+      description: "Create a task or reminder in the CRM.",
+      parameters: {
+        type: "object",
+        properties: {
+          title:       { type: "string", description: "Task title" },
+          description: { type: "string", description: "Detailed task description (optional)" },
+          priority:    { type: "string", enum: ["high", "medium", "low"], description: "Task priority (default medium)" },
+          due_date:    { type: "string", description: "Due date (YYYY-MM-DD)" },
+          lead_id:     { type: "string", description: "Related lead UUID (optional)" },
+        },
+        required: ["title", "due_date"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_deal",
+      description: "Create a new deal in the CRM pipeline.",
+      parameters: {
+        type: "object",
+        properties: {
+          title:        { type: "string", description: "Deal title/name" },
+          company_name: { type: "string", description: "Company name" },
+          contact_name: { type: "string", description: "Contact person's name (optional)" },
+          value:        { type: "number", description: "Deal value in INR (optional)" },
+          stage:        { type: "string", description: "Deal stage: prospecting, qualification, proposal, negotiation, won, lost (default: prospecting)" },
+          close_date:   { type: "string", description: "Expected close date YYYY-MM-DD (optional)" },
+          description:  { type: "string", description: "Deal notes or description (optional)" },
+        },
+        required: ["title", "company_name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_deal",
+      description: "Update an existing deal — stage, value, close date, or notes. Always get the deal_id via get_deals or search_crm first.",
+      parameters: {
+        type: "object",
+        properties: {
+          deal_id:     { type: "string", description: "Deal UUID" },
+          stage:       { type: "string", description: "New stage" },
+          value:       { type: "number", description: "Updated deal value in INR" },
+          close_date:  { type: "string", description: "New expected close date (YYYY-MM-DD)" },
+          description: { type: "string", description: "Updated notes" },
+        },
+        required: ["deal_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "draft_email",
+      description: "Compose a professional email to a CRM contact. ALWAYS use this tool when user asks to send an email — it creates a draft for the user to review and confirm before sending. Never write email bodies in plain text — always use this tool.",
+      parameters: {
+        type: "object",
+        properties: {
+          to_name:    { type: "string", description: "Recipient's full name" },
+          to_email:   { type: "string", description: "Recipient's email address (if known)" },
+          to_company: { type: "string", description: "Recipient's company name" },
+          subject:    { type: "string", description: "Email subject line" },
+          body:       { type: "string", description: "Full email body — professional, formatted, signed from the user's name" },
+          lead_id:    { type: "string", description: "Related lead UUID for activity logging (optional)" },
+        },
+        required: ["to_name", "subject", "body"],
       },
     },
   },
@@ -518,6 +725,208 @@ async function executeTool(name, args, profile) {
     return { team: perf, count: perf.length };
   }
 
+  // ── create_lead ──────────────────────────────────────────────────────────────
+  if (name === "create_lead") {
+    const { data: existingCodes } = await supabase.from("leads").select("lead_code").not("lead_code", "is", null);
+    let maxCode = 0;
+    (existingCodes || []).forEach(r => {
+      const n = parseInt((r.lead_code || "").replace(/\D/g, ""), 10);
+      if (!isNaN(n) && n > maxCode) maxCode = n;
+    });
+    const leadCode = `LEAD-${String(maxCode + 1).padStart(3, "0")}`;
+    const payload = {
+      lead_code:    leadCode,
+      company_name: args.company_name,
+      contact_name: args.contact_name,
+      phone:        args.phone || null,
+      email:        args.email || null,
+      source:       args.source || "other",
+      temperature:  args.temperature || "warm",
+      stage:        args.stage || "new",
+      budget:       args.budget || null,
+      remarks:      args.remarks || null,
+      assigned_to:  uid,
+      created_by:   uid,
+      status:       "active",
+    };
+    const { data, error } = await supabase.from("leads").insert(payload).select().single();
+    if (error) return { error: error.message };
+    return { success: true, lead: { id: data.id, lead_code: data.lead_code, company_name: data.company_name, contact_name: data.contact_name, stage: data.stage }, message: `Lead created: ${data.company_name} (${data.lead_code})` };
+  }
+
+  // ── update_lead ──────────────────────────────────────────────────────────────
+  if (name === "update_lead") {
+    const updates = {};
+    if (args.stage)          updates.stage          = args.stage;
+    if (args.temperature)    updates.temperature    = args.temperature;
+    if (args.follow_up_date) updates.follow_up_date = args.follow_up_date;
+    if (args.remarks)        updates.remarks        = args.remarks;
+    if (args.priority)       updates.priority       = args.priority;
+    if (Object.keys(updates).length === 0) return { error: "No fields to update." };
+    updates.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from("leads").update(updates).eq("id", args.lead_id).select("id, company_name, contact_name, stage, temperature").single();
+    if (error) return { error: error.message };
+    return { success: true, lead: data, message: `Lead updated: ${data.company_name}` };
+  }
+
+  // ── assign_lead ──────────────────────────────────────────────────────────────
+  if (name === "assign_lead") {
+    if (!isManager) return { error: "Only managers and above can reassign leads." };
+    const { data: employees } = await supabase.from("profiles").select("id, full_name, role").ilike("full_name", `%${args.employee_name}%`).limit(5);
+    if (!employees?.length) return { error: `No employee found matching: ${args.employee_name}` };
+    const employee = employees[0];
+    const { data, error } = await supabase.from("leads").update({ assigned_to: employee.id, updated_at: new Date().toISOString() }).eq("id", args.lead_id).select("id, company_name").single();
+    if (error) return { error: error.message };
+    return { success: true, message: `Lead "${data.company_name}" assigned to ${employee.full_name}`, lead: data };
+  }
+
+  // ── update_lead_stage ────────────────────────────────────────────────────────
+  if (name === "update_lead_stage") {
+    const { data, error } = await supabase.from("leads").update({ stage: args.stage, updated_at: new Date().toISOString() }).eq("id", args.lead_id).select("id, company_name, stage").single();
+    if (error) return { error: error.message };
+    await supabase.from("activities").insert({
+      type: "stage_change", title: `Stage changed to ${args.stage}`,
+      description: JSON.stringify({ remarks: args.note || `Stage updated to ${args.stage}` }),
+      lead_id: args.lead_id, created_by: uid, status: "done",
+      metadata: { to_stage: args.stage, note: args.note || null },
+    });
+    return { success: true, message: `"${data.company_name}" stage updated to ${args.stage}`, lead: data };
+  }
+
+  // ── create_activity ──────────────────────────────────────────────────────────
+  if (name === "create_activity") {
+    const autoCompleted = ["note", "email_sent", "stage_change", "email_contact"];
+    const payload = {
+      type:         args.type || "note",
+      title:        args.title,
+      description:  JSON.stringify({ remarks: args.note || args.title }),
+      lead_id:      args.lead_id   || null,
+      deal_id:      args.deal_id   || null,
+      due_date:     args.due_date  || null,
+      status:       args.status || (autoCompleted.includes(args.type) ? "done" : "todo"),
+      assigned_to:  uid,
+      created_by:   uid,
+      related_type: args.lead_id ? "lead" : args.deal_id ? "deal" : null,
+      related_id:   args.lead_id || args.deal_id || null,
+      metadata:     { activity_type: args.type, remarks: args.note || args.title },
+    };
+    const { data, error } = await supabase.from("activities").insert(payload).select("id, type, title, status").single();
+    if (error) return { error: error.message };
+    return { success: true, activity: data, message: `Activity logged: "${data.title}"` };
+  }
+
+  // ── schedule_follow_up ───────────────────────────────────────────────────────
+  if (name === "schedule_follow_up") {
+    const time = args.follow_up_time || "10:00";
+    const scheduledAt = `${args.follow_up_date}T${time}:00`;
+    const payload = {
+      type:         args.type || "follow_up_call",
+      title:        `Follow-up: ${args.note || "Scheduled follow-up"}`,
+      description:  JSON.stringify({ remarks: args.note || "Follow-up scheduled" }),
+      lead_id:      args.lead_id || null,
+      due_date:     scheduledAt,
+      status:       "todo",
+      assigned_to:  uid,
+      created_by:   uid,
+      related_type: args.lead_id ? "lead" : null,
+      related_id:   args.lead_id || null,
+      metadata:     { activity_type: args.type || "follow_up_call", remarks: args.note || "Follow-up scheduled" },
+    };
+    if (args.lead_id) {
+      await supabase.from("leads").update({ follow_up_date: args.follow_up_date, updated_at: new Date().toISOString() }).eq("id", args.lead_id);
+    }
+    const { data, error } = await supabase.from("activities").insert(payload).select("id, type, title, due_date").single();
+    if (error) return { error: error.message };
+    return { success: true, activity: data, message: `Follow-up scheduled for ${args.follow_up_date} at ${time}` };
+  }
+
+  // ── schedule_meeting ─────────────────────────────────────────────────────────
+  if (name === "schedule_meeting") {
+    const meetingPayload = {
+      title:        args.title,
+      company_name: args.company_name || null,
+      contact_name: args.contact_name || null,
+      scheduled_at: args.scheduled_at,
+      location:     args.location || null,
+      notes:        args.agenda || null,
+      status:       "scheduled",
+      created_by:   uid,
+      lead_id:      args.lead_id || null,
+      type:         "general",
+    };
+    const { data: meeting, error: mErr } = await supabase.from("meetings").insert(meetingPayload).select("id, title, scheduled_at, status").single();
+    if (mErr) return { error: mErr.message };
+    await supabase.from("activities").insert({
+      type: "meeting_person", title: `Meeting Scheduled: ${args.title}`,
+      description: JSON.stringify({ remarks: args.agenda || `Meeting with ${args.contact_name || args.company_name}` }),
+      lead_id: args.lead_id || null, due_date: args.scheduled_at, status: "todo",
+      created_by: uid, assigned_to: uid,
+    });
+    return { success: true, meeting, message: `Meeting "${meeting.title}" scheduled for ${new Date(meeting.scheduled_at).toLocaleString("en-IN")}` };
+  }
+
+  // ── create_task ──────────────────────────────────────────────────────────────
+  if (name === "create_task") {
+    const { data, error } = await supabase.from("tasks").insert({
+      title:       args.title,
+      description: args.description || null,
+      priority:    args.priority || "medium",
+      due_date:    args.due_date,
+      status:      "pending",
+      created_by:  uid,
+      assigned_to: uid,
+      lead_id:     args.lead_id || null,
+    }).select("id, title, due_date, priority, status").single();
+    if (error) return { error: error.message };
+    return { success: true, task: data, message: `Task created: "${data.title}" (due ${data.due_date})` };
+  }
+
+  // ── create_deal ──────────────────────────────────────────────────────────────
+  if (name === "create_deal") {
+    const { data, error } = await supabase.from("deals").insert({
+      title:        args.title,
+      company_name: args.company_name,
+      contact_name: args.contact_name || null,
+      value:        args.value || 0,
+      stage:        args.stage || "prospecting",
+      close_date:   args.close_date || null,
+      description:  args.description || null,
+      assigned_to:  uid,
+      created_by:   uid,
+      status:       "active",
+    }).select("id, title, company_name, value, stage").single();
+    if (error) return { error: error.message };
+    return { success: true, deal: data, message: `Deal created: "${data.title}" for ${data.company_name} (₹${Number(data.value).toLocaleString("en-IN")})` };
+  }
+
+  // ── update_deal ──────────────────────────────────────────────────────────────
+  if (name === "update_deal") {
+    const updates = {};
+    if (args.stage)       updates.stage       = args.stage;
+    if (args.value)       updates.value       = args.value;
+    if (args.close_date)  updates.close_date  = args.close_date;
+    if (args.description) updates.description = args.description;
+    if (Object.keys(updates).length === 0) return { error: "No fields to update." };
+    updates.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from("deals").update(updates).eq("id", args.deal_id).select("id, title, company_name, stage").single();
+    if (error) return { error: error.message };
+    return { success: true, deal: data, message: `Deal updated: "${data.title}"` };
+  }
+
+  // ── draft_email ── Returns draft; frontend shows confirmation card ────────────
+  if (name === "draft_email") {
+    return {
+      draft:      true,
+      to_name:    args.to_name,
+      to_email:   args.to_email   || null,
+      to_company: args.to_company || null,
+      subject:    args.subject,
+      body:       args.body,
+      lead_id:    args.lead_id || null,
+      message:    `Email draft ready for ${args.to_name}. User is reviewing it.`,
+    };
+  }
+
   return { error: `Unknown tool: ${name}` };
 }
 
@@ -552,9 +961,9 @@ Response Language: Always respond in ${pageContext.language || "English"}.
 USER: ${profile.full_name} | Role: ${roleLabel} | ${date}
 ${pageSection}${aiModeSection}
 
-YOU ARE A LIVE AGENT with real-time access to ALL CRM data. ALWAYS call the appropriate tool(s) before answering data questions — never guess or make up numbers.
+YOU ARE AN AUTONOMOUS CRM AGENT with real-time access to ALL CRM data. ALWAYS call the appropriate tool(s) before answering data questions — never guess or make up numbers. Execute tasks directly — do not ask for permission before using write tools.
 
-AVAILABLE TOOLS:
+READ TOOLS (retrieve CRM data):
 • get_leads — leads with temperature, stage, follow-up filters
 • get_prospects — prospects pipeline
 • get_deals — deals with stage, staleness filters
@@ -568,20 +977,36 @@ AVAILABLE TOOLS:
 • get_release_notes — version history and what's new
 • get_team_performance — team member performance metrics
 
-AGENT BEHAVIOR:
-- Chain multiple tools when needed (e.g., get_pipeline_summary + get_ai_recommendations for a morning briefing)
-- After gathering data, synthesize insights and give sharp, actionable recommendations
-- Address user by first name occasionally (not every message)
+WRITE TOOLS (execute immediately — no confirmation needed except email):
+• create_lead — add a new lead to CRM
+• update_lead — update lead details, stage, temperature, follow-up
+• assign_lead — reassign a lead to a team member (manager role required)
+• update_lead_stage — move a lead to a new stage + log note
+• create_activity — log any sales activity (call, note, email, visit, demo)
+• schedule_follow_up — schedule a follow-up and update lead's next follow-up date
+• schedule_meeting — create a new meeting + auto-log activity
+• create_task — create a task or reminder
+• create_deal — create a new deal in the pipeline
+• update_deal — update deal stage, value, close date
+• draft_email — compose an email draft (user reviews and confirms sending separately)
+
+AUTONOMOUS AGENT BEHAVIOR:
+- Execute write tools directly without asking for confirmation (except email)
+- Chain multiple tools in sequence: search first → then write (always look up lead_id before updating)
+- For email requests: ALWAYS call draft_email tool — never write email body in plain text response
+- After completing any write operation, summarize clearly what was done
+- Example: "Done! I've created a lead for **Ather Energy** (LEAD-007) assigned to you, and scheduled a follow-up call for June 30."
+- Address user by first name occasionally
 - Use **bold** for company names and key numbers. Bullet points for lists.
-- Indian number format: ₹, Lakh, Crore (₹1,00,000 = ₹1 Lakh; ₹1,00,00,000 = ₹1 Crore)
-- Always end with one clear recommended next action
-- If user writes in Hindi or Hinglish, respond in that language
-- Respect role permissions: employees see only their own data, managers see team data
+- Indian number format: ₹, Lakh, Crore (₹1,00,000 = ₹1 Lakh)
+- If user says "send him an email" — remember who "him" refers to from conversation context
+- Respect role permissions: employees see/edit only their own data, managers see team data
 - Role "owner" is referred to as "Super Admin" in user-facing text
+- Valid lead stages: new, contacted, qualified, proposal, negotiation, won, lost
+- Valid lead sources: website, linkedin, referral, cold_call, email_campaign, event, partner, social_media, ads, walk_in, other
 
 CONTENT GENERATION (Email, Proposals, Scripts, Posts):
 - Write compelling, professional content tailored to the Indian B2B market
-- Support tones: Professional, Friendly, Formal, Casual, Persuasive
 - For cold emails: hook → pain point → solution → CTA (under 150 words)
 - For proposals: executive summary → problem → solution → pricing → next steps
 - For WhatsApp: short, casual, include emoji sparingly
@@ -592,47 +1017,11 @@ When summarizing a lead, deal, or meeting — always include:
 2. Timeline of recent activity
 3. Risks or blockers
 4. Recommended next action
-5. Opportunity score (if available)
 
 MEETING PREPARATION:
-When asked to prepare for a meeting, use get_meetings + get_leads to gather:
-- Company/contact background
-- Previous interactions
-- Open deals or opportunities
-- Suggested talking points
-- Risk areas to address
-
-PROPOSING WRITE ACTIONS (require user approval before executing):
-Include at the END of response when the user asks to CREATE, UPDATE, ASSIGN, or SCHEDULE something:
-
-Valid lead sources: website, linkedin, referral, cold_call, email_campaign, event, partner, social_media, ads, walk_in, other
-
-<action>
-{"type":"create_lead","description":"Add new lead for [Company]","data":{"company_name":"...","contact_name":"...","phone":"...","email":"...","source":"other","temperature":"warm"}}
-</action>
-<action>
-{"type":"create_prospect","description":"Add new prospect [Company]","data":{"company_name":"...","contact_name":"...","phone":"...","email":"...","source":"other"}}
-</action>
-<action>
-{"type":"create_activity","description":"Log a call with [Contact]","data":{"type":"call","title":"...","note":"...","lead_id":"..."}}
-</action>
-<action>
-{"type":"create_task","description":"Create task: [Title]","data":{"title":"...","priority":"medium","due_date":"YYYY-MM-DD"}}
-</action>
-<action>
-{"type":"assign_lead","description":"Assign lead [Lead ID] to [Name]","data":{"lead_id":"...","assignee_name":"..."}}
-</action>
-<action>
-{"type":"schedule_meeting","description":"Schedule meeting with [Company]","data":{"title":"...","company_name":"...","contact_name":"...","scheduled_at":"YYYY-MM-DDTHH:MM:SS","notes":"..."}}
-</action>
-<action>
-{"type":"update_lead_stage","description":"Move lead [Name] to [Stage]","data":{"lead_id":"...","stage":"...","note":"..."}}
-</action>
-<action>
-{"type":"convert_lead","description":"Convert lead [Name] to deal","data":{"lead_id":"...","deal_value":"...","deal_stage":"proposal"}}
-</action>
-
-Always confirm with the user by including the action block — never execute writes silently.${docContext ? `
+When asked to prepare for a meeting, use get_meetings + get_leads/search_crm to gather:
+- Company/contact background, previous interactions, open deals
+- Suggested talking points and risk areas to address${docContext ? `
 
 ━━━ PROJECT DOCUMENT KNOWLEDGE BASE ━━━
 The following content is extracted from uploaded project documents. Use this as PRIMARY source of truth for project-specific questions.
@@ -705,6 +1094,10 @@ router.post("/chat", authenticate, async (req, res) => {
           toolCalls.map(async (tc) => {
             const args   = JSON.parse(tc.function.arguments || "{}") || {};
             const result = await executeTool(tc.function.name, args, req.profile);
+            // Special: emit email draft so frontend can render confirmation card
+            if (tc.function.name === "draft_email" && result.draft) {
+              send({ type: "email_draft", data: result });
+            }
             return { role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) };
           })
         );
@@ -752,6 +1145,52 @@ router.post("/clear-history", authenticate, (req, res) => {
     conversationHistory[userId] = [];
   }
   res.json({ success: true });
+});
+
+// POST /api/ai/execute-action  — execute confirmed AI actions (currently: send email)
+router.post("/execute-action", authenticate, async (req, res) => {
+  const { action_type, data } = req.body;
+  if (!action_type || !data) return res.status(400).json({ error: "action_type and data required" });
+
+  if (action_type === "send_email") {
+    if (!data.to_email) return res.status(400).json({ error: "Recipient email address is required to send." });
+
+    const { Resend } = require("resend");
+    const resend = new Resend(process.env.RESEND_API_KEY);
+
+    const htmlBody = (data.body || "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/\n/g, "<br>");
+
+    const { data: emailData, error: emailErr } = await resend.emails.send({
+      from:    process.env.RESEND_FROM || "Ccentrik CRM <noreply@ccentrik.com>",
+      to:      [data.to_email],
+      subject: data.subject,
+      html:    `<div style="font-family:sans-serif;font-size:14px;line-height:1.6">${htmlBody}</div>`,
+      text:    data.body,
+    });
+
+    if (emailErr) {
+      console.error("Email send error:", emailErr);
+      return res.status(500).json({ error: emailErr.message || "Failed to send email." });
+    }
+
+    // Log email activity in CRM
+    await supabase.from("activities").insert({
+      type:        "email_sent",
+      title:       `Email Sent: ${data.subject}`,
+      description: JSON.stringify({ remarks: data.body }),
+      lead_id:     data.lead_id || null,
+      status:      "done",
+      created_by:  req.profile.id,
+      assigned_to: req.profile.id,
+      metadata:    { to_name: data.to_name, to_email: data.to_email, subject: data.subject },
+    });
+
+    return res.json({ success: true, message: `Email sent to ${data.to_name} (${data.to_email})`, email_id: emailData?.id });
+  }
+
+  return res.status(400).json({ error: `Unknown action type: ${action_type}` });
 });
 
 module.exports = router;

@@ -11,9 +11,9 @@ import {
   ChevronRight, Image, Menu, PanelRightClose, PanelRightOpen,
   Star, BookOpen, Zap, HelpCircle, Newspaper,
   Bookmark, BookmarkCheck, MessageSquare, Activity,
-  Lightbulb, PenTool, Search,
+  Lightbulb, PenTool, Search, X, AtSign,
 } from "lucide-react";
-import { streamARIA, clearARIAHistory } from "../services/ariaService";
+import { streamARIA, clearARIAHistory, executeAction } from "../services/ariaService";
 import { auth } from "../firebase";
 import toast from "react-hot-toast";
 
@@ -825,9 +825,11 @@ export default function AIAssistant() {
   }, []);
 
   // ── Chat state ─────────────────────────────────────────────────────────────
-  const [messages, setMessages] = useState([]);
-  const [input, setInput]       = useState("");
-  const [loading, setLoading]   = useState(false);
+  const [messages, setMessages]           = useState([]);
+  const [input, setInput]                 = useState("");
+  const [loading, setLoading]             = useState(false);
+  const [pendingEmailDraft, setPendingEmailDraft] = useState(null);
+  const [emailSending, setEmailSending]   = useState(false);
 
   // ── AI state ───────────────────────────────────────────────────────────────
   const [aiState, setAiState]               = useState("idle");
@@ -1154,6 +1156,9 @@ export default function AIAssistant() {
         onDone: (fullText) => {
           setMessages(prev => prev.map(m => m.id === streamId ? { ...m, content: fullText, streaming: false } : m));
           speakText(fullText);
+        },
+        onEmailDraft: (draft) => {
+          setPendingEmailDraft(draft);
         },
         onError: (err) => {
           const msg = /rate.limit|429|quota/i.test(err?.message)
@@ -1608,6 +1613,134 @@ export default function AIAssistant() {
               </div>
             </motion.div>
           )}
+
+          {/* ── Email Draft Confirmation Card ── */}
+          <AnimatePresence>
+            {pendingEmailDraft && (
+              <motion.div
+                key="email-draft"
+                initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 8, scale: 0.97 }}
+                transition={{ duration: 0.22 }}
+                style={{
+                  margin: "8px 4px 4px",
+                  background: "linear-gradient(135deg, rgba(99,102,241,0.08), rgba(139,92,246,0.06))",
+                  border: "1.5px solid rgba(99,102,241,0.35)",
+                  borderRadius: 14,
+                  overflow: "hidden",
+                }}
+              >
+                {/* Header */}
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "10px 14px 8px",
+                  borderBottom: "1px solid rgba(99,102,241,0.2)",
+                  background: "rgba(99,102,241,0.07)",
+                }}>
+                  <AtSign size={15} style={{ color: "#6366F1", flexShrink: 0 }} />
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: "#6366F1", flex: 1 }}>Email Draft — Review Before Sending</span>
+                  <button
+                    onClick={() => setPendingEmailDraft(null)}
+                    style={{ background: "none", border: "none", cursor: "pointer", padding: 2, color: "var(--text-muted)", lineHeight: 1 }}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+
+                {/* Meta row */}
+                <div style={{ padding: "8px 14px 4px", display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    <span style={{ fontWeight: 600, color: "var(--text)" }}>To: </span>
+                    {pendingEmailDraft.to_name}
+                    {pendingEmailDraft.to_email && <span style={{ color: "#6366F1" }}> &lt;{pendingEmailDraft.to_email}&gt;</span>}
+                    {pendingEmailDraft.to_company && <span style={{ color: "var(--text-muted)" }}> · {pendingEmailDraft.to_company}</span>}
+                  </div>
+                </div>
+                <div style={{ padding: "2px 14px 8px" }}>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>Subject: </span>
+                  <span style={{ fontSize: 12, color: "var(--text)", fontWeight: 600 }}>{pendingEmailDraft.subject}</span>
+                </div>
+
+                {/* Body preview */}
+                <div style={{
+                  margin: "0 14px 10px",
+                  padding: "10px 12px",
+                  background: "var(--bg)",
+                  borderRadius: 8,
+                  fontSize: 12.5,
+                  color: "var(--text)",
+                  lineHeight: 1.65,
+                  maxHeight: 160,
+                  overflowY: "auto",
+                  whiteSpace: "pre-wrap",
+                  border: "1px solid var(--border)",
+                }}>
+                  {pendingEmailDraft.body}
+                </div>
+
+                {/* Action buttons */}
+                <div style={{ display: "flex", gap: 8, padding: "0 14px 12px", alignItems: "center" }}>
+                  <button
+                    disabled={emailSending || !pendingEmailDraft.to_email}
+                    onClick={async () => {
+                      if (!pendingEmailDraft.to_email) {
+                        toast.error("No recipient email address. Ask the AI to find the contact's email first.");
+                        return;
+                      }
+                      setEmailSending(true);
+                      try {
+                        const result = await executeAction("send_email", pendingEmailDraft, () => auth.currentUser?.getIdToken());
+                        toast.success(result.message || "Email sent!");
+                        setPendingEmailDraft(null);
+                        setMessages(prev => [...prev, {
+                          id: `sys-email-${Date.now()}`,
+                          role: "system",
+                          type: "system",
+                          content: `✓ Email sent to **${pendingEmailDraft.to_name}** — Subject: "${pendingEmailDraft.subject}"`,
+                          ts: new Date(),
+                        }]);
+                      } catch (err) {
+                        toast.error(err.message || "Failed to send email.");
+                      } finally {
+                        setEmailSending(false);
+                      }
+                    }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      padding: "7px 16px",
+                      background: emailSending ? "rgba(99,102,241,0.4)" : "linear-gradient(135deg,#6366F1,#8B5CF6)",
+                      color: "#fff", border: "none", borderRadius: 8,
+                      fontSize: 12.5, fontWeight: 700, cursor: emailSending ? "not-allowed" : "pointer",
+                      opacity: (!pendingEmailDraft.to_email && !emailSending) ? 0.5 : 1,
+                    }}
+                  >
+                    {emailSending ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Send size={13} />}
+                    {emailSending ? "Sending…" : "Send Email"}
+                  </button>
+
+                  <button
+                    onClick={() => setPendingEmailDraft(null)}
+                    style={{
+                      padding: "7px 14px",
+                      background: "transparent",
+                      color: "var(--text-muted)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                    }}
+                  >
+                    Discard
+                  </button>
+
+                  {!pendingEmailDraft.to_email && (
+                    <span style={{ fontSize: 11.5, color: "#F59E0B", marginLeft: 4 }}>
+                      ⚠ Ask the AI for the contact's email address to enable sending.
+                    </span>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <div ref={bottomRef} />
         </div>
