@@ -1147,47 +1147,139 @@ router.post("/clear-history", authenticate, (req, res) => {
   res.json({ success: true });
 });
 
-// POST /api/ai/execute-action  — execute confirmed AI actions (currently: send email)
+// POST /api/ai/execute-action  — execute confirmed AI actions (currently: send email via Gmail)
 router.post("/execute-action", authenticate, async (req, res) => {
   const { action_type, data } = req.body;
   if (!action_type || !data) return res.status(400).json({ error: "action_type and data required" });
 
   if (action_type === "send_email") {
     if (!data.to_email) return res.status(400).json({ error: "Recipient email address is required to send." });
+    if (!data.subject)  return res.status(400).json({ error: "Email subject is required." });
+    if (!data.body)     return res.status(400).json({ error: "Email body is required." });
 
-    const { Resend } = require("resend");
-    const resend = new Resend(process.env.RESEND_API_KEY);
+    // ── Get user's connected Gmail account ────────────────────────────────────
+    const { data: accounts } = await supabase
+      .from("email_accounts")
+      .select("*")
+      .eq("user_id", req.profile.id)
+      .eq("is_active", true)
+      .eq("provider", "gmail")
+      .limit(1);
 
-    const htmlBody = (data.body || "")
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/\n/g, "<br>");
-
-    const { data: emailData, error: emailErr } = await resend.emails.send({
-      from:    process.env.RESEND_FROM || "Ccentrik CRM <noreply@ccentrik.com>",
-      to:      [data.to_email],
-      subject: data.subject,
-      html:    `<div style="font-family:sans-serif;font-size:14px;line-height:1.6">${htmlBody}</div>`,
-      text:    data.body,
-    });
-
-    if (emailErr) {
-      console.error("Email send error:", emailErr);
-      return res.status(500).json({ error: emailErr.message || "Failed to send email." });
+    if (!accounts?.length) {
+      return res.status(400).json({ error: "No Gmail account connected. Please connect Gmail in Settings → Email Integration." });
     }
 
-    // Log email activity in CRM
-    await supabase.from("activities").insert({
+    const account = accounts[0];
+
+    // ── Get / refresh access token ─────────────────────────────────────────────
+    let token;
+    try {
+      const GMAIL_CLIENT_ID     = process.env.GMAIL_CLIENT_ID;
+      const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET;
+      const GOOGLE_TOKEN_URL    = "https://oauth2.googleapis.com/token";
+
+      const needsRefresh = !account.token_expiry || new Date(account.token_expiry) <= new Date(Date.now() + 60000);
+      if (needsRefresh) {
+        if (!account.refresh_token) throw new Error("Gmail session expired. Please reconnect Gmail in Settings.");
+        const r = await fetch(GOOGLE_TOKEN_URL, {
+          method:  "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id:     GMAIL_CLIENT_ID,
+            client_secret: GMAIL_CLIENT_SECRET,
+            refresh_token: account.refresh_token,
+            grant_type:    "refresh_token",
+          }),
+        });
+        const refreshData = await r.json();
+        if (!refreshData.access_token) throw new Error(refreshData.error_description || "Token refresh failed");
+        token = refreshData.access_token;
+        const expiry = refreshData.expires_in ? new Date(Date.now() + refreshData.expires_in * 1000).toISOString() : null;
+        await supabase.from("email_accounts").update({ access_token: token, token_expiry: expiry }).eq("id", account.id);
+      } else {
+        token = account.access_token;
+      }
+    } catch (tokenErr) {
+      return res.status(400).json({ error: tokenErr.message });
+    }
+
+    // ── Build and send MIME email via Gmail API ────────────────────────────────
+    const { data: senderProfile } = await supabase.from("profiles").select("full_name").eq("id", req.profile.id).maybeSingle();
+    const senderName  = senderProfile?.full_name || "";
+    const fromAddress = account.email;
+
+    const htmlBody   = data.body.includes("<") ? data.body : data.body.replace(/\n/g, "<br>");
+    const subjectB64 = `=?UTF-8?B?${Buffer.from(data.subject.trim()).toString("base64")}?=`;
+    const mimeMsg    = [
+      `From: ${senderName ? `"${senderName}" <${fromAddress}>` : fromAddress}`,
+      `To: ${data.to_email.trim()}`,
+      `Subject: ${subjectB64}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/html; charset=UTF-8`,
+      ``,
+      htmlBody,
+    ].join("\r\n");
+    const raw = Buffer.from(mimeMsg).toString("base64url");
+
+    const sendResp = await fetch("https://www.googleapis.com/gmail/v1/users/me/messages/send", {
+      method:  "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body:    JSON.stringify({ raw }),
+    });
+
+    if (!sendResp.ok) {
+      const errData = await sendResp.json().catch(() => ({}));
+      const errMsg  = errData.error?.message || "Failed to send email";
+      if (sendResp.status === 403 || /insufficient|scope/i.test(errMsg)) {
+        return res.status(403).json({ error: "Gmail needs additional permissions. Please reconnect Gmail in Settings.", code: "insufficient_scope" });
+      }
+      return res.status(400).json({ error: errMsg });
+    }
+
+    const sentData = await sendResp.json();
+    const now      = new Date().toISOString();
+
+    // ── Log email_sync_log + activity ─────────────────────────────────────────
+    const { data: logEntry } = await supabase.from("email_sync_log").insert({
+      email_account_id: account.id,
+      user_id:          req.profile.id,
+      sender_name:      senderName,
+      message_id:       sentData.id || `ai-${Date.now()}`,
+      thread_id:        sentData.threadId || null,
+      subject:          data.subject.trim(),
+      from_email:       fromAddress,
+      to_emails:        [data.to_email.trim()],
+      sent_at:          now,
+      attachment_count: 0,
+      snippet:          data.body.replace(/<[^>]*>/g, "").slice(0, 300),
+      direction:        "outbound",
+      status:           "classified",
+      activity_type:    "email_sent",
+      reason:           "Sent via Ccentrik AI",
+      lead_id:          data.lead_id || null,
+      crm_module:       data.lead_id ? "lead" : null,
+      crm_record_name:  data.to_company ? `${data.to_name} / ${data.to_company}` : data.to_name,
+    }).select().single();
+
+    const { data: activity } = await supabase.from("activities").insert({
       type:        "email_sent",
-      title:       `Email Sent: ${data.subject}`,
+      title:       `Email Sent: ${data.subject.trim()}`,
       description: JSON.stringify({ remarks: data.body }),
       lead_id:     data.lead_id || null,
       status:      "done",
       created_by:  req.profile.id,
       assigned_to: req.profile.id,
-      metadata:    { to_name: data.to_name, to_email: data.to_email, subject: data.subject },
-    });
+      related_type: data.lead_id ? "lead" : null,
+      related_id:   data.lead_id || null,
+      metadata:    { to_name: data.to_name, to_email: data.to_email, subject: data.subject, sent_at: now, source: "aria_ai" },
+    }).select().single();
 
-    return res.json({ success: true, message: `Email sent to ${data.to_name} (${data.to_email})`, email_id: emailData?.id });
+    if (activity && logEntry) {
+      await supabase.from("email_sync_log").update({ activity_id: activity.id }).eq("id", logEntry.id);
+    }
+
+    return res.json({ success: true, message: `Email sent to ${data.to_name} (${data.to_email})`, message_id: sentData.id });
   }
 
   return res.status(400).json({ error: `Unknown action type: ${action_type}` });
