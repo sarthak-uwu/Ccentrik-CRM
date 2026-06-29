@@ -812,8 +812,8 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
                   <>
                     <SectionHead label="Services" />
                     <div style={{ marginTop: 4, marginBottom: 6 }}>
-                      {svcs.map((svc) => (
-                        <div key={svc} style={{ fontSize: 13, color: "var(--text-main)", padding: "2px 0" }}>• {svc}</div>
+                      {svcs.map((svc, i) => (
+                        <div key={svc} style={{ fontSize: 13, color: "var(--text-main)", padding: "2px 0" }}>{i + 1}. {svc}</div>
                       ))}
                     </div>
                   </>

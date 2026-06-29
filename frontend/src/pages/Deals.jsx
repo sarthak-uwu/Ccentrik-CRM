@@ -2006,8 +2006,8 @@ export default function Deals() {
                                 <td>
                                   {(svcs.length > 0 || customSvc) ? (
                                     <div style={{ fontSize: 11, color: "var(--text-main)", lineHeight: 1.7 }}>
-                                      {[...svcs, ...(customSvc ? [customSvc] : [])].map((svc) => (
-                                        <div key={svc}>• {svc}</div>
+                                      {[...svcs, ...(customSvc ? [customSvc] : [])].map((svc, i) => (
+                                        <div key={svc}>{i + 1}. {svc}</div>
                                       ))}
                                     </div>
                                   ) : <span style={{ color: "var(--text-muted)", fontSize: 11 }}>—</span>}

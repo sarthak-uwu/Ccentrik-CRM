@@ -920,8 +920,8 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                 <>
                   <SectionHead label="Services" />
                   <div style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
-                    {[...(extra.services || []), ...(extra.custom_service ? [extra.custom_service] : [])].map((svc) => (
-                      <div key={svc} style={{ fontSize: 13, color: "var(--text-main)", padding: "2px 0" }}>• {svc}</div>
+                    {[...(extra.services || []), ...(extra.custom_service ? [extra.custom_service] : [])].map((svc, i) => (
+                      <div key={svc} style={{ fontSize: 13, color: "var(--text-main)", padding: "2px 0" }}>{i + 1}. {svc}</div>
                     ))}
                   </div>
                 </>

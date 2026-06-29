@@ -2185,8 +2185,8 @@ export default function Pipeline() {
                           <td>
                             {(extra.services?.length > 0 || extra.custom_service) ? (
                               <div style={{ fontSize: 11, color: "var(--text-main)", lineHeight: 1.7 }}>
-                                {[...(extra.services || []), ...(extra.custom_service ? [extra.custom_service] : [])].map((svc) => (
-                                  <div key={svc}>• {svc}</div>
+                                {[...(extra.services || []), ...(extra.custom_service ? [extra.custom_service] : [])].map((svc, i) => (
+                                  <div key={svc}>{i + 1}. {svc}</div>
                                 ))}
                               </div>
                             ) : <span style={{ color: "var(--text-muted)", fontSize: 11 }}>—</span>}
