@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { Fragment, useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
 import EmailComposerModal from "../components/EmailComposerModal";
@@ -212,6 +212,33 @@ function groupByTimeline(activities) {
   return groups;
 }
 
+// ─── Group Activities By Entity (Company + POC) ───────────────────────────────
+function groupActivitiesByEntity(activities) {
+  const groups = new Map();
+  for (const a of activities) {
+    const key = a.lead_id
+      ? String(a.lead_id)
+      : a.deal_id
+      ? `deal:${a.deal_id}`
+      : a.related_id
+      ? `${a.related_type || "other"}:${a.related_id}`
+      : `solo:${a.id}`;
+    if (!groups.has(key)) {
+      groups.set(key, { key, companyName: a.lead?.company_name || null, pocName: a.lead?.contact_name || null, events: [], latestEvent: null, latestDate: null });
+    }
+    const g = groups.get(key);
+    g.events.push(a);
+    if (!g.companyName && a.lead?.company_name) g.companyName = a.lead.company_name;
+    if (!g.pocName     && a.lead?.contact_name) g.pocName     = a.lead.contact_name;
+    const d = new Date(a.created_at || 0);
+    if (!g.latestDate || d > new Date(g.latestDate)) { g.latestDate = a.created_at; g.latestEvent = a; }
+  }
+  for (const g of groups.values()) {
+    g.events.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  }
+  return Array.from(groups.values()).sort((a, b) => new Date(b.latestDate || 0) - new Date(a.latestDate || 0));
+}
+
 // ─── Micro Components ─────────────────────────────────────────────────────────
 
 function Avatar({ user, size = 24 }) {
@@ -415,6 +442,172 @@ function ActivityCard({ activity, onEdit, onDelete, onStatusChange, resolveEntit
   );
 }
 
+// ─── Conversation Event Row (inside expanded GroupedConversationCard) ─────────
+
+function ConversationEventRow({ event, isLast, onEdit, onDelete, onStatusChange }) {
+  const { profile } = useAuth();
+  const myRank    = ROLE_RANK[profile?.role] || 0;
+  const isOwn     = event.created_by === profile?.id || event.assigned_to === profile?.id;
+  const canEdit   = isOwn || myRank >= 3;
+  const canDelete = profile?.role === "owner" || profile?.role === "sales_head";
+
+  const def      = ACT_TYPES[typeKey(event.type)] || ACT_TYPES.task;
+  const Icon     = def.icon;
+  const isDone   = event.status === "done";
+  const isOverdue = !isDone && event.due_date && new Date(event.due_date) < new Date();
+
+  const desc     = parseJSON(event.description);
+  const notes    = desc.remarks || desc.notes || desc.outcome || desc.agenda || desc.body || "";
+  const bodyText = notes || cleanDescription(event.title, event.type) || event.title;
+
+  const dateRef  = event.due_date || event.created_at;
+  const dateStr  = dateRef
+    ? new Date(dateRef).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })
+    : null;
+
+  const statusCfg = isOverdue
+    ? { label: "Overdue",     color: "#EF4444", bg: "#FEF2F2" }
+    : isDone
+    ? { label: "Completed",   color: "#10B981", bg: "#ECFDF5" }
+    : event.status === "in_progress"
+    ? { label: "In Progress", color: "#3B82F6", bg: "#EFF6FF" }
+    : { label: "Pending",     color: "#F59E0B", bg: "#FFFBEB" };
+
+  const assignedPerson = event.assigned_profile || event.created_by_profile;
+
+  return (
+    <div style={{ display: "flex", gap: 10, paddingTop: 10, paddingBottom: isLast ? 4 : 12, borderBottom: isLast ? "none" : "1px solid #F3F4F6", opacity: isDone ? 0.72 : 1 }}>
+      <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <div style={{ width: 28, height: 28, borderRadius: "50%", background: `${def.color}14`, border: `1.5px solid ${def.color}30`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Icon size={12} style={{ color: def.color }} strokeWidth={2} />
+        </div>
+        {!isLast && <div style={{ width: 1, flex: 1, minHeight: 8, background: "#EBEBEB", marginTop: 3 }} />}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 2 }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: def.color, textTransform: "uppercase", letterSpacing: "0.03em" }}>{def.label}</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, padding: "1px 7px", borderRadius: 99, background: statusCfg.bg, color: statusCfg.color }}>{statusCfg.label}</span>
+            </div>
+            {bodyText && bodyText !== def.label && (
+              <div style={{ fontSize: 12.5, color: isDone ? "#9CA3AF" : "#374151", lineHeight: 1.5, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", marginBottom: 3 }}>{bodyText}</div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {dateStr && <span style={{ fontSize: 11, color: "#9CA3AF", display: "inline-flex", alignItems: "center", gap: 3 }}><CalendarClock size={9} />{dateStr}</span>}
+              {assignedPerson && <div style={{ display: "flex", alignItems: "center", gap: 4 }}><Avatar user={assignedPerson} size={15} /><span style={{ fontSize: 11, color: "#9CA3AF" }}>{assignedPerson.full_name}</span></div>}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+            {canEdit && !isDone && (
+              <button onClick={() => onStatusChange(event.id, "done")} title="Mark done"
+                style={{ height: 25, padding: "0 7px", borderRadius: 6, border: "1px solid #D1FAE5", background: "#ECFDF5", color: "#10B981", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 3, whiteSpace: "nowrap" }}>
+                <CheckCircle2 size={10} strokeWidth={2} /> Done
+              </button>
+            )}
+            {canEdit && isDone && (
+              <button onClick={() => onStatusChange(event.id, "todo")} title="Mark pending"
+                style={{ height: 25, width: 25, borderRadius: 6, border: "1px solid #E5E7EB", background: "#F3F4F6", color: "#6B7280", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                <RotateCcw size={10} strokeWidth={2} />
+              </button>
+            )}
+            {canEdit && (
+              <button onClick={() => onEdit(event)} title="Edit"
+                style={{ height: 25, width: 25, borderRadius: 6, border: "1px solid #E5E7EB", background: "#fff", color: "#6B7280", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                <Pencil size={10} strokeWidth={2} />
+              </button>
+            )}
+            {canDelete && (
+              <button onClick={() => onDelete(event.id)} title="Delete"
+                style={{ height: 25, width: 25, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#EF4444", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                <Trash2 size={10} strokeWidth={2} />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Grouped Conversation Card ────────────────────────────────────────────────
+
+function GroupedConversationCard({ group, onEdit, onDelete, onStatusChange, resolveEntityFull }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const latestEvent = group.latestEvent;
+  const latestDef   = latestEvent ? (ACT_TYPES[typeKey(latestEvent.type)] || ACT_TYPES.task) : null;
+  const latestDate  = group.latestDate
+    ? new Date(group.latestDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+    : null;
+
+  const entityInfo  = (!group.companyName && resolveEntityFull && latestEvent) ? resolveEntityFull(latestEvent) : null;
+  const company     = group.companyName || entityInfo?.company || "Standalone Activity";
+  const poc         = group.pocName     || entityInfo?.contact || null;
+
+  const total        = group.events.length;
+  const doneCount    = group.events.filter((e) => e.status === "done").length;
+  const overdueCount = group.events.filter((e) => e.status !== "done" && e.due_date && new Date(e.due_date) < new Date()).length;
+  const pendingCount = total - doneCount;
+
+  const accentColor = overdueCount > 0 ? "#EF4444" : pendingCount > 0 ? "#F59E0B" : "#10B981";
+  const statusLabel = overdueCount > 0 ? "Overdue" : pendingCount > 0 ? "In Progress" : "Completed";
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -4, scale: 0.97 }}
+      transition={{ duration: 0.18 }}
+      style={{ background: "#FFFFFF", border: `1px solid ${overdueCount > 0 ? "#FCA5A5" : "#E5E7EB"}`, borderLeft: `4px solid ${accentColor}`, borderRadius: 14, boxShadow: "0 2px 8px rgba(0,0,0,0.06)", overflow: "hidden" }}
+    >
+      <div
+        style={{ padding: "14px 18px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: expanded ? "#FAFBFF" : "#FFFFFF", borderBottom: expanded ? "1px solid #F3F4F6" : "none", transition: "background 0.15s" }}
+        onClick={() => setExpanded((v) => !v)}
+        onMouseEnter={(e) => { if (!expanded) e.currentTarget.style.background = "#F9FAFB"; }}
+        onMouseLeave={(e) => { if (!expanded) e.currentTarget.style.background = "#FFFFFF"; }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 15, fontWeight: 800, color: "#0F172A", letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>{company}</span>
+            {poc && (
+              <>
+                <span style={{ fontSize: 13, color: "#94A3B8", fontWeight: 400 }}>—</span>
+                <span style={{ fontSize: 13, fontWeight: 500, color: "#475569" }}>{poc}</span>
+              </>
+            )}
+          </div>
+          {latestDef && (
+            <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: latestDef.color, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                <latestDef.icon size={10} strokeWidth={2} />{latestDef.label}
+              </span>
+              {latestDate && <span style={{ fontSize: 11, color: "#9CA3AF" }}>· {latestDate}</span>}
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 99, background: `${accentColor}12`, color: accentColor, border: `1px solid ${accentColor}25`, whiteSpace: "nowrap" }}>
+            {statusLabel}
+          </span>
+          <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 99, background: "rgba(99,102,241,0.08)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", whiteSpace: "nowrap" }}>
+            {total} {total === 1 ? "Activity" : "Activities"}
+          </span>
+          <ChevronDown size={14} style={{ color: "#9CA3AF", transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.2s", flexShrink: 0 }} />
+        </div>
+      </div>
+      {expanded && (
+        <div style={{ padding: "4px 18px 12px" }}>
+          {group.events.map((event, i) => (
+            <ConversationEventRow key={event.id} event={event} isLast={i === group.events.length - 1} onEdit={onEdit} onDelete={onDelete} onStatusChange={onStatusChange} />
+          ))}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 // ─── Group Header ─────────────────────────────────────────────────────────────
 
 function GroupHeader({ label, count, color, sub }) {
@@ -432,42 +625,26 @@ function GroupHeader({ label, count, color, sub }) {
 // ─── Timeline View ────────────────────────────────────────────────────────────
 
 function TimelineView({ activities, onEdit, onDelete, onStatusChange, onNew, resolveEntity, resolveEntityFull }) {
-  const groups = useMemo(() => groupByTimeline(activities), [activities]);
-  const todayLabel = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
-  const tmDate = new Date(); tmDate.setDate(tmDate.getDate() + 1);
-  const tmLabel = tmDate.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
-
-  const SECTIONS = [
-    { key: "overdue",   label: "Overdue",   color: "#EF4444" },
-    { key: "today",     label: "Today",     color: "#3B82F6", sub: todayLabel },
-    { key: "tomorrow",  label: "Tomorrow",  color: "#F59E0B", sub: tmLabel },
-    { key: "upcoming",  label: "Upcoming",  color: "#8B5CF6" },
-    { key: "later",     label: "Later",     color: "#6B7280" },
-    { key: "yesterday", label: "Yesterday", color: "#0EA5E9" },
-    { key: "earlier",   label: "Earlier",   color: "#94A3B8" },
-    { key: "completed", label: "Completed", color: "#10B981" },
-  ];
+  const groups = useMemo(() => groupActivitiesByEntity(activities), [activities]);
 
   if (!activities.length) return <EmptyState onNew={onNew} />;
 
   return (
     <div style={{ paddingBottom: 32 }}>
-      {SECTIONS.map(({ key, label, color, sub }) => {
-        const items = groups[key];
-        if (!items?.length) return null;
-        return (
-          <div key={key}>
-            <GroupHeader label={label} count={items.length} color={color} sub={sub} />
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <AnimatePresence initial={false}>
-                {items.map((a) => (
-                  <ActivityCard key={a.id} activity={a} onEdit={onEdit} onDelete={onDelete} onStatusChange={onStatusChange} resolveEntity={resolveEntity} resolveEntityFull={resolveEntityFull} />
-                ))}
-              </AnimatePresence>
-            </div>
-          </div>
-        );
-      })}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <AnimatePresence initial={false}>
+          {groups.map((group) => (
+            <GroupedConversationCard
+              key={group.key}
+              group={group}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onStatusChange={onStatusChange}
+              resolveEntityFull={resolveEntityFull}
+            />
+          ))}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
@@ -499,10 +676,10 @@ const ACT_TBL_COLS = [
   { key: "company",  label: "Company Name"      },
   { key: "contact",  label: "Contact Person"     },
   { key: "assigned", label: "Assigned Employee"  },
-  { key: "type",     label: "Activity Type"      },
-  { key: "desc",     label: "Description"        },
+  { key: "type",     label: "Latest Activity"    },
+  { key: "desc",     label: "Total Activities"   },
   { key: "status",   label: "Status"             },
-  { key: "datetime", label: "Date & Time"        },
+  { key: "datetime", label: "Latest Date"        },
 ];
 const ACT_TBL_LS = "activities_table_cols_v1";
 
@@ -529,6 +706,8 @@ function TableView({ activities, onEdit, onDelete, onStatusChange, resolveEntity
     return next;
   });
   const isColVisible = (key) => !hiddenCols.has(key);
+  const groups = useMemo(() => groupActivitiesByEntity(activities), [activities]);
+  const [expandedGroup, setExpandedGroup] = useState(null);
 
   if (!activities.length) return <EmptyState />;
 
@@ -572,134 +751,119 @@ function TableView({ activities, onEdit, onDelete, onStatusChange, resolveEntity
               {isColVisible("company")  && <th style={thStyle}>Company Name</th>}
               {isColVisible("contact")  && <th style={thStyle}>Contact Person</th>}
               {isColVisible("assigned") && <th style={thStyle}>Assigned Employee</th>}
-              {isColVisible("type")     && <th style={thStyle}>Activity Type</th>}
-              {isColVisible("desc")     && <th style={{ ...thStyle, maxWidth: 260 }}>Description</th>}
+              {isColVisible("type")     && <th style={thStyle}>Latest Activity</th>}
+              {isColVisible("desc")     && <th style={thStyle}>Total Activities</th>}
               {isColVisible("status")   && <th style={thStyle}>Status</th>}
-              {isColVisible("datetime") && <th style={thStyle}>Date & Time</th>}
+              {isColVisible("datetime") && <th style={thStyle}>Latest Date</th>}
               <th style={{ ...thStyle, textAlign: "right" }}>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {activities.map((a, idx) => {
-              const def       = ACT_TYPES[typeKey(a.type)] || ACT_TYPES.task;
-              const Icon      = def.icon;
-              const desc      = parseJSON(a.description);
-              const notes     = desc.remarks || desc.notes || desc.outcome || desc.agenda || desc.body || a.title || "";
-              const isDone    = a.status === "done";
-              const isOverdue = !isDone && a.due_date && new Date(a.due_date) < new Date();
-              const myRank2   = ROLE_RANK[profile?.role] || 0;
-              const isOwn2    = a.created_by === profile?.id || a.assigned_to === profile?.id;
-              const canEdit   = isOwn2 || myRank2 >= 3;
-              const canDelete = profile?.role === "owner" || profile?.role === "sales_head";
-              const { company, contact } = resolveEntityFull ? resolveEntityFull(a) : { company: resolveEntity(a.related_type, a.related_id), contact: null };
+            {groups.map((group, idx) => {
+              const latestEvent  = group.latestEvent;
+              const def          = latestEvent ? (ACT_TYPES[typeKey(latestEvent.type)] || ACT_TYPES.task) : ACT_TYPES.task;
+              const Icon         = def.icon;
+              const allDone      = group.events.every((e) => e.status === "done");
+              const overdueCount = group.events.filter((e) => e.status !== "done" && e.due_date && new Date(e.due_date) < new Date()).length;
+              const isOverdue    = overdueCount > 0;
 
-              const dateStr = a.created_at
-                ? new Date(a.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+              const entityInfo   = (!group.companyName && resolveEntityFull && latestEvent) ? resolveEntityFull(latestEvent) : null;
+              const company      = group.companyName || entityInfo?.company || "—";
+              const poc          = group.pocName     || entityInfo?.contact || null;
+
+              const assignedPerson = latestEvent?.assigned_profile || latestEvent?.created_by_profile;
+              const dateStr = group.latestDate
+                ? new Date(group.latestDate).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })
                 : null;
 
+              const statusColor = isOverdue ? "#EF4444" : allDone ? "#10B981" : "#F59E0B";
+              const statusBg    = isOverdue ? "#FEF2F2" : allDone ? "#ECFDF5" : "#FFFBEB";
+              const statusLabel = isOverdue ? "Overdue" : allDone ? "Completed" : "In Progress";
+              const StatusIcon  = isOverdue ? AlertCircle : allDone ? CheckCircle2 : Clock;
+
+              const isExpanded      = expandedGroup === group.key;
+              const visibleColCount = ACT_TBL_COLS.filter((c) => isColVisible(c.key)).length + 2;
+
               return (
-                <tr key={a.id} style={{ borderBottom: "1px solid #F3F4F6", transition: "background 0.1s" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "#F9FAFB")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
+                <Fragment key={group.key}>
+                  <tr
+                    style={{ borderBottom: isExpanded ? "none" : "1px solid #F3F4F6", background: isExpanded ? "#F5F7FF" : idx % 2 === 0 ? "#fff" : "#FAFAFA", cursor: "pointer", transition: "background 0.1s" }}
+                    onClick={() => setExpandedGroup(isExpanded ? null : group.key)}
+                    onMouseEnter={(e) => { if (!isExpanded) e.currentTarget.style.background = "#EEF2FF"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = isExpanded ? "#F5F7FF" : idx % 2 === 0 ? "#fff" : "#FAFAFA"; }}
+                  >
+                    <td style={{ padding: "10px 6px", textAlign: "center", fontSize: 11.5, color: "#9CA3AF", fontWeight: 700 }}>{idx + 1}</td>
 
-                  {/* # */}
-                  <td style={{ padding: "10px 6px", textAlign: "center", fontSize: 11.5, color: "#9CA3AF", fontWeight: 600 }}>{idx + 1}</td>
-
-                  {/* Company Name */}
-                  {isColVisible("company") && (
-                    <td style={{ padding: "10px 14px", maxWidth: 160 }}>
-                      {company
-                        ? <span style={{ fontSize: 13, fontWeight: 700, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>{company}</span>
-                        : <span style={{ color: "#D1D5DB", fontSize: 12 }}>—</span>}
-                    </td>
-                  )}
-
-                  {/* Contact Person */}
-                  {isColVisible("contact") && (
-                    <td style={{ padding: "10px 14px", maxWidth: 140 }}>
-                      {contact
-                        ? <span style={{ fontSize: 12.5, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>{contact}</span>
-                        : <span style={{ color: "#D1D5DB", fontSize: 12 }}>—</span>}
-                    </td>
-                  )}
-
-                  {/* Assigned Employee */}
-                  {isColVisible("assigned") && (
+                    {isColVisible("company") && (
+                      <td style={{ padding: "10px 14px", maxWidth: 180 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>{company}</span>
+                      </td>
+                    )}
+                    {isColVisible("contact") && (
+                      <td style={{ padding: "10px 14px", maxWidth: 140 }}>
+                        {poc
+                          ? <span style={{ fontSize: 12.5, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>{poc}</span>
+                          : <span style={{ color: "#D1D5DB" }}>—</span>}
+                      </td>
+                    )}
+                    {isColVisible("assigned") && (
+                      <td style={{ padding: "10px 14px" }}>
+                        {assignedPerson
+                          ? <div style={{ display: "flex", alignItems: "center", gap: 5 }}><Avatar user={assignedPerson} size={20} /><span style={{ fontSize: 12, color: "#4B5563", whiteSpace: "nowrap" }}>{assignedPerson.full_name}</span></div>
+                          : <span style={{ color: "#D1D5DB" }}>—</span>}
+                      </td>
+                    )}
+                    {isColVisible("type") && (
+                      <td style={{ padding: "10px 14px" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: def.bg, color: def.color, border: `1px solid ${def.border}`, whiteSpace: "nowrap" }}>
+                          <Icon size={10} />{def.label}
+                        </span>
+                      </td>
+                    )}
+                    {isColVisible("desc") && (
+                      <td style={{ padding: "10px 14px" }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "#6366F1", background: "rgba(99,102,241,0.08)", padding: "2px 10px", borderRadius: 99, border: "1px solid rgba(99,102,241,0.18)", whiteSpace: "nowrap" }}>
+                          {group.events.length} {group.events.length === 1 ? "Activity" : "Activities"}
+                        </span>
+                      </td>
+                    )}
+                    {isColVisible("status") && (
+                      <td style={{ padding: "10px 14px" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: statusBg, color: statusColor, whiteSpace: "nowrap" }}>
+                          <StatusIcon size={10} strokeWidth={2.2} />{statusLabel}
+                        </span>
+                      </td>
+                    )}
+                    {isColVisible("datetime") && (
+                      <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                        {dateStr
+                          ? <span style={{ fontSize: 11.5, color: "#6B7280", display: "flex", alignItems: "center", gap: 4 }}><CalendarClock size={11} />{dateStr}</span>
+                          : <span style={{ color: "#D1D5DB" }}>—</span>}
+                      </td>
+                    )}
                     <td style={{ padding: "10px 14px" }}>
-                      {(a.assigned_profile || a.created_by_profile)
-                        ? (() => { const p = a.assigned_profile || a.created_by_profile; return <div style={{ display: "flex", alignItems: "center", gap: 5 }}><Avatar user={p} size={20} /><span style={{ fontSize: 12, color: "#4B5563", whiteSpace: "nowrap" }}>{p.full_name}</span></div>; })()
-                        : <span style={{ color: "#D1D5DB" }}>—</span>}
-                    </td>
-                  )}
-
-                  {/* Activity Type */}
-                  {isColVisible("type") && (
-                    <td style={{ padding: "10px 14px" }}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: def.bg, color: def.color, border: `1px solid ${def.border}`, whiteSpace: "nowrap" }}>
-                        <Icon size={10} />{def.label}
-                      </span>
-                    </td>
-                  )}
-
-                  {/* Description */}
-                  {isColVisible("desc") && (
-                    <td style={{ padding: "10px 14px", maxWidth: 260 }}>
-                      {(() => {
-                        const cleaned = cleanDescription(a.title, a.type);
-                        const detail  = notes && notes !== a.title ? notes : null;
-                        const display = cleaned || detail || a.title;
-                        return (
-                          <>
-                            <div style={{ fontWeight: 600, fontSize: 12.5, color: isDone ? "#9CA3AF" : "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{display}</div>
-                            {detail && cleaned && detail !== a.title && <div style={{ fontSize: 11.5, color: "#9CA3AF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>{detail}</div>}
-                          </>
-                        );
-                      })()}
-                    </td>
-                  )}
-
-                  {/* Status */}
-                  {isColVisible("status") && (
-                    <td style={{ padding: "10px 14px" }}>
-                      {isOverdue
-                        ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: "#FEF2F2", color: "#EF4444", whiteSpace: "nowrap" }}><AlertCircle size={10} strokeWidth={2.2} />Overdue</span>
-                        : <StatusBadge status={a.status || "todo"} />}
-                    </td>
-                  )}
-
-                  {/* Date & Time */}
-                  {isColVisible("datetime") && (
-                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
-                      {dateStr
-                        ? <span style={{ fontSize: 11.5, color: "#6B7280", display: "flex", alignItems: "center", gap: 4 }}><CalendarClock size={11} />{dateStr}</span>
-                        : <span style={{ color: "#D1D5DB" }}>—</span>}
-                    </td>
-                  )}
-
-                  {/* Actions */}
-                  <td style={{ padding: "10px 14px" }}>
-                    <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                      {canEdit && !isDone && (
-                        <button onClick={() => onStatusChange(a.id, "done")} title="Mark done"
-                          style={{ padding: "3px 8px", border: "1.5px solid #D1FAE5", borderRadius: 7, background: "#ECFDF5", color: "#10B981", cursor: "pointer", fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}>
-                          <CheckCircle2 size={11} /> Done
+                      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setExpandedGroup(isExpanded ? null : group.key); }}
+                          style={{ padding: "3px 9px", border: `1.5px solid ${isExpanded ? "rgba(99,102,241,0.3)" : "#E5E7EB"}`, borderRadius: 7, background: isExpanded ? "rgba(99,102,241,0.08)" : "#FFFFFF", color: isExpanded ? "#6366F1" : "#6B7280", cursor: "pointer", fontSize: 11.5, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", fontFamily: "inherit" }}>
+                          <ChevronDown size={11} style={{ transform: isExpanded ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
+                          {isExpanded ? "Collapse" : "Timeline"}
                         </button>
-                      )}
-                      {canEdit && (
-                        <button onClick={() => onEdit(a)} title="Edit"
-                          style={{ padding: "3px 7px", border: "1.5px solid #E5E7EB", borderRadius: 7, background: "#FFFFFF", color: "#6B7280", cursor: "pointer", display: "inline-flex", alignItems: "center" }}>
-                          <Pencil size={11} />
-                        </button>
-                      )}
-                      {canDelete && (
-                        <button onClick={() => onDelete(a.id)} title="Delete"
-                          style={{ padding: "3px 7px", border: "1.5px solid #FECACA", borderRadius: 7, background: "#FEF2F2", color: "#EF4444", cursor: "pointer", display: "inline-flex", alignItems: "center" }}>
-                          <Trash2 size={11} />
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
+                      </div>
+                    </td>
+                  </tr>
+                  {isExpanded && (
+                    <tr>
+                      <td colSpan={visibleColCount} style={{ padding: 0, background: "#F8FAFF", borderBottom: "2px solid #E5E7EB" }}>
+                        <div style={{ padding: "12px 24px 16px" }}>
+                          {group.events.map((event, i) => (
+                            <ConversationEventRow key={event.id} event={event} isLast={i === group.events.length - 1} onEdit={onEdit} onDelete={onDelete} onStatusChange={onStatusChange} />
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>
@@ -2027,8 +2191,8 @@ export default function Activities() {
     return activities.filter((a) => {
       const tk = typeKey(a.type);
 
-      // Search
-      if (q && !a.title?.toLowerCase().includes(q) && !a.type?.toLowerCase().includes(q)) return false;
+      // Search (title, type, company name, contact name)
+      if (q && !a.title?.toLowerCase().includes(q) && !a.type?.toLowerCase().includes(q) && !a.lead?.company_name?.toLowerCase().includes(q) && !a.lead?.contact_name?.toLowerCase().includes(q)) return false;
 
       // Type
       if (typeFilter && tk !== typeFilter) return false;
