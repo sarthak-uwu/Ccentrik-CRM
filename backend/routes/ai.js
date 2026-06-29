@@ -39,7 +39,7 @@ const RELEASE_NOTES = [
     version: "2.4.0",
     date: "June 2026",
     highlights: [
-      "CCENTRIK AI upgraded with 11 modes: CRM Assistant, Sales Copilot, Meeting Assistant, Email Assistant, Analytics, Lead Qualification, Workflow, Release Notes, AI Recommendations, Content Generator, CRM Help",
+      "CCENTRIK ASSISTANT upgraded with 11 modes: CRM Assistant, Sales Copilot, Meeting Assistant, Email Assistant, Analytics, Lead Qualification, Workflow, Release Notes, AI Recommendations, Content Generator, CRM Help",
       "New Prompt Library — save and reuse your favorite prompts",
       "AI Insights panel in right sidebar with live pipeline stats",
       "Voice AI: continuous listening, Hindi/Hinglish support, auto-submit on 3.5s silence",
@@ -65,7 +65,7 @@ const RELEASE_NOTES = [
     version: "2.2.0",
     date: "April 2026",
     highlights: [
-      "CCENTRIK AI rebuilt from scratch with full agentic UI and streaming responses",
+      "CCENTRIK ASSISTANT rebuilt from scratch with full agentic UI and streaming responses",
       "Pipeline module with Kanban view and drag-and-drop stage updates",
       "Deal detail panel with activity timeline",
       "Lead-to-deal conversion flow",
@@ -540,14 +540,14 @@ The user has the **${pageContext.module}** page open right now. When they say "h
 
   const aiModeSection = isAIModule
     ? `
-━━━ CCENTRIK AI MODE ━━━
+━━━ CCENTRIK ASSISTANT MODE ━━━
 Mode: ${pageContext.mode || "CRM Assistant"}
 ${pageContext.modeHint || "Help the user with their CRM."}
 Response Language: Always respond in ${pageContext.language || "English"}.
 ━━━━━━━━━━━━━━━━━━━━━━━`
     : "";
 
-  return `You are CCENTRIK AI — the intelligent enterprise AI agent inside CCENTRIK CRM, built for the Indian sales market.
+  return `You are CCENTRIK ASSISTANT — the intelligent enterprise AI agent inside CCENTRIK CRM, built for the Indian sales market.
 
 USER: ${profile.full_name} | Role: ${roleLabel} | ${date}
 ${pageSection}${aiModeSection}
@@ -735,7 +735,7 @@ router.post("/chat", authenticate, async (req, res) => {
     res.write("data: [DONE]\n\n");
     res.end();
   } catch (err) {
-    console.error("CCENTRIK AI agent error:", err.message);
+    console.error("CCENTRIK ASSISTANT agent error:", err.message);
     const userMsg = /rate.limit|429|quota/i.test(err.message)
       ? "Rate limit reached. Please wait a moment and try again."
       : err.message;

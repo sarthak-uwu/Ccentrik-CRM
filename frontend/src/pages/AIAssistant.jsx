@@ -404,7 +404,7 @@ function MessageBubble({ msg, isMine, onCopy, onLike, onDislike, onRegenerate, o
       <div style={{ maxWidth: "78%", display: "flex", flexDirection: "column", gap: 3, alignItems: isMine ? "flex-end" : "flex-start" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 11.5, fontWeight: 700, color: isMine ? "var(--text-2)" : "#A78BFA" }}>
-            {isMine ? "You" : "CCENTRIK AI"}
+            {isMine ? "You" : "CCENTRIK ASSISTANT"}
           </span>
           <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
             {msg.ts ? format(new Date(msg.ts), "h:mm a") : ""}
@@ -607,7 +607,7 @@ function WelcomeScreen({ selectedLang, onSelectLang, onStart }) {
         }}
       >
         <Sparkles size={16} />
-        Start Chatting with CCENTRIK AI
+        Start Chatting with CCENTRIK ASSISTANT
         <ChevronRight size={16} />
       </motion.button>
 
@@ -617,7 +617,7 @@ function WelcomeScreen({ selectedLang, onSelectLang, onStart }) {
         transition={{ delay: 0.65 }}
         style={{ marginTop: 20, fontSize: 11.5, color: "var(--text-muted)", textAlign: "center" }}
       >
-        Powered by CCENTRIK AI · Enterprise CRM Intelligence · 11 AI Modes
+        Powered by CCENTRIK ASSISTANT · Enterprise CRM Intelligence · 11 AI Modes
       </motion.p>
     </motion.div>
   );
@@ -868,17 +868,17 @@ export default function AIAssistant() {
   // ── Mode greeting ──────────────────────────────────────────────────────────
   const getModeGreeting = useCallback((mode, lang) => {
     const greetings = {
-      crm:             `I'm your **CRM Assistant** — CCENTRIK AI. I have live access to your leads, deals, tasks, meetings, and pipeline. What would you like to explore today?`,
-      sales:           `I'm your **Sales Copilot** — CCENTRIK AI. I write emails, craft proposals, coach on objections, and help you close deals faster. What do you need?`,
-      meeting:         `I'm your **Meeting Assistant** — CCENTRIK AI. I create agendas, meeting summaries, MOM, and follow-up tasks. I can also check your upcoming meetings. How can I help?`,
-      email:           `I'm your **Email Assistant** — CCENTRIK AI. I write cold emails, warm follow-ups, proposals, and more. I can also rewrite, shorten, translate, or improve any email. What email should I draft?`,
-      analytics:       `I'm your **Analytics Assistant** — CCENTRIK AI. I analyze your CRM data, forecast trends, surface insights, and explain performance metrics. What would you like to understand?`,
-      lead_ai:         `I'm your **Lead Qualification AI** — CCENTRIK AI. I score leads, predict conversion probability, and suggest the best next actions. Which leads should I analyze?`,
-      content_gen:     `I'm your **Content Generator** — CCENTRIK AI. I create blogs, LinkedIn posts, WhatsApp messages, SMS templates, call scripts, landing pages, and more. What content should I generate?`,
-      recommendations: `I'm your **AI Recommendations** engine — CCENTRIK AI. Let me analyze your CRM data and surface your top priorities, risks, and next best actions right now.`,
-      workflow:        `I'm your **Workflow Assistant** — CCENTRIK AI. I explain CRM processes, guide new users, and suggest automations. Where do you need help?`,
-      help:            `I'm your **CRM Help Guide** — CCENTRIK AI. I can explain every feature of CCENTRIK CRM in simple language and guide you step-by-step. What do you want to learn?`,
-      release_notes:   `I'm your **Release Notes Assistant** — CCENTRIK AI. Ask me about the latest updates, new features, version history, or what's coming next in CCENTRIK CRM!`,
+      crm:             `I'm your **CRM Assistant** — CCENTRIK ASSISTANT. I have live access to your leads, deals, tasks, meetings, and pipeline. What would you like to explore today?`,
+      sales:           `I'm your **Sales Copilot** — CCENTRIK ASSISTANT. I write emails, craft proposals, coach on objections, and help you close deals faster. What do you need?`,
+      meeting:         `I'm your **Meeting Assistant** — CCENTRIK ASSISTANT. I create agendas, meeting summaries, MOM, and follow-up tasks. I can also check your upcoming meetings. How can I help?`,
+      email:           `I'm your **Email Assistant** — CCENTRIK ASSISTANT. I write cold emails, warm follow-ups, proposals, and more. I can also rewrite, shorten, translate, or improve any email. What email should I draft?`,
+      analytics:       `I'm your **Analytics Assistant** — CCENTRIK ASSISTANT. I analyze your CRM data, forecast trends, surface insights, and explain performance metrics. What would you like to understand?`,
+      lead_ai:         `I'm your **Lead Qualification AI** — CCENTRIK ASSISTANT. I score leads, predict conversion probability, and suggest the best next actions. Which leads should I analyze?`,
+      content_gen:     `I'm your **Content Generator** — CCENTRIK ASSISTANT. I create blogs, LinkedIn posts, WhatsApp messages, SMS templates, call scripts, landing pages, and more. What content should I generate?`,
+      recommendations: `I'm your **AI Recommendations** engine — CCENTRIK ASSISTANT. Let me analyze your CRM data and surface your top priorities, risks, and next best actions right now.`,
+      workflow:        `I'm your **Workflow Assistant** — CCENTRIK ASSISTANT. I explain CRM processes, guide new users, and suggest automations. Where do you need help?`,
+      help:            `I'm your **CRM Help Guide** — CCENTRIK ASSISTANT. I can explain every feature of CCENTRIK CRM in simple language and guide you step-by-step. What do you want to learn?`,
+      release_notes:   `I'm your **Release Notes Assistant** — CCENTRIK ASSISTANT. Ask me about the latest updates, new features, version history, or what's coming next in CCENTRIK CRM!`,
     };
     const base = greetings[mode.key] || "How can I help you today?";
     const langNote = lang.label !== "English" ? `\n\n*I'll respond in **${lang.label}** as selected.*` : "";
@@ -1128,7 +1128,7 @@ export default function AIAssistant() {
     setMessages(prev => [...prev, userMsg]);
     setLoading(true);
     setAiState("thinking");
-    setThinkingStatus("Connecting to CCENTRIK AI...");
+    setThinkingStatus("Connecting to CCENTRIK ASSISTANT...");
 
     const streamId = `a-${Date.now()}`;
     setMessages(prev => [...prev, { id: streamId, role: "assistant", content: "", ts: new Date(), streaming: true }]);
@@ -1193,7 +1193,7 @@ export default function AIAssistant() {
       if (aiDocumentService) {
         toast.loading(`Indexing "${file.name}"…`, { id: "file-toast" });
         await aiDocumentService.upload(file, () => {});
-        toast.success(`"${file.name}" indexed — CCENTRIK AI can now answer questions from it`, { id: "file-toast" });
+        toast.success(`"${file.name}" indexed — CCENTRIK ASSISTANT can now answer questions from it`, { id: "file-toast" });
         setMessages(prev => [...prev, {
           id: `sys-${Date.now()}`,
           role: "system",
@@ -1281,7 +1281,7 @@ export default function AIAssistant() {
   const exportChat = () => {
     const text = messages
       .filter(m => m.content)
-      .map(m => `[${m.role === "user" ? "You" : "CCENTRIK AI"}] ${m.content}`)
+      .map(m => `[${m.role === "user" ? "You" : "CCENTRIK ASSISTANT"}] ${m.content}`)
       .join("\n\n");
     const blob = new Blob([text], { type: "text/plain" });
     const a = document.createElement("a");
@@ -1339,7 +1339,7 @@ export default function AIAssistant() {
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <BrainOrb size={34} state={aiState} />
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.03em" }}>CCENTRIK AI</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.03em" }}>CCENTRIK ASSISTANT</div>
                   <div style={{ fontSize: 10.5, color: aiState === "idle" ? "#10B981" : "#A78BFA", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ width: 5, height: 5, borderRadius: "50%", background: aiState === "idle" ? "#10B981" : "#A78BFA", display: "inline-block" }} />
                     {aiState === "idle" ? "Online" : aiState === "thinking" ? "Thinking…" : aiState === "listening" ? "Listening…" : "Speaking…"}
@@ -1442,7 +1442,7 @@ export default function AIAssistant() {
             <BrainOrb size={36} state={aiState} />
             <div style={{ minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 14.5, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em" }}>CCENTRIK AI</span>
+                <span style={{ fontSize: 14.5, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em" }}>CCENTRIK ASSISTANT</span>
                 <span style={{
                   fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99,
                   background: `${currentMode.color}15`,
@@ -1538,7 +1538,7 @@ export default function AIAssistant() {
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, textAlign: "center", padding: "60px 20px", color: "var(--text-muted)" }}>
               <BrainOrb size={64} state="idle" />
               <div>
-                <div style={{ fontSize: 17, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>Hi, I'm CCENTRIK AI</div>
+                <div style={{ fontSize: 17, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>Hi, I'm CCENTRIK ASSISTANT</div>
                 <div style={{ fontSize: 13.5, lineHeight: 1.6, maxWidth: 420 }}>
                   I can help you manage your CRM, understand data, generate emails,<br />
                   analyze leads, answer questions, and assist with daily work.
@@ -1590,7 +1590,7 @@ export default function AIAssistant() {
                 <Sparkles size={14} style={{ color: "#fff" }} />
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 2 }}>
-                <span style={{ fontSize: 11.5, fontWeight: 700, color: "#A78BFA" }}>CCENTRIK AI</span>
+                <span style={{ fontSize: 11.5, fontWeight: 700, color: "#A78BFA" }}>CCENTRIK ASSISTANT</span>
                 <div style={{
                   padding: "10px 14px", borderRadius: "4px 18px 18px 18px",
                   background: "var(--surface)", border: "1px solid var(--border)",
@@ -1685,7 +1685,7 @@ export default function AIAssistant() {
                 e.target.style.height = Math.min(e.target.scrollHeight, 130) + "px";
               }}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-              placeholder={`Ask CCENTRIK AI in ${selectedLang.label}…`}
+              placeholder={`Ask CCENTRIK ASSISTANT in ${selectedLang.label}…`}
               disabled={loading && !messages.some(m => m.streaming)}
               rows={1}
               style={{
@@ -1725,7 +1725,7 @@ export default function AIAssistant() {
             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
               <Sparkles size={9} style={{ color: "var(--text-muted)" }} />
               <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                Powered by <strong style={{ color: "var(--accent)" }}>CCENTRIK AI</strong>
+                Powered by <strong style={{ color: "var(--accent)" }}>CCENTRIK ASSISTANT</strong>
                 {!isMuted && <span style={{ color: "#10B981" }}> · Voice ON</span>}
                 {" · "}Actions require approval
               </span>

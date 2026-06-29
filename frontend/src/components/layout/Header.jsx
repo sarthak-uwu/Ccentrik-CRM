@@ -371,7 +371,7 @@ export default function Header({ onMobileMenu }) {
       {/* ── Ccentrik AI Brain Icon ── */}
       <motion.button
         onClick={location.pathname === "/ai-assistant" ? undefined : togglePanel}
-        title={location.pathname === "/ai-assistant" ? "CCENTRIK AI" : ariaOpen ? "Close CCENTRIK AI Panel" : "Open CCENTRIK AI Agent"}
+        title={location.pathname === "/ai-assistant" ? "CCENTRIK ASSISTANT" : ariaOpen ? "Close CCENTRIK ASSISTANT Panel" : "Open CCENTRIK ASSISTANT Agent"}
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.9 }}
         style={{
