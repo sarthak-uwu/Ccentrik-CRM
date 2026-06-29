@@ -811,11 +811,9 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
                 return (
                   <>
                     <SectionHead label="Services" />
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4, marginBottom: 6 }}>
+                    <div style={{ marginTop: 4, marginBottom: 6 }}>
                       {svcs.map((svc) => (
-                        <span key={svc} style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 99, background: "rgba(37,99,235,0.08)", color: "#3B82F6", border: "1px solid rgba(37,99,235,0.2)" }}>
-                          {svc}
-                        </span>
+                        <div key={svc} style={{ fontSize: 13, color: "var(--text-main)", padding: "2px 0" }}>• {svc}</div>
                       ))}
                     </div>
                   </>

@@ -21,28 +21,6 @@ jobs:
             exit 1
           fi
 
-      - name: Trigger inactivity alert cron (9:00 AM IST)
-        run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            https://backend-gamma-nine-32.vercel.app/api/reports/inactivity-cron)
-          echo "Inactivity alert response status: $STATUS"
-          if [ "$STATUS" != "200" ]; then
-            echo "Inactivity alert cron returned non-200 status: $STATUS"
-            exit 1
-          fi
-
-      - name: Trigger role-based inactivity cron (9:00 AM IST)
-        run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            https://backend-gamma-nine-32.vercel.app/api/reports/role-inactivity-cron)
-          echo "Role inactivity cron response status: $STATUS"
-          if [ "$STATUS" != "200" ]; then
-            echo "Role inactivity cron returned non-200 status: $STATUS"
-            exit 1
-          fi
-
       - name: Trigger role-based daily DSR cron (9:00 PM IST)
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
