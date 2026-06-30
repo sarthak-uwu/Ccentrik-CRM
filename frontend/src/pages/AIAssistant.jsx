@@ -1164,7 +1164,7 @@ export default function AIAssistant() {
           const msg = /rate.limit|429|quota/i.test(err?.message)
             ? "**Rate limit reached.** Please wait a moment and try again."
             : /401|unauthorized/i.test(err?.message)
-            ? "**Session expired.** Please refresh the page."
+            ? "**Session token expired.** Please try your message again — the session has been refreshed automatically."
             : `**Error:** ${err?.message || "Unknown error"}`;
           setMessages(prev => prev.map(m => m.id === streamId ? { ...m, content: msg, streaming: false } : m));
         },

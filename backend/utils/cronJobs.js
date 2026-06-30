@@ -105,22 +105,16 @@ function startCronJobs() {
     }
   });
 
-  // Daily at 15:30 UTC (9:00 PM IST) — automated DSR to Super Admin
-  cron.schedule("30 15 * * *", async () => {
-    console.log("[CRON] Running daily DSR report...");
-    try {
-      await sendAutomatedDSR();
-    } catch (err) {
-      console.error("[CRON] DSR report error:", err.message);
-    }
-  });
+  // NOTE: Automated DSR is handled exclusively by the /api/reports/auto-dsr-cron HTTP endpoint
+  // (called by GitHub Actions at 14:10 UTC / 7:40 PM IST).
+  // DO NOT re-enable the node-cron DSR here — it would cause duplicate emails.
 
   // Meeting reminders — runs every 5 minutes to catch 15-min, 1-hour, and 24-hour windows
   cron.schedule("*/5 * * * *", async () => {
     try { await sendMeetingReminders(); } catch (err) { console.error("[CRON] Meeting reminders error:", err.message); }
   });
 
-  console.log("[CRON] Scheduled: follow-up reminders (9 AM UTC), stale leads alert (8 AM UTC), security report (14:30 UTC / 8 PM IST), DSR report (14:30 UTC / 8 PM IST), meeting reminders (every 5 min)");
+  console.log("[CRON] Scheduled: follow-up reminders (9 AM UTC), stale leads alert (8 AM UTC), security report (14:30 UTC / 8 PM IST), meeting reminders (every 5 min). DSR → HTTP endpoint /auto-dsr-cron at 14:10 UTC / 7:40 PM IST.");
 }
 
 async function sendDailySecurityReport() {

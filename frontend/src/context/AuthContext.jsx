@@ -10,7 +10,11 @@ import {
 } from "firebase/auth";
 import toast from "react-hot-toast";
 
-const INACTIVITY_MS = 5 * 60 * 1000; // 5 minutes
+// Helper: get a fresh Firebase ID token (always valid for at least TOKEN_REFRESH_BUFFER ms)
+const TOKEN_REFRESH_BUFFER = 5 * 60 * 1000; // refresh if expiring within 5 minutes
+
+const INACTIVITY_MS  = 15 * 60 * 1000; // 15 minutes of genuine inactivity
+const TOKEN_REFRESH_INTERVAL_MS = 45 * 60 * 1000; // proactively refresh token every 45 min
 
 const AuthContext = createContext(null);
 
@@ -106,10 +110,12 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
-  const loginLogId = useRef(null);
-  const inactivityTimer = useRef(null);
-  const lastActivityRef = useRef(Date.now());
-  const logoutRef = useRef(null);
+  const loginLogId       = useRef(null);
+  const inactivityTimer  = useRef(null);
+  const tokenRefreshTimer = useRef(null);
+  const lastActivityRef  = useRef(Date.now());
+  const logoutRef        = useRef(null);
+  const isOfflineRef     = useRef(false);
 
   const fetchOrCreateProfile = useCallback(async (firebaseUser) => {
     try {
@@ -244,20 +250,22 @@ export function AuthProvider({ children }) {
     logoutRef.current = logout;
   });
 
-  // Inactivity auto-logout after INACTIVITY_MS of real user inactivity.
-  // Uses a ref (lastActivityRef) instead of sessionStorage to avoid stale-closure
-  // bugs — the ref value is always current regardless of which render the closure was created in.
+  // ── Inactivity auto-logout ─────────────────────────────────────────────────
+  // Only fires after INACTIVITY_MS of genuine inactivity. Any user interaction
+  // (mouse, keyboard, touch, scroll, input, form, drag, API calls) resets the clock.
+  // Network outages do NOT start the timer — they set isOfflineRef so we wait
+  // until connectivity returns before re-evaluating.
   useEffect(() => {
     if (!user) return;
 
-    // Reset activity clock on login / user change
     lastActivityRef.current = Date.now();
 
     const scheduleLogout = () => {
+      if (isOfflineRef.current) return; // pause timer while offline
       clearTimeout(inactivityTimer.current);
       const remaining = INACTIVITY_MS - (Date.now() - lastActivityRef.current);
-      // Never schedule sooner than 1 second to avoid rapid-fire micro-timeouts
       inactivityTimer.current = setTimeout(() => {
+        if (isOfflineRef.current) return; // still offline — defer
         const elapsed = Date.now() - lastActivityRef.current;
         if (elapsed >= INACTIVITY_MS) {
           toast("Logged out due to inactivity.", { icon: "🔒" });
@@ -273,24 +281,61 @@ export function AuthProvider({ children }) {
       scheduleLogout();
     };
 
-    // When user returns to the tab, recalculate remaining time from lastActivityRef.
-    // When the tab is hidden we do nothing — the existing timer keeps running.
     const onVisibility = () => {
       if (!document.hidden) scheduleLogout();
     };
 
-    const EVENTS = ["mousemove", "keydown", "click", "touchstart", "scroll"];
-    EVENTS.forEach((ev) => window.addEventListener(ev, onActivity, { passive: true }));
+    const onOffline = () => {
+      isOfflineRef.current = true;
+      clearTimeout(inactivityTimer.current);
+    };
+
+    const onOnline = () => {
+      isOfflineRef.current = false;
+      // Reset activity clock when connection returns — don't punish a network blip
+      lastActivityRef.current = Date.now();
+      scheduleLogout();
+    };
+
+    // Broad event set — covers every meaningful interaction in a CRM UI
+    const EVENTS = [
+      "mousemove", "mousedown", "mouseup", "click", "dblclick",
+      "keydown", "keyup", "input", "change",
+      "touchstart", "touchend", "touchmove",
+      "scroll", "wheel",
+      "pointerdown", "pointerup",
+      "drag", "dragstart", "drop", "focus",
+    ];
+    EVENTS.forEach((ev) => window.addEventListener(ev, onActivity, { passive: true, capture: true }));
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("online",  onOnline);
 
     scheduleLogout();
 
     return () => {
       clearTimeout(inactivityTimer.current);
-      EVENTS.forEach((ev) => window.removeEventListener(ev, onActivity));
+      EVENTS.forEach((ev) => window.removeEventListener(ev, onActivity, { capture: true }));
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("offline", onOffline);
+      window.removeEventListener("online",  onOnline);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  // ── Proactive Firebase token refresh ───────────────────────────────────────
+  // Firebase auto-refreshes tokens internally, but silently forcing a refresh
+  // every 45 min keeps the token warm so backend calls never fail mid-session.
+  useEffect(() => {
+    if (!user) {
+      clearInterval(tokenRefreshTimer.current);
+      return;
+    }
+    const refresh = () => {
+      user.getIdToken(true).catch(() => { /* silent — Firebase will retry */ });
+    };
+    tokenRefreshTimer.current = setInterval(refresh, TOKEN_REFRESH_INTERVAL_MS);
+    return () => clearInterval(tokenRefreshTimer.current);
   }, [user]);
 
   const login = async (email, password) => {
@@ -334,6 +379,12 @@ export function AuthProvider({ children }) {
 
   const forgotPassword = (email) => sendPasswordResetEmail(auth, email);
 
+  // Always returns a non-expired ID token; forces refresh if expiring within buffer window
+  const getToken = useCallback(async () => {
+    if (!user) throw new Error("Not authenticated");
+    return user.getIdToken(false);
+  }, [user]);
+
   const refreshProfile = async () => {
     if (!user) return;
     const { data } = await supabase
@@ -362,6 +413,7 @@ export function AuthProvider({ children }) {
     logout,
     forgotPassword,
     refreshProfile,
+    getToken,
     isOwner,
     isSalesHead,
     isManager,

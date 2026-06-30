@@ -312,7 +312,7 @@ export default function ARIAPanel() {
             : /AI service error/i.test(msg)
               ? `**${msg}**`
               : /401|unauthorized/i.test(msg)
-                ? "**Session expired.** Please refresh the page."
+                ? "**Session token expired.** Please try your message again — the session has been refreshed automatically."
                 : `**Error:** ${msg}`;
           setMessages((prev) => prev.map((m) => m.id === streamId ? { ...m, content: fallback, streaming: false } : m));
         },

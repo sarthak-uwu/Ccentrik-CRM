@@ -173,17 +173,37 @@ router.put("/:id", authenticate, async (req, res) => {
 
 // DELETE /api/activities/:id — only owner / sales_head can delete
 router.delete("/:id", authenticate, async (req, res) => {
-  const canDelete = req.profile.role === "owner" || req.profile.role === "sales_head";
-  if (!canDelete) {
+  const { role, id: deleterId, full_name: deleterName } = req.profile;
+
+  if (role !== "owner" && role !== "sales_head") {
     return res.status(403).json({ error: "Only Super Admin and Sales Head can delete activities." });
   }
 
   const { data: existing } = await supabase
-    .from("activities").select("id").eq("id", req.params.id).single();
+    .from("activities")
+    .select("id, title, type, related_type, related_id, lead_id, deal_id, created_by")
+    .eq("id", req.params.id)
+    .single();
   if (!existing) return res.status(404).json({ error: "Activity not found" });
 
   const { error } = await supabase.from("activities").delete().eq("id", req.params.id);
   if (error) return res.status(400).json({ error: error.message });
+
+  // Non-blocking audit log — fails silently if table doesn't exist yet
+  supabase.from("activity_deletion_logs").insert({
+    activity_id:   existing.id,
+    activity_type: existing.type || null,
+    activity_title: existing.title || null,
+    related_type:  existing.related_type || null,
+    related_id:    existing.related_id   || null,
+    lead_id:       existing.lead_id      || null,
+    deal_id:       existing.deal_id      || null,
+    deleted_by:    deleterId,
+    deleter_name:  deleterName || null,
+    deleter_role:  role,
+    deleted_at:    new Date().toISOString(),
+  }).then(() => {});
+
   res.json({ success: true });
 });
 
