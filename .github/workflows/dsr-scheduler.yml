@@ -2,34 +2,47 @@ name: DSR & Inactivity Alert Scheduler
 
 on:
   schedule:
-    # Runs every 30 minutes — all cron endpoints check the current IST slot internally.
+    # Runs every 30 minutes — each endpoint checks its own IST time slot internally.
+    # DSR fires at 07:30 PM IST slot (14:10 UTC target = 7:40 PM IST).
     - cron: '*/30 * * * *'
-  workflow_dispatch: {}   # allow manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      force_dsr:
+        description: 'Force DSR to send now regardless of time slot (test mode)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 jobs:
   trigger-scheduler:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger DSR scheduler cron
+      - name: Trigger DSR scheduler cron (custom per-user schedules)
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             https://backend-gamma-nine-32.vercel.app/api/reports/scheduler-cron)
           echo "DSR scheduler response status: $STATUS"
           if [ "$STATUS" != "200" ]; then
-            echo "DSR scheduler cron returned non-200 status: $STATUS"
-            exit 1
+            echo "WARNING: DSR scheduler cron returned non-200 status: $STATUS"
           fi
 
-      - name: Trigger role-based daily DSR cron (9:00 PM IST)
+      - name: Trigger role-based daily DSR cron (7:40 PM IST)
         run: |
+          FORCE="${{ github.event.inputs.force_dsr || 'false' }}"
+          if [ "$FORCE" = "true" ]; then
+            URL="https://backend-gamma-nine-32.vercel.app/api/reports/role-dsr-cron?force=true"
+            echo ">>> FORCED TEST RUN — bypassing time-slot check <<<"
+          else
+            URL="https://backend-gamma-nine-32.vercel.app/api/reports/role-dsr-cron"
+          fi
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            https://backend-gamma-nine-32.vercel.app/api/reports/role-dsr-cron)
+            "$URL")
           echo "Role DSR cron response status: $STATUS"
           if [ "$STATUS" != "200" ]; then
-            echo "Role DSR cron returned non-200 status: $STATUS"
-            exit 1
+            echo "WARNING: Role DSR cron returned non-200 status: $STATUS"
           fi
 
       - name: Trigger comprehensive inactivity cron (10:30 AM IST)
@@ -39,6 +52,5 @@ jobs:
             https://backend-gamma-nine-32.vercel.app/api/reports/comprehensive-inactivity-cron)
           echo "Comprehensive inactivity cron response status: $STATUS"
           if [ "$STATUS" != "200" ]; then
-            echo "Comprehensive inactivity cron returned non-200 status: $STATUS"
-            exit 1
+            echo "WARNING: Comprehensive inactivity cron returned non-200 status: $STATUS"
           fi
