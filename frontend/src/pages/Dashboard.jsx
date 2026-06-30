@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -145,8 +146,13 @@ function useWidgetPrefs(userId, defaultOrder, defaultCollapsed = []) {
   const orderKey     = `dash_order_${userId}`;
   const colKey       = `dash_collapsed_${userId}`;
   const [order, setOrder_]         = useState(() => {
-    try { const s = localStorage.getItem(orderKey); return s ? JSON.parse(s) : defaultOrder; }
-    catch { return defaultOrder; }
+    try {
+      const s = localStorage.getItem(orderKey);
+      if (!s) return defaultOrder;
+      const saved = JSON.parse(s);
+      const newWidgets = defaultOrder.filter(w => !saved.includes(w));
+      return newWidgets.length ? [...saved, ...newWidgets] : saved;
+    } catch { return defaultOrder; }
   });
   const [collapsed, setCollapsed_] = useState(() => {
     try { const s = localStorage.getItem(colKey); return s ? new Set(JSON.parse(s)) : new Set(defaultCollapsed); }
@@ -1421,6 +1427,246 @@ function DSRSnapshotWidget({ userId, navigate, dragHandleProps, collapsed, onTog
   );
 }
 
+/* ─── Inactive Lead Alerts Widget ──────────────────────────────────────── */
+function InactiveLeadAlertsWidget({ navigate, dragHandleProps, collapsed, onToggle }) {
+  const { profile, getToken, isOwner, isSalesHead, isFieldUser } = useAuth();
+  const [assignModal, setAssignModal] = useState(null); // { leadId, leadName }
+  const [assignTo,    setAssignTo]    = useState("");
+  const [assigning,   setAssigning]   = useState(false);
+
+  const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
+
+  const { data: inactiveData, isLoading, refetch } = useQuery({
+    queryKey: ["inactive-lead-summary", profile?.id],
+    queryFn: async () => {
+      const token = await getToken();
+      const res = await fetch(`${API}/api/leads/inactive-summary`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to load inactive leads");
+      return res.json();
+    },
+    enabled: !!profile?.id,
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 10 * 60 * 1000,
+  });
+
+  const { data: teamData } = useQuery({
+    queryKey: ["team-all"],
+    queryFn: () => teamService.getAll(),
+    enabled: !!(isOwner || isSalesHead),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const counts        = inactiveData?.counts        || { warning7: 0, warning25: 0, autoUnassigned: 0 };
+  const myLeads       = inactiveData?.myLeads        || [];
+  const unassignedLeads = inactiveData?.unassignedLeads || [];
+  const teamWarnings  = inactiveData?.teamWarnings   || [];
+  const totalIssues   = counts.warning7 + counts.warning25 + counts.autoUnassigned;
+  const isManager     = !isFieldUser && !(isOwner || isSalesHead);
+
+  const assignableMembers = (teamData?.data || []).filter(m =>
+    ["employee", "inside_sales", "sales_manager"].includes(m.role)
+  );
+
+  const handleAssign = async () => {
+    if (!assignTo || !assignModal) return;
+    setAssigning(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API}/api/leads/${assignModal.leadId}/reassign`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ assigned_to: assignTo }),
+      });
+      if (!res.ok) throw new Error("Reassignment failed");
+      toast.success("Lead reassigned");
+      setAssignModal(null);
+      setAssignTo("");
+      refetch();
+    } catch (err) {
+      toast.error(err.message || "Failed to reassign");
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  const daysAgo = (ts) => ts ? Math.floor((Date.now() - new Date(ts).getTime()) / 86400000) : null;
+
+  const StatusBadge = ({ status, lastTs }) => {
+    const d     = daysAgo(lastTs);
+    const text  = d !== null ? `${d}d inactive` : "No activity";
+    const color = status === "warning_25" ? "#F97316" : "#F59E0B";
+    const bg    = status === "warning_25" ? "#FFF7ED" : "#FFFBEB";
+    return (
+      <span style={{ fontSize: 10.5, fontWeight: 700, color, background: bg, padding: "2px 8px", borderRadius: 99, flexShrink: 0 }}>
+        {text}
+      </span>
+    );
+  };
+
+  return (
+    <Widget
+      id="inactive-leads"
+      title="Inactive Lead Alerts"
+      sub={totalIssues > 0 ? `${totalIssues} lead${totalIssues !== 1 ? "s" : ""} need attention` : "All assigned leads are active"}
+      icon={AlertTriangle}
+      iconColor="#F59E0B"
+      collapsed={collapsed}
+      onToggle={onToggle}
+      dragHandleProps={dragHandleProps}
+      noPad
+    >
+      {isLoading ? (
+        <div style={{ padding: "24px 16px", textAlign: "center", fontSize: 12.5, color: "var(--text-muted)" }}>Loading...</div>
+      ) : (
+        <div style={{ padding: "12px 16px" }}>
+          {/* ── Stat pills ── */}
+          <div style={{ display: "flex", gap: 8, marginBottom: totalIssues > 0 ? 14 : 0 }}>
+            {[
+              { label: "7d Reminder",     value: counts.warning7,       color: "#F59E0B" },
+              { label: "25d Warning",     value: counts.warning25,      color: "#F97316" },
+              { label: "Auto-Unassigned", value: counts.autoUnassigned, color: "#EF4444" },
+            ].map(({ label, value, color }) => (
+              <div key={label} style={{ flex: 1, background: `${color}10`, border: `1px solid ${color}25`, borderRadius: 10, padding: "10px 8px", textAlign: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
+                <div style={{ fontSize: 9.5, color: "var(--text-muted)", fontWeight: 600, marginTop: 3, lineHeight: 1.3 }}>{label}</div>
+              </div>
+            ))}
+          </div>
+
+          {totalIssues === 0 ? (
+            <div style={{ textAlign: "center", padding: "10px 0 4px", fontSize: 12, color: "var(--text-muted)" }}>
+              No inactive lead alerts. Great work!
+            </div>
+          ) : (
+            <>
+              {/* Employee view: my inactive leads */}
+              {isFieldUser && myLeads.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>My Inactive Leads</div>
+                  {myLeads.slice(0, 5).map(lead => (
+                    <div key={lead.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "1px solid var(--border)" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {lead.company_name || lead.contact_name || "—"}
+                        </div>
+                        {lead.company_name && lead.contact_name && (
+                          <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{lead.contact_name}</div>
+                        )}
+                      </div>
+                      <StatusBadge status={lead.inactivity_status} lastTs={lead.last_activity_at} />
+                      <button
+                        onClick={() => navigate(`/leads?id=${lead.id}`)}
+                        style={{ background: "none", border: "1px solid var(--border)", borderRadius: 7, padding: "3px 9px", cursor: "pointer", fontSize: 11, color: "var(--text-2)", fontFamily: "inherit" }}
+                      >
+                        View
+                      </button>
+                    </div>
+                  ))}
+                  {myLeads.length > 5 && (
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginTop: 8 }}>
+                      +{myLeads.length - 5} more —{" "}
+                      <span onClick={() => navigate("/leads")} style={{ color: "var(--accent)", cursor: "pointer" }}>view all</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Owner/SalesHead view: auto-unassigned leads */}
+              {(isOwner || isSalesHead) && unassignedLeads.length > 0 && (
+                <div style={{ marginTop: 0 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "#EF4444", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Auto-Unassigned — Reassign Now</div>
+                  {unassignedLeads.slice(0, 6).map(lead => (
+                    <div key={lead.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "1px solid var(--border)" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {lead.company_name || lead.contact_name || "—"}
+                        </div>
+                        <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+                          Prev: {lead.prev_profile?.full_name || "Unknown"} · {lead.last_activity_at ? `${daysAgo(lead.last_activity_at)}d inactive` : "No activity"}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => { setAssignModal({ leadId: lead.id, leadName: lead.company_name || lead.contact_name || "Lead" }); setAssignTo(""); }}
+                        style={{ background: "#4F46E5", border: "none", borderRadius: 7, padding: "4px 11px", cursor: "pointer", fontSize: 11.5, color: "#fff", fontFamily: "inherit", fontWeight: 600, flexShrink: 0 }}
+                      >
+                        Assign
+                      </button>
+                    </div>
+                  ))}
+                  {unassignedLeads.length > 6 && (
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginTop: 8 }}>
+                      +{unassignedLeads.length - 6} more unassigned leads
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Manager view: team warnings summary */}
+              {isManager && teamWarnings.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Team Inactive Leads</div>
+                  {teamWarnings.slice(0, 6).map(lead => (
+                    <div key={lead.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "1px solid var(--border)" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {lead.company_name || lead.contact_name || "—"}
+                        </div>
+                        <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{lead.assigned_profile?.full_name || "Unassigned"}</div>
+                      </div>
+                      <StatusBadge status={lead.inactivity_status} lastTs={lead.last_activity_at} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Reassign modal — portalled to avoid overflow:hidden clipping ── */}
+      {assignModal && createPortal(
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}
+          onClick={(e) => e.target === e.currentTarget && setAssignModal(null)}
+        >
+          <div style={{ background: "var(--surface)", borderRadius: 14, padding: 24, width: 340, border: "1px solid var(--border)", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: "var(--text)", marginBottom: 4 }}>Reassign Lead</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>{assignModal.leadName}</div>
+            <select
+              value={assignTo}
+              onChange={e => setAssignTo(e.target.value)}
+              style={{ width: "100%", padding: "9px 12px", border: "1px solid var(--border)", borderRadius: 9, fontSize: 13, background: "var(--surface)", color: "var(--text)", fontFamily: "inherit", marginBottom: 16 }}
+            >
+              <option value="">Select employee...</option>
+              {assignableMembers.map(m => (
+                <option key={m.id} value={m.id}>{m.full_name || m.email}</option>
+              ))}
+            </select>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setAssignModal(null)}
+                style={{ padding: "8px 16px", border: "1px solid var(--border)", borderRadius: 8, background: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: "var(--text-2)" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAssign}
+                disabled={!assignTo || assigning}
+                style={{ padding: "8px 16px", border: "none", borderRadius: 8, background: "#4F46E5", color: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, opacity: (!assignTo || assigning) ? 0.6 : 1 }}
+              >
+                {assigning ? "Assigning..." : "Assign Lead"}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </Widget>
+  );
+}
+
 /* ─── Quick Add Modal ──────────────────────────────────────────────────── */
 function QuickAddModal({ type, onClose, profile, qc, navigate }) {
   const { symbol } = useCurrency();
@@ -1495,9 +1741,9 @@ function QuickAddModal({ type, onClose, profile, qc, navigate }) {
 
 /* ─── Widget definitions ─────────────────────────────────────────────────── */
 // "my-activities" removed — OrgActivitiesCenter above the grid already covers it
-const OWNER_WIDGETS    = ["pipeline","meetings","stale-deals","team-feed","insights","leaderboard","revenue","dsr-snapshot"];
-const MANAGER_WIDGETS  = ["pipeline","meetings","stale-deals","team-feed","insights","leaderboard","revenue","dsr-snapshot"];
-const FIELD_WIDGETS    = ["dsr-snapshot","meetings","pipeline","insights"];
+const OWNER_WIDGETS    = ["pipeline","meetings","stale-deals","team-feed","insights","leaderboard","revenue","dsr-snapshot","inactive-leads"];
+const MANAGER_WIDGETS  = ["pipeline","meetings","stale-deals","team-feed","insights","leaderboard","revenue","dsr-snapshot","inactive-leads"];
+const FIELD_WIDGETS    = ["dsr-snapshot","meetings","pipeline","insights","inactive-leads"];
 
 /* ─── Main Dashboard ──────────────────────────────────────────────────── */
 export default function Dashboard() {
@@ -1737,6 +1983,8 @@ export default function Dashboard() {
         return isSalesHead ? <RevenueWidget {...props} revenueData={revenueData} monthlyLeads={monthlyLeads} symbol={symbol} /> : null;
       case "dsr-snapshot":
         return <DSRSnapshotWidget {...props} userId={profile?.id} />;
+      case "inactive-leads":
+        return <InactiveLeadAlertsWidget {...props} />;
       default: return null;
     }
   };

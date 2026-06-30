@@ -138,6 +138,76 @@ router.post("/bulk", authenticate, authorize(...CAN_EDIT), async (req, res) => {
   res.status(201).json({ inserted: data.length, data });
 });
 
+// GET /api/leads/inactive-summary
+// Role-scoped inactivity data for the dashboard widget.
+router.get("/inactive-summary", authenticate, async (req, res) => {
+  try {
+    const { role, id: userId } = req.profile;
+
+    let scopeIds = null;
+    if (role === "sales_manager") {
+      const { data: reports } = await supabase.from("profiles").select("id").eq("manager_id", userId);
+      scopeIds = [userId, ...(reports || []).map(r => r.id)];
+    } else if (!["owner", "sales_head"].includes(role)) {
+      scopeIds = [userId];
+    }
+
+    let q = supabase
+      .from("leads")
+      .select("id, company_name, contact_name, assigned_to, stage, last_activity_at, inactivity_status, previous_assigned_to, unassigned_at")
+      .not("stage", "in", '("won","lost","converted","pipeline")')
+      .order("last_activity_at", { ascending: true, nullsFirst: true });
+
+    if (scopeIds) q = q.in("assigned_to", scopeIds);
+
+    const { data: leads, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+
+    if (!leads?.length) {
+      return res.json({ counts: { warning7: 0, warning25: 0, autoUnassigned: 0 }, myLeads: [], unassignedLeads: [], teamWarnings: [] });
+    }
+
+    const profileIds = [...new Set([
+      ...leads.map(l => l.assigned_to).filter(Boolean),
+      ...leads.map(l => l.previous_assigned_to).filter(Boolean),
+    ])];
+
+    const { data: profiles } = profileIds.length
+      ? await supabase.from("profiles").select("id, full_name, email").in("id", profileIds)
+      : { data: [] };
+
+    const profileMap = Object.fromEntries((profiles || []).map(p => [p.id, p]));
+    const enriched   = leads.map(l => ({
+      ...l,
+      assigned_profile: l.assigned_to ? profileMap[l.assigned_to] : null,
+      prev_profile:     l.previous_assigned_to ? profileMap[l.previous_assigned_to] : null,
+    }));
+
+    const activeLeads     = enriched.filter(l => l.inactivity_status !== "auto_unassigned");
+    const unassignedLeads = enriched.filter(l => l.inactivity_status === "auto_unassigned");
+
+    const counts = {
+      warning7:       activeLeads.filter(l => l.inactivity_status === "warning_7").length,
+      warning25:      activeLeads.filter(l => l.inactivity_status === "warning_25").length,
+      autoUnassigned: unassignedLeads.length,
+    };
+
+    const isFieldUser    = ["employee", "inside_sales"].includes(role);
+    const showUnassigned = ["owner", "sales_head"].includes(role);
+
+    const myLeads      = isFieldUser
+      ? activeLeads.filter(l => l.assigned_to === userId && ["warning_7", "warning_25"].includes(l.inactivity_status))
+      : [];
+    const teamWarnings = !isFieldUser
+      ? activeLeads.filter(l => l.inactivity_status && l.inactivity_status !== "active")
+      : [];
+
+    res.json({ counts, myLeads, unassignedLeads: showUnassigned ? unassignedLeads : [], teamWarnings });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/leads/:id
 router.get("/:id", authenticate, async (req, res) => {
   const { data, error } = await supabase
@@ -380,6 +450,64 @@ router.post("/cleanup-orphans", authenticate, authorize("owner"), async (req, re
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// POST /api/leads/:id/reassign
+// Reassign an auto-unassigned lead. Restricted to owner/sales_head.
+router.post("/:id/reassign", authenticate, authorize("owner", "sales_head"), async (req, res) => {
+  const { assigned_to: newAssignedTo } = req.body;
+  if (!newAssignedTo) return res.status(400).json({ error: "assigned_to is required" });
+
+  const { data: lead, error: fetchErr } = await supabase
+    .from("leads")
+    .select("id, assigned_to, inactivity_status, previous_assigned_to, company_name, contact_name")
+    .eq("id", req.params.id)
+    .single();
+
+  if (fetchErr || !lead) return res.status(404).json({ error: "Lead not found" });
+
+  const { data, error } = await supabase
+    .from("leads")
+    .update({
+      assigned_to:          newAssignedTo,
+      inactivity_status:    "active",
+      previous_assigned_to: lead.previous_assigned_to || lead.assigned_to,
+      updated_at:           new Date().toISOString(),
+    })
+    .eq("id", req.params.id)
+    .select()
+    .single();
+
+  if (error) return res.status(400).json({ error: error.message });
+
+  supabase.from("lead_inactivity_logs").insert({
+    lead_id:              req.params.id,
+    event_type:           "reassigned",
+    assigned_to_at_event: lead.assigned_to,
+    new_assigned_to:      newAssignedTo,
+    triggered_by:         req.profile.id,
+    notes:                `Manually reassigned by ${req.profile.full_name || req.profile.email}`,
+  }).then(() => {}).catch(() => {});
+
+  supabase.from("notifications")
+    .delete()
+    .eq("entity_id", req.params.id)
+    .eq("entity_type", "lead")
+    .eq("type", "general")
+    .then(() => {}).catch(() => {});
+
+  supabase.from("notifications").insert({
+    user_id:     newAssignedTo,
+    type:        "lead_assigned",
+    title:       "Lead Assigned to You",
+    message:     `"${lead.company_name || lead.contact_name || "A lead"}" has been assigned to you.`,
+    data:        { lead_id: req.params.id },
+    entity_id:   req.params.id,
+    entity_type: "lead",
+    read:        false,
+  }).then(() => {}).catch(() => {});
+
+  res.json(data);
 });
 
 module.exports = router;

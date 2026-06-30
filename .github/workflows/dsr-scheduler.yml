@@ -54,3 +54,13 @@ jobs:
           if [ "$STATUS" != "200" ]; then
             echo "WARNING: Comprehensive inactivity cron returned non-200 status: $STATUS"
           fi
+
+      - name: Trigger lead inactivity cron (09:00 AM IST)
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            https://backend-gamma-nine-32.vercel.app/api/reports/lead-inactivity-cron)
+          echo "Lead inactivity cron response status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "WARNING: Lead inactivity cron returned non-200 status: $STATUS"
+          fi

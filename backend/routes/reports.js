@@ -2306,4 +2306,244 @@ function buildInactivityReportText(recipient, inactiveUsers, generatedAt, rl) {
   return `${sep}\nCCENTRIK — INACTIVITY REPORT — ${generatedAt}\nRecipient: ${recipient.full_name || recipient.email} (${rl(recipient.role)})\n${sep}\n\n${lines}\n\n${sep}\nPlease follow up with inactive team members.\n— Ccentrik CRM`;
 }
 
+// ─── GET /api/reports/lead-inactivity-cron ────────────────────────────────────
+// Runs at 09:00 AM IST daily. Add ?force=true to bypass the slot check for testing.
+router.get("/lead-inactivity-cron", async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.headers.authorization !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const forceRun    = req.query.force === "true";
+  const nowUtc      = new Date();
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+  const nowIst      = new Date(nowUtc.getTime() + istOffsetMs);
+  const h24         = nowIst.getUTCHours();
+  const rawMin      = nowIst.getUTCMinutes();
+  const slot_m      = rawMin < 30 ? 0 : 30;
+  const h12         = h24 % 12 || 12;
+  const ampm        = h24 < 12 ? "AM" : "PM";
+  const currentSlot = `${String(h12).padStart(2, "0")}:${String(slot_m).padStart(2, "0")} ${ampm}`;
+
+  console.log(`[LeadInactivityCron] ${nowUtc.toISOString()} → IST slot: ${currentSlot}`);
+
+  if (!forceRun && currentSlot !== "09:00 AM") {
+    return res.json({ success: true, slot: currentSlot, processed: 0, message: "Not the 09:00 AM IST window — skipped" });
+  }
+
+  try {
+    const results = await runLeadInactivityCheck(nowIst);
+    return res.json({ success: true, slot: currentSlot, forced: forceRun, ...results });
+  } catch (err) {
+    console.error("[LeadInactivityCron] Fatal:", err.message);
+    return res.status(500).json({ error: err.message || "Lead inactivity cron failed" });
+  }
+});
+
+// ─── Lead inactivity engine ───────────────────────────────────────────────────
+const LEAD_THRESHOLD_7  = 7;
+const LEAD_THRESHOLD_25 = 25;
+const LEAD_THRESHOLD_30 = 30;
+
+async function runLeadInactivityCheck(nowIst) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const nowMs = nowIst.getTime();
+
+  // Load all active assigned leads (skip terminal stages)
+  const { data: leads, error: leadsErr } = await supabase
+    .from("leads")
+    .select("id, company_name, contact_name, assigned_to, created_at, inactivity_status")
+    .not("assigned_to", "is", null)
+    .not("stage", "in", '("won","lost","converted","pipeline")');
+
+  if (leadsErr) throw leadsErr;
+  if (!leads?.length) return { processed: 0, warned7: 0, warned25: 0, unassigned: 0 };
+
+  const leadIds = leads.map(l => l.id);
+
+  // Batch load latest activity per lead (ordered DESC so first hit = latest)
+  const { data: activities } = await supabase
+    .from("activities")
+    .select("lead_id, created_at")
+    .in("lead_id", leadIds)
+    .order("created_at", { ascending: false });
+
+  const lastActMap = {};
+  for (const act of (activities || [])) {
+    if (!lastActMap[act.lead_id]) lastActMap[act.lead_id] = act.created_at;
+  }
+
+  // Load admins/heads for unassignment notifications
+  const { data: admins } = await supabase
+    .from("profiles")
+    .select("id, full_name, email, role")
+    .in("role", ["owner", "sales_head"])
+    .not("email", "is", null);
+
+  let processed = 0, warned7 = 0, warned25 = 0, unassigned = 0;
+  const errors = [];
+
+  for (const lead of leads) {
+    try {
+      const lastActTs    = lastActMap[lead.id] || lead.created_at;
+      const daysInactive = Math.floor((nowMs - new Date(lastActTs).getTime()) / dayMs);
+      const leadName     = lead.company_name || lead.contact_name || "A lead";
+
+      if (daysInactive < LEAD_THRESHOLD_7) {
+        // Lead is active again — reset if previously flagged
+        if (lead.inactivity_status && lead.inactivity_status !== "active") {
+          await supabase.from("leads")
+            .update({ last_activity_at: lastActTs, inactivity_status: "active" })
+            .eq("id", lead.id);
+          await supabase.from("notifications")
+            .delete()
+            .eq("entity_id", lead.id).eq("entity_type", "lead").eq("type", "general");
+        } else {
+          await supabase.from("leads").update({ last_activity_at: lastActTs }).eq("id", lead.id);
+        }
+
+      } else if (daysInactive >= LEAD_THRESHOLD_30 && lead.inactivity_status !== "auto_unassigned") {
+        // ── AUTO-UNASSIGN ──
+        const prevOwner = lead.assigned_to;
+        await supabase.from("leads").update({
+          assigned_to:          null,
+          inactivity_status:    "auto_unassigned",
+          previous_assigned_to: prevOwner,
+          unassigned_at:        new Date().toISOString(),
+          last_activity_at:     lastActTs,
+        }).eq("id", lead.id);
+
+        await supabase.from("lead_inactivity_logs").insert({
+          lead_id:              lead.id,
+          event_type:           "auto_unassigned",
+          days_inactive:        daysInactive,
+          assigned_to_at_event: prevOwner,
+          notes:                `Auto-unassigned after ${daysInactive} days of inactivity`,
+        });
+
+        // Clear prev owner's inactivity notifications
+        await supabase.from("notifications")
+          .delete()
+          .eq("entity_id", lead.id).eq("entity_type", "lead")
+          .eq("type", "general").eq("user_id", prevOwner);
+
+        // Notify the previous owner
+        await supabase.from("notifications").insert({
+          user_id:     prevOwner,
+          type:        "general",
+          title:       "Lead Unassigned — No Activity",
+          message:     `"${leadName}" was automatically unassigned after ${daysInactive} days of inactivity.`,
+          data:        { subtype: "lead_auto_unassigned", lead_id: lead.id, days: daysInactive },
+          entity_id:   lead.id,
+          entity_type: "lead",
+          read:        false,
+        });
+
+        // Notify each admin/head (deduplicate)
+        for (const admin of (admins || [])) {
+          if (admin.id === prevOwner) continue;
+          const { data: ex } = await supabase.from("notifications").select("id")
+            .eq("user_id", admin.id).eq("entity_id", lead.id)
+            .eq("entity_type", "lead").eq("read", false).limit(1);
+          if (!ex?.length) {
+            await supabase.from("notifications").insert({
+              user_id:     admin.id,
+              type:        "general",
+              title:       "Lead Auto-Unassigned",
+              message:     `"${leadName}" was auto-unassigned after ${daysInactive} days with no CRM activity. Reassign from the Inactive Lead Alerts widget.`,
+              data:        { subtype: "lead_auto_unassigned_admin", lead_id: lead.id, days: daysInactive },
+              entity_id:   lead.id,
+              entity_type: "lead",
+              read:        false,
+            });
+          }
+        }
+        unassigned++;
+
+      } else if (daysInactive >= LEAD_THRESHOLD_25 && lead.inactivity_status !== "auto_unassigned") {
+        // ── 25-DAY FINAL WARNING ──
+        if (lead.inactivity_status !== "warning_25") {
+          await supabase.from("leads")
+            .update({ last_activity_at: lastActTs, inactivity_status: "warning_25" })
+            .eq("id", lead.id);
+
+          await supabase.from("lead_inactivity_logs").insert({
+            lead_id:              lead.id,
+            event_type:           "warning_25d",
+            days_inactive:        daysInactive,
+            assigned_to_at_event: lead.assigned_to,
+          });
+
+          // Replace any existing notification with the final warning
+          await supabase.from("notifications").delete()
+            .eq("entity_id", lead.id).eq("entity_type", "lead")
+            .eq("user_id", lead.assigned_to).eq("type", "general");
+
+          await supabase.from("notifications").insert({
+            user_id:     lead.assigned_to,
+            type:        "general",
+            title:       "⚠️ Final Warning — Lead Will Be Unassigned",
+            message:     `"${leadName}" has been inactive for ${daysInactive} days. Log activity within ${LEAD_THRESHOLD_30 - daysInactive} day(s) to keep this lead assigned.`,
+            data:        { subtype: "lead_inactive_25d", lead_id: lead.id, days: daysInactive, days_remaining: LEAD_THRESHOLD_30 - daysInactive },
+            entity_id:   lead.id,
+            entity_type: "lead",
+            read:        false,
+          });
+          warned25++;
+        } else {
+          await supabase.from("leads").update({ last_activity_at: lastActTs }).eq("id", lead.id);
+        }
+
+      } else if (daysInactive >= LEAD_THRESHOLD_7 && lead.inactivity_status !== "auto_unassigned") {
+        // ── 7-DAY REMINDER ──
+        if (!["warning_7", "warning_25"].includes(lead.inactivity_status)) {
+          await supabase.from("leads")
+            .update({ last_activity_at: lastActTs, inactivity_status: "warning_7" })
+            .eq("id", lead.id);
+
+          await supabase.from("lead_inactivity_logs").insert({
+            lead_id:              lead.id,
+            event_type:           "reminder_7d",
+            days_inactive:        daysInactive,
+            assigned_to_at_event: lead.assigned_to,
+          });
+
+          // Only create if no unread notification exists for this lead/user
+          const { data: ex } = await supabase.from("notifications").select("id")
+            .eq("user_id", lead.assigned_to).eq("entity_id", lead.id)
+            .eq("entity_type", "lead").eq("read", false).limit(1);
+
+          if (!ex?.length) {
+            await supabase.from("notifications").insert({
+              user_id:     lead.assigned_to,
+              type:        "general",
+              title:       "Lead Inactivity Reminder",
+              message:     `"${leadName}" hasn't had any CRM activity for ${daysInactive} days. Please log a call, meeting, or note.`,
+              data:        { subtype: "lead_inactive_7d", lead_id: lead.id, days: daysInactive },
+              entity_id:   lead.id,
+              entity_type: "lead",
+              read:        false,
+            });
+          }
+          warned7++;
+        } else {
+          await supabase.from("leads").update({ last_activity_at: lastActTs }).eq("id", lead.id);
+        }
+
+      } else {
+        // Already at correct status — refresh last_activity_at
+        await supabase.from("leads").update({ last_activity_at: lastActTs }).eq("id", lead.id);
+      }
+
+      processed++;
+    } catch (err) {
+      console.error(`[LeadInactivityCron] Error for lead ${lead.id}:`, err.message);
+      errors.push({ lead_id: lead.id, error: err.message });
+    }
+  }
+
+  console.log(`[LeadInactivityCron] Done — ${processed} leads, ${warned7} 7d, ${warned25} 25d, ${unassigned} auto-unassigned`);
+  return { processed, warned7, warned25, unassigned, errors: errors.length ? errors : undefined };
+}
+
 module.exports = router;
