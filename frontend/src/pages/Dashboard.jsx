@@ -1458,11 +1458,12 @@ function InactiveLeadAlertsWidget({ navigate, dragHandleProps, collapsed, onTogg
     staleTime: 10 * 60 * 1000,
   });
 
-  const counts        = inactiveData?.counts        || { warning7: 0, warning25: 0, autoUnassigned: 0 };
-  const myLeads       = inactiveData?.myLeads        || [];
-  const unassignedLeads = inactiveData?.unassignedLeads || [];
-  const teamWarnings  = inactiveData?.teamWarnings   || [];
-  const totalIssues   = counts.warning7 + counts.warning25 + counts.autoUnassigned;
+  const counts            = inactiveData?.counts            || { warning7: 0, warning25: 0, autoUnassigned: 0 };
+  const myLeads           = inactiveData?.myLeads            || [];
+  const unassignedLeads   = inactiveData?.unassignedLeads    || [];
+  const teamWarnings      = inactiveData?.teamWarnings       || [];
+  const employeeBreakdown = inactiveData?.employeeBreakdown  || [];
+  const totalIssues       = counts.warning7 + counts.warning25 + counts.autoUnassigned;
   const isManager     = !isFieldUser && !(isOwner || isSalesHead);
 
   const assignableMembers = (teamData?.data || []).filter(m =>
@@ -1600,6 +1601,30 @@ function InactiveLeadAlertsWidget({ navigate, dragHandleProps, collapsed, onTogg
                       +{unassignedLeads.length - 6} more unassigned leads
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Owner/SalesHead: employee-wise inactive lead distribution */}
+              {(isOwner || isSalesHead) && employeeBreakdown.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Employee Distribution</div>
+                  {employeeBreakdown.slice(0, 8).map(emp => (
+                    <div key={emp.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                      <div style={{ flex: 1, fontSize: 12.5, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{emp.full_name}</div>
+                      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                        {emp.warning7 > 0 && (
+                          <span style={{ fontSize: 10, fontWeight: 700, color: "#F59E0B", background: "#FFFBEB", border: "1px solid #FDE68A", padding: "1px 6px", borderRadius: 99 }}>{emp.warning7}×7d</span>
+                        )}
+                        {emp.warning25 > 0 && (
+                          <span style={{ fontSize: 10, fontWeight: 700, color: "#F97316", background: "#FFF7ED", border: "1px solid #FED7AA", padding: "1px 6px", borderRadius: 99 }}>{emp.warning25}×25d</span>
+                        )}
+                        {emp.autoUnassigned > 0 && (
+                          <span style={{ fontSize: 10, fontWeight: 700, color: "#EF4444", background: "#FEF2F2", border: "1px solid #FECACA", padding: "1px 6px", borderRadius: 99 }}>{emp.autoUnassigned}×off</span>
+                        )}
+                      </div>
+                      <span style={{ fontSize: 11, color: "var(--text-muted)", minWidth: 16, textAlign: "right" }}>{emp.total}</span>
+                    </div>
+                  ))}
                 </div>
               )}
 

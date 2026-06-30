@@ -2489,6 +2489,26 @@ async function runLeadInactivityCheck(nowIst) {
             entity_type: "lead",
             read:        false,
           });
+
+          // Notify admins/heads — final warning visibility
+          for (const admin of (admins || [])) {
+            if (admin.id === lead.assigned_to) continue;
+            const { data: ex } = await supabase.from("notifications").select("id")
+              .eq("user_id", admin.id).eq("entity_id", lead.id)
+              .eq("entity_type", "lead").eq("read", false).limit(1);
+            if (!ex?.length) {
+              await supabase.from("notifications").insert({
+                user_id:     admin.id,
+                type:        "general",
+                title:       "⚠️ Lead at 25-Day Warning",
+                message:     `"${leadName}" (assigned to ${lead.assigned_to}) has been inactive for ${daysInactive} days. Auto-unassignment in ${LEAD_THRESHOLD_30 - daysInactive} day(s) if no action is taken.`,
+                data:        { subtype: "lead_inactive_25d_admin", lead_id: lead.id, days: daysInactive, assigned_to: lead.assigned_to },
+                entity_id:   lead.id,
+                entity_type: "lead",
+                read:        false,
+              });
+            }
+          }
           warned25++;
         } else {
           await supabase.from("leads").update({ last_activity_at: lastActTs }).eq("id", lead.id);
@@ -2524,6 +2544,26 @@ async function runLeadInactivityCheck(nowIst) {
               entity_type: "lead",
               read:        false,
             });
+          }
+
+          // Notify admins/heads — monitoring visibility
+          for (const admin of (admins || [])) {
+            if (admin.id === lead.assigned_to) continue;
+            const { data: exAdmin } = await supabase.from("notifications").select("id")
+              .eq("user_id", admin.id).eq("entity_id", lead.id)
+              .eq("entity_type", "lead").eq("read", false).limit(1);
+            if (!exAdmin?.length) {
+              await supabase.from("notifications").insert({
+                user_id:     admin.id,
+                type:        "general",
+                title:       "Lead Inactive — 7-Day Alert",
+                message:     `"${leadName}" has been inactive for ${daysInactive} days. Assigned employee has been reminded.`,
+                data:        { subtype: "lead_inactive_7d_admin", lead_id: lead.id, days: daysInactive, assigned_to: lead.assigned_to },
+                entity_id:   lead.id,
+                entity_type: "lead",
+                read:        false,
+              });
+            }
           }
           warned7++;
         } else {

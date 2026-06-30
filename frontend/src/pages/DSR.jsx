@@ -3642,7 +3642,7 @@ export default function DSRPage() {
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
                 <thead>
                   <tr style={{ borderBottom: "2px solid var(--border)" }}>
-                    {["#", "Employee", "Role", "Total", "Calls", "FU Calls", "FU Emails", "Meetings", "Emails", "Notes", "Score"].map((h, i) => (
+                    {["#", "Employee", "Role", "Total", "Calls", "FU Calls", "FU Emails", "Meetings", "Emails", "Notes"].map((h, i) => (
                       <th key={h} style={{ padding: "8px 10px", textAlign: i >= 3 ? "right" : "left", fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -3671,18 +3671,10 @@ export default function DSRPage() {
                       <td style={{ padding: "10px 10px", fontSize: 12, color: "#8B5CF6", textAlign: "right", fontWeight: 600 }}>{emp.meetCount}</td>
                       <td style={{ padding: "10px 10px", fontSize: 12, color: "#EC4899", textAlign: "right", fontWeight: 600 }}>{emp.emailCount}</td>
                       <td style={{ padding: "10px 10px", fontSize: 12, color: "#10B981", textAlign: "right", fontWeight: 600 }}>{emp.noteCount}</td>
-                      <td style={{ padding: "10px 10px", verticalAlign: "middle" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <div style={{ flex: 1, height: 5, borderRadius: 3, background: "var(--border)", overflow: "hidden", minWidth: 44 }}>
-                            <div style={{ height: "100%", width: `${emp.score}%`, borderRadius: 3, background: emp.score >= 70 ? "#10B981" : emp.score >= 40 ? "#F59E0B" : "#EF4444", transition: "width 0.8s ease" }} />
-                          </div>
-                          <span style={{ fontSize: 11, fontWeight: 800, minWidth: 22, textAlign: "right", color: emp.score >= 70 ? "#10B981" : emp.score >= 40 ? "#F59E0B" : "#EF4444" }}>{emp.score}</span>
-                        </div>
-                      </td>
                     </tr>
                   ))}
                   {teamPerformance.length === 0 && (
-                    <tr><td colSpan={11} style={{ padding: "32px 16px", textAlign: "center", color: "var(--text-muted)", fontSize: 12.5 }}>No team activity data for this period</td></tr>
+                    <tr><td colSpan={10} style={{ padding: "32px 16px", textAlign: "center", color: "var(--text-muted)", fontSize: 12.5 }}>No team activity data for this period</td></tr>
                   )}
                 </tbody>
               </table>

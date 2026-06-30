@@ -193,7 +193,7 @@ router.get("/inactive-summary", authenticate, async (req, res) => {
     };
 
     const isFieldUser    = ["employee", "inside_sales"].includes(role);
-    const showUnassigned = ["owner", "sales_head"].includes(role);
+    const isAdmin        = ["owner", "sales_head"].includes(role);
 
     const myLeads      = isFieldUser
       ? activeLeads.filter(l => l.assigned_to === userId && ["warning_7", "warning_25"].includes(l.inactivity_status))
@@ -202,7 +202,27 @@ router.get("/inactive-summary", authenticate, async (req, res) => {
       ? activeLeads.filter(l => l.inactivity_status && l.inactivity_status !== "active")
       : [];
 
-    res.json({ counts, myLeads, unassignedLeads: showUnassigned ? unassignedLeads : [], teamWarnings });
+    // Employee-wise breakdown for admins/sales_head
+    let employeeBreakdown = [];
+    if (isAdmin) {
+      const byEmp = {};
+      for (const lead of enriched) {
+        const empId = lead.assigned_to || lead.previous_assigned_to;
+        if (!empId) continue;
+        const status = lead.inactivity_status;
+        if (!["warning_7", "warning_25", "auto_unassigned"].includes(status)) continue;
+        if (!byEmp[empId]) {
+          byEmp[empId] = { id: empId, full_name: profileMap[empId]?.full_name || "Unknown", warning7: 0, warning25: 0, autoUnassigned: 0, total: 0 };
+        }
+        if (status === "warning_7")       byEmp[empId].warning7++;
+        else if (status === "warning_25") byEmp[empId].warning25++;
+        else if (status === "auto_unassigned") byEmp[empId].autoUnassigned++;
+        byEmp[empId].total++;
+      }
+      employeeBreakdown = Object.values(byEmp).sort((a, b) => b.total - a.total);
+    }
+
+    res.json({ counts, myLeads, unassignedLeads: isAdmin ? unassignedLeads : [], teamWarnings, employeeBreakdown });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
