@@ -579,15 +579,30 @@ async function generateEmployeeActivityData(staffIds, dayStart, dayEnd) {
     leadMap[l.id] = l;
   });
 
+  // Leads updated today but NOT created today (stage / field changes)
+  const { data: updatedLeadsRaw } = await supabase.from("leads")
+    .select("id, full_name, company, phone, email, source, stage, owner_id, updated_at, created_at")
+    .gte("updated_at", dayStart)
+    .lte("updated_at", dayEnd)
+    .lt("created_at", dayStart)
+    .in("owner_id", staffIds);
+  const updatedLeadsByEmp = {};
+  (updatedLeadsRaw || []).forEach(l => {
+    if (!updatedLeadsByEmp[l.owner_id]) updatedLeadsByEmp[l.owner_id] = [];
+    updatedLeadsByEmp[l.owner_id].push(l);
+    if (!leadMap[l.id]) leadMap[l.id] = l;
+  });
+
   const t = (type) => (type || "").toLowerCase().replace(/[-\s]/g, "_");
   const isCompleted = (s) => ["done","completed","complete"].includes((s||"").toLowerCase());
   const isPending   = (s) => ["pending","todo","scheduled"].includes((s||"").toLowerCase());
 
   const employeeData = {};
   for (const s of staff) {
-    const empActs  = activities.filter(a => a.created_by === s.id);
-    const empDeals = deals.filter(d => d.created_by === s.id);
-    const empLeads = newLeadsByEmp[s.id] || [];
+    const empActs    = activities.filter(a => a.created_by === s.id);
+    const empDeals   = deals.filter(d => d.created_by === s.id);
+    const empLeads   = newLeadsByEmp[s.id] || [];
+    const updatedLeads = updatedLeadsByEmp[s.id] || [];
 
     const cat = {
       calls:       empActs.filter(a => CALL_TYPES.has(t(a.type))),
@@ -624,6 +639,7 @@ async function generateEmployeeActivityData(staffIds, dayStart, dayEnd) {
       activities: empActs,
       deals: empDeals,
       newLeads: empLeads,
+      updatedLeads,
       leadMap,
       cat,
       stats: {

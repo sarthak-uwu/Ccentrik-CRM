@@ -45,7 +45,7 @@ jobs:
             echo "WARNING: Role DSR cron returned non-200 status: $STATUS"
           fi
 
-      - name: Trigger comprehensive inactivity cron (10:30 AM IST)
+      - name: Trigger comprehensive inactivity cron (11:00 AM IST)
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \

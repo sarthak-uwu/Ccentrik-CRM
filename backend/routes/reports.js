@@ -4,7 +4,7 @@ const { supabase } = require("../config/db");
 const { authenticate, authorize } = require("../middleware/auth");
 const { sendMail } = require("../config/mail");
 const { generateTSRData, generateStaffDSRData, generateEmployeeActivityData, buildTSRHtml, buildTSRText } = require("../utils/dsrReport");
-const { generateDSRPdf, generateActivityPdf } = require("../utils/dsrPdf");
+const { generateDSRPdf, generateActivityPdf, generateEnterpriseDSRPdf } = require("../utils/dsrPdf");
 
 // Roles allowed to receive DSR emails — enforced at every endpoint
 const DSR_ALLOWED_ROLES = ["owner", "sales_head"];
@@ -779,11 +779,14 @@ router.get("/scheduler-cron", async (req, res) => {
 });
 
 // ─── GET /api/reports/auto-dsr-cron ──────────────────────────────────────────
-// Called daily by Vercel Cron at 14:30 UTC (8:00 PM IST).
-// Role-based email routing:
-//   • Field staff (sales_employee, inside_sales, sales_manager) → all sales_heads + all owners
-//   • Sales heads → owners only
-// Protected by CRON_SECRET env var (set in Vercel dashboard).
+// Called daily by GitHub Actions at 14:10 UTC (7:40 PM IST).
+// Role-based DSR routing — each recipient gets exactly ONE email scoped to their hierarchy:
+//   • owner (Super Admin) → full org report (everyone)
+//   • sales_head         → their hierarchy (managers + employees reporting to them)
+//   • sales_manager      → their direct reports
+//   • sales_employee / inside_sales → their own personal DSR
+// Protected by CRON_SECRET env var.
+// Duplicate prevention: checks dsr_email_logs before sending — skips if already sent today.
 router.get("/auto-dsr-cron", async (req, res) => {
   const secret = process.env.CRON_SECRET;
   if (secret && req.headers.authorization !== `Bearer ${secret}`) {
@@ -791,114 +794,163 @@ router.get("/auto-dsr-cron", async (req, res) => {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  console.log("[AutoDSR] Cron triggered at", new Date().toISOString());
+  const nowUtc      = new Date();
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+  const nowIst      = new Date(nowUtc.getTime() + istOffsetMs);
+  const todayIST    = nowIst.toISOString().slice(0, 10);   // "YYYY-MM-DD"
+  const dayStart    = new Date(`${todayIST}T00:00:00+05:30`).toISOString();
+  const dayEnd      = new Date(`${todayIST}T23:59:59+05:30`).toISOString();
+  const dateLabel   = nowIst.toLocaleDateString("en-IN", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Kolkata",
+  });
+
+  console.log(`[AutoDSR] Triggered at ${nowUtc.toISOString()} | IST date: ${todayIST}`);
 
   try {
-    // Compute today's IST date range  (IST = UTC + 5h 30m)
-    const nowUtc      = new Date();
-    const istOffsetMs = 5.5 * 60 * 60 * 1000;
-    const nowIst      = new Date(nowUtc.getTime() + istOffsetMs);
-    const todayIST    = nowIst.toISOString().slice(0, 10);      // "YYYY-MM-DD"
-    const dayStart    = new Date(`${todayIST}T00:00:00+05:30`).toISOString();
-    const dayEnd      = new Date(`${todayIST}T23:59:59+05:30`).toISOString();
-    const dateLabel   = new Date(`${todayIST}T12:00:00Z`).toLocaleDateString("en-IN", {
-      weekday: "long", year: "numeric", month: "long", day: "numeric",
-    });
+    // ── Duplicate prevention: skip if already sent today ───────────────────
+    const { data: existing } = await supabase
+      .from("dsr_email_logs")
+      .select("id")
+      .eq("report_date", todayIST)
+      .eq("report_type", "auto_daily")
+      .eq("delivery_status", "sent")
+      .limit(1);
 
-    // Fetch all relevant profiles in one query
+    if (existing?.length > 0) {
+      console.log(`[AutoDSR] Already sent for ${todayIST} — skipping duplicate execution.`);
+      return res.json({ success: true, skipped: true, reason: "already_sent_today", date: todayIST });
+    }
+
+    // ── Fetch all active profiles with manager hierarchy ───────────────────
     const { data: allProfiles, error: profErr } = await supabase
       .from("profiles")
-      .select("id, full_name, email, role")
-      .in("role", ["owner", "sales_head", "sales_manager", "inside_sales", "sales_employee"])
+      .select("id, full_name, email, role, manager_id")
+      .in("role", ["owner", "sales_head", "sales_manager", "sales_employee", "inside_sales"])
       .not("status", "in", '("deleted","inactive")')
       .not("email", "is", null)
       .order("role").order("full_name");
 
     if (profErr) throw new Error("Profile fetch failed: " + profErr.message);
 
-    const owners      = (allProfiles || []).filter((p) => p.role === "owner");
-    const salesHeads  = (allProfiles || []).filter((p) => p.role === "sales_head");
-    const fieldStaff  = (allProfiles || []).filter((p) =>
-      ["sales_manager", "inside_sales", "sales_employee"].includes(p.role)
-    );
+    const allP          = allProfiles || [];
+    const owners        = allP.filter(p => p.role === "owner");
+    const salesHeads    = allP.filter(p => p.role === "sales_head");
+    const salesManagers = allP.filter(p => p.role === "sales_manager");
+    const fieldRoles    = allP.filter(p => ["sales_employee", "inside_sales"].includes(p.role));
 
-    const ownerEmails     = owners.map((o) => o.email).filter(Boolean);
-    const salesHeadEmails = salesHeads.map((h) => h.email).filter(Boolean);
-    const results         = [];
+    // Helper: get all profiles in a person's hierarchy (direct reports + their direct reports)
+    const getHierarchy = (managerId) => {
+      const level1 = allP.filter(p => p.manager_id === managerId);
+      const level2 = level1.flatMap(p => allP.filter(q => q.manager_id === p.id));
+      const unique  = [...new Map([...level1, ...level2].map(p => [p.id, p])).values()];
+      return unique;
+    };
 
     const rangeLabel = "00:00 – 23:59 IST";
+    const results    = [];
+    const sentEmails = new Set(); // track who has received an email to prevent any duplicates
 
-    // ── A: Field staff DSR → Sales Heads + Super Admins ────────────────────
-    if (fieldStaff.length > 0) {
-      const fieldData = await generateStaffDSRData(dayStart, dayEnd, fieldStaff);
-      if (fieldData) {
-        const toEmails = [...new Set([...salesHeadEmails, ...ownerEmails])];
-        if (toEmails.length > 0) {
-          const html = buildTSRHtml(fieldData.staff, fieldData.userStats, fieldData.totals, dateLabel, rangeLabel);
-          const text = buildTSRText(fieldData.staff, fieldData.userStats, fieldData.totals, dateLabel, rangeLabel);
-          const attachments = [];
-          try {
-            const pdfBuffer = await generateDSRPdf({
-              staff: fieldData.staff, userStats: fieldData.userStats, totals: fieldData.totals,
-              reportDateLabel: dateLabel, reportType: "Daily", generatedAt: nowUtc.toISOString(),
-            });
-            attachments.push({ filename: `DSR-Daily-${todayIST}.pdf`, content: pdfBuffer.toString("base64"), content_type: "application/pdf" });
-          } catch (pdfErr) {
-            console.warn("[AutoDSR] PDF generation failed (field staff), sending without attachment:", pdfErr.message);
-          }
-          await sendMail({ to: toEmails, subject: `Ccentrik Daily Sales Report — ${dateLabel}`, html, text, attachments });
-          try {
-            await supabase.from("dsr_email_logs").insert({
-              recipients: toEmails, report_date: todayIST, report_type: "daily",
-              delivery_status: "sent", recipient_count: toEmails.length,
-            });
-          } catch (logErr) {
-            console.warn("[AutoDSR] Log insert failed:", logErr.message);
-          }
-          results.push({ type: "field_staff_dsr", recipients: toEmails.length, status: "sent" });
-          console.log(`[AutoDSR] Field staff DSR sent to ${toEmails.length} recipients`);
-        }
-      } else {
-        console.log("[AutoDSR] No field staff activity data for", todayIST);
+    const sendDSR = async ({ toEmails, staffList, reportTypeLabel, filenamePrefix }) => {
+      const recipients = toEmails.filter(e => !sentEmails.has(e));
+      if (!recipients.length || !staffList.length) return null;
+
+      const data = await generateStaffDSRData(dayStart, dayEnd, staffList);
+      if (!data) { console.log(`[AutoDSR] No data for ${filenamePrefix}`); return null; }
+
+      const html = buildTSRHtml(data.staff, data.userStats, data.totals, dateLabel, rangeLabel);
+      const text = buildTSRText(data.staff, data.userStats, data.totals, dateLabel, rangeLabel);
+
+      const attachments = [];
+      try {
+        const pdfBuffer = await generateDSRPdf({
+          staff: data.staff, userStats: data.userStats, totals: data.totals,
+          reportDateLabel: dateLabel, reportType: reportTypeLabel, generatedAt: nowUtc.toISOString(),
+        });
+        attachments.push({
+          filename: `${filenamePrefix}-${todayIST}.pdf`,
+          content: pdfBuffer.toString("base64"),
+          content_type: "application/pdf",
+        });
+      } catch (pdfErr) {
+        console.warn(`[AutoDSR] PDF failed for ${filenamePrefix}:`, pdfErr.message);
       }
+
+      await sendMail({
+        to: recipients,
+        subject: `Daily Sales Report – ${todayIST.split("-").reverse().join("/")}`,
+        html,
+        text,
+        attachments,
+      });
+
+      recipients.forEach(e => sentEmails.add(e));
+      console.log(`[AutoDSR] ${filenamePrefix} sent to ${recipients.length} recipient(s): ${recipients.join(", ")}`);
+      return recipients.length;
+    };
+
+    // ── A: Super Admins (owners) — full org report ─────────────────────────
+    const ownerEmails = owners.map(o => o.email).filter(Boolean);
+    const allStaff    = allP.filter(p => p.role !== "owner");
+    if (ownerEmails.length > 0 && allStaff.length > 0) {
+      const count = await sendDSR({
+        toEmails: ownerEmails, staffList: allStaff,
+        reportTypeLabel: "Daily – Full Organisation", filenamePrefix: "DSR-OrgWide",
+      });
+      if (count) results.push({ type: "owner_full_org", recipients: count, status: "sent" });
     }
 
-    // ── B: Sales Head DSR → Super Admins only ──────────────────────────────
-    if (salesHeads.length > 0 && ownerEmails.length > 0) {
-      const headData = await generateStaffDSRData(dayStart, dayEnd, salesHeads);
-      if (headData) {
-        const html = buildTSRHtml(headData.staff, headData.userStats, headData.totals, dateLabel, rangeLabel);
-        const text = buildTSRText(headData.staff, headData.userStats, headData.totals, dateLabel, rangeLabel);
-        const attachments = [];
-        try {
-          const pdfBuffer = await generateDSRPdf({
-            staff: headData.staff, userStats: headData.userStats, totals: headData.totals,
-            reportDateLabel: dateLabel, reportType: "Daily (Sales Heads)", generatedAt: nowUtc.toISOString(),
-          });
-          attachments.push({ filename: `DSR-SalesHead-${todayIST}.pdf`, content: pdfBuffer.toString("base64"), content_type: "application/pdf" });
-        } catch (pdfErr) {
-          console.warn("[AutoDSR] PDF generation failed (sales head), sending without attachment:", pdfErr.message);
-        }
-        await sendMail({ to: ownerEmails, subject: `Ccentrik Sales Head Daily Report — ${dateLabel}`, html, text, attachments });
-        try {
-          await supabase.from("dsr_email_logs").insert({
-            recipients: ownerEmails, report_date: todayIST, report_type: "daily",
-            delivery_status: "sent", recipient_count: ownerEmails.length,
-          });
-        } catch (logErr) {
-          console.warn("[AutoDSR] Log insert failed:", logErr.message);
-        }
-        results.push({ type: "sales_head_dsr", recipients: ownerEmails.length, status: "sent" });
-        console.log(`[AutoDSR] Sales Head DSR sent to ${ownerEmails.length} Super Admins`);
-      }
+    // ── B: Sales Heads — their hierarchy only ──────────────────────────────
+    for (const head of salesHeads) {
+      if (!head.email) continue;
+      const hierarchy = getHierarchy(head.id);
+      if (!hierarchy.length) continue;
+      const count = await sendDSR({
+        toEmails: [head.email], staffList: hierarchy,
+        reportTypeLabel: `Daily – ${head.full_name}'s Team`, filenamePrefix: `DSR-SalesHead-${head.id.slice(0, 8)}`,
+      });
+      if (count) results.push({ type: "sales_head", recipient: head.full_name, staff: hierarchy.length, status: "sent" });
     }
 
-    console.log("[AutoDSR] Completed:", JSON.stringify(results));
-    res.json({ success: true, date: todayIST, results });
+    // ── C: Sales Managers — their direct reports only ──────────────────────
+    for (const mgr of salesManagers) {
+      if (!mgr.email) continue;
+      const reports = allP.filter(p => p.manager_id === mgr.id);
+      if (!reports.length) continue;
+      const count = await sendDSR({
+        toEmails: [mgr.email], staffList: reports,
+        reportTypeLabel: `Daily – ${mgr.full_name}'s Team`, filenamePrefix: `DSR-Manager-${mgr.id.slice(0, 8)}`,
+      });
+      if (count) results.push({ type: "sales_manager", recipient: mgr.full_name, staff: reports.length, status: "sent" });
+    }
+
+    // ── D: Individual employees (sales_employee / inside_sales) ────────────
+    for (const emp of fieldRoles) {
+      if (!emp.email) continue;
+      const count = await sendDSR({
+        toEmails: [emp.email], staffList: [emp],
+        reportTypeLabel: "Daily – Personal Summary", filenamePrefix: `DSR-Employee-${emp.id.slice(0, 8)}`,
+      });
+      if (count) results.push({ type: "employee", recipient: emp.full_name, status: "sent" });
+    }
+
+    // ── Log completion ─────────────────────────────────────────────────────
+    try {
+      await supabase.from("dsr_email_logs").insert({
+        recipients:       [...sentEmails],
+        report_date:      todayIST,
+        report_type:      "auto_daily",
+        delivery_status:  "sent",
+        recipient_count:  sentEmails.size,
+      });
+    } catch (logErr) {
+      console.warn("[AutoDSR] Audit log insert failed:", logErr.message);
+    }
+
+    console.log(`[AutoDSR] Completed. Total unique recipients: ${sentEmails.size}. Results:`, JSON.stringify(results));
+    res.json({ success: true, date: todayIST, totalRecipients: sentEmails.size, results });
 
   } catch (err) {
-    console.error("[AutoDSR] Cron error:", err.message);
-    console.error("[AutoDSR] Stack:", err.stack?.slice(0, 600));
+    console.error("[AutoDSR] Fatal error:", err.message, err.stack?.slice(0, 400));
     res.status(500).json({ error: err.message || "Auto DSR cron failed" });
   }
 });
@@ -1164,6 +1216,9 @@ async function getInactiveEmployees(thresholdDays, nowIst) {
     ]);
 
     const loginTs = lastLoginRow?.logged_in_at || null;
+
+    // lastSeen is based ONLY on real CRM actions — login does NOT reset inactivity.
+    // A user who merely logs in without performing any CRM action is considered inactive.
     const activityTs = [
       lastAct?.created_at,
       lastLead?.created_at,
@@ -1172,10 +1227,7 @@ async function getInactiveEmployees(thresholdDays, nowIst) {
       lastTask?.updated_at,
     ].filter(Boolean).reduce((max, ts) => (ts > max ? ts : max), "") || null;
 
-    const candidates = [loginTs, activityTs].filter(Boolean);
-    const lastSeenTs = candidates.length > 0
-      ? candidates.reduce((max, ts) => (ts > max ? ts : max))
-      : null;
+    const lastSeenTs = activityTs; // login intentionally excluded
 
     const daysInactive = lastSeenTs
       ? Math.floor((nowIst.getTime() - new Date(lastSeenTs).getTime()) / (24 * 60 * 60 * 1000))
@@ -1413,6 +1465,8 @@ async function computeRoleUserInactivity(user, nowIst) {
   ]);
 
   const loginTs    = lastLoginRow?.logged_in_at || null;
+
+  // CRM activity = any meaningful data action. Login never counts.
   const activityTs = [
     lastAct?.created_at,
     lastLead?.created_at,
@@ -1421,24 +1475,36 @@ async function computeRoleUserInactivity(user, nowIst) {
     lastTask?.updated_at,
   ].filter(Boolean).reduce((max, ts) => (ts > max ? ts : max), "") || null;
 
-  const candidates = [loginTs, activityTs].filter(Boolean);
-  const lastSeenTs = candidates.length > 0
-    ? candidates.reduce((max, ts) => (ts > max ? ts : max))
-    : null;
-
-  const daysInactive = lastSeenTs
-    ? Math.floor((nowIst.getTime() - new Date(lastSeenTs).getTime()) / (24 * 60 * 60 * 1000))
+  // Compute consecutive days without login AND without CRM activity separately
+  const dayMs = 24 * 60 * 60 * 1000;
+  const daysWithoutLogin = loginTs
+    ? Math.floor((nowIst.getTime() - new Date(loginTs).getTime()) / dayMs)
+    : 999;
+  const daysWithoutCRMActivity = activityTs
+    ? Math.floor((nowIst.getTime() - new Date(activityTs).getTime()) / dayMs)
     : 999;
 
+  // Truly inactive: BOTH conditions must be true (per inactivity policy)
+  const isInactive      = daysWithoutLogin >= ROLE_INACTIVITY_THRESHOLD && daysWithoutCRMActivity >= ROLE_INACTIVITY_THRESHOLD;
+  // Logged in but no productive CRM work (informational only — not counted as inactive)
+  const isLoggedInNoWork = !isInactive && daysWithoutLogin < ROLE_INACTIVITY_THRESHOLD && daysWithoutCRMActivity >= ROLE_INACTIVITY_THRESHOLD;
+
+  const daysInactive = isInactive
+    ? Math.max(daysWithoutLogin, daysWithoutCRMActivity)
+    : 0;
+
   return {
-    id:           user.id,
-    name:         user.full_name || user.email,
-    email:        user.email,
-    role:         user.role,
-    manager_id:   user.manager_id,
-    lastLogin:    loginTs,
-    lastActivity: activityTs,
-    lastSeen:     lastSeenTs,
+    id:                   user.id,
+    name:                 user.full_name || user.email,
+    email:                user.email,
+    role:                 user.role,
+    manager_id:           user.manager_id,
+    lastLogin:            loginTs,
+    lastActivity:         activityTs,
+    daysWithoutLogin,
+    daysWithoutCRMActivity,
+    isInactive,
+    isLoggedInNoWork,
     daysInactive,
   };
 }
@@ -1616,17 +1682,21 @@ function buildTeamInactivityText(inactiveUsers) {
 }
 
 // ─── GET /api/reports/role-dsr-cron ──────────────────────────────────────────
-// Called every 30 min by GitHub Actions. Fires the role-based DSR distribution
-// at 09:00 PM IST (covering the 9:09 PM IST requirement).
+// Called every 30 min by GitHub Actions. Fires at 07:30 PM IST slot (7:40 PM IST target).
+// Add ?force=true (with valid CRON_SECRET) to bypass the time-slot check for testing.
 // Role hierarchy:
-//   owner       → receives DSR for ALL users
-//   sales_head  → receives DSR for sales_manager + inside_sales
-//   sales_manager → receives DSR for their direct reports (manager_id = their id)
+//   owner          → full org report (everyone)
+//   sales_head     → their full hierarchy (managers + employees under them)
+//   sales_manager  → their direct reports only
+//   sales_employee / inside_sales → personal DSR only
+// Duplicate prevention: skips if already sent today.
 router.get("/role-dsr-cron", async (req, res) => {
   const secret = process.env.CRON_SECRET;
   if (secret && req.headers.authorization !== `Bearer ${secret}`) {
     return res.status(401).json({ error: "Unauthorized" });
   }
+
+  const forceRun = req.query.force === "true";
 
   const nowUtc      = new Date();
   const istOffsetMs = 5.5 * 60 * 60 * 1000;
@@ -1638,22 +1708,54 @@ router.get("/role-dsr-cron", async (req, res) => {
   const ampm        = h24 < 12 ? "AM" : "PM";
   const currentSlot = `${String(h12).padStart(2, "0")}:${String(slot_m).padStart(2, "0")} ${ampm}`;
 
-  console.log(`[RoleDSRCron] ${nowUtc.toISOString()} → IST slot: ${currentSlot}`);
+  console.log(`[RoleDSRCron] ${nowUtc.toISOString()} → IST slot: ${currentSlot}${forceRun ? " (FORCED)" : ""}`);
 
-  if (currentSlot !== "09:00 PM") {
-    return res.json({ success: true, slot: currentSlot, sent: 0, message: "Not the 09:00 PM IST window — skipped" });
+  if (!forceRun && currentSlot !== "07:30 PM") {
+    return res.json({ success: true, slot: currentSlot, sent: 0, message: "Not the 07:30 PM IST window — skipped" });
   }
 
-  // Today's full day range in IST
   const pad      = (n) => String(n).padStart(2, "0");
   const todayStr = `${nowIst.getUTCFullYear()}-${pad(nowIst.getUTCMonth() + 1)}-${pad(nowIst.getUTCDate())}`;
   const dayStart = new Date(`${todayStr}T00:00:00+05:30`).toISOString();
   const dayEnd   = new Date(`${todayStr}T23:59:59+05:30`).toISOString();
-  const dateLabel = nowIst.toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
+  const dateLabel = nowIst.toLocaleDateString("en-IN", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Kolkata",
+  });
+
+  // Duplicate prevention — skip if already sent today (unless forced test run)
+  if (!forceRun) {
+    const { data: existing } = await supabase
+      .from("dsr_email_logs")
+      .select("id")
+      .eq("report_date", todayStr)
+      .eq("report_type", "role_daily")
+      .eq("delivery_status", "sent")
+      .limit(1);
+    if (existing?.length > 0) {
+      console.log(`[RoleDSRCron] Already sent for ${todayStr} — skipping duplicate execution.`);
+      return res.json({ success: true, skipped: true, reason: "already_sent_today", date: todayStr });
+    }
+  }
 
   try {
     const results = await sendRoleBasedDSR({ dayStart, dayEnd, dateLabel, todayStr });
-    return res.json({ success: true, slot: currentSlot, ...results });
+
+    // Log completion for duplicate prevention
+    if (!forceRun) {
+      try {
+        await supabase.from("dsr_email_logs").insert({
+          recipients:      [],
+          report_date:     todayStr,
+          report_type:     "role_daily",
+          delivery_status: "sent",
+          recipient_count: results.sent || 0,
+        });
+      } catch (logErr) {
+        console.warn("[RoleDSRCron] Audit log insert failed:", logErr.message);
+      }
+    }
+
+    return res.json({ success: true, slot: currentSlot, forced: forceRun, ...results });
   } catch (err) {
     console.error("[RoleDSRCron] Fatal error:", err.message);
     return res.status(500).json({ error: err.message || "Role DSR cron failed" });
@@ -1680,8 +1782,8 @@ async function sendRoleBasedDSR({ dayStart, dayEnd, dateLabel, todayStr }) {
   if (usersErr) throw usersErr;
   if (!allUsers?.length) return { sent: 0, total_recipients: 0 };
 
-  // Determine which users receive emails (owner, sales_head, sales_manager)
-  const RECIPIENT_ROLES = ["owner", "sales_head", "sales_manager"];
+  // All roles receive a DSR — scope varies by role
+  const RECIPIENT_ROLES = ["owner", "sales_head", "sales_manager", "sales_employee", "inside_sales"];
   const recipients = allUsers.filter((u) => RECIPIENT_ROLES.includes(u.role));
   if (!recipients.length) return { sent: 0, total_recipients: 0 };
 
@@ -1705,15 +1807,18 @@ async function sendRoleBasedDSR({ dayStart, dayEnd, dateLabel, todayStr }) {
         // Super Admin sees everyone
         subordinateIds = allUsers.filter((u) => u.role !== "owner").map((u) => u.id);
       } else if (recipient.role === "sales_head") {
-        // Sales Head sees all managers and individual contributors below
-        subordinateIds = allUsers
-          .filter((u) => ["sales_manager", "inside_sales", "sales"].includes(u.role))
-          .map((u) => u.id);
+        // Sales Head sees their full hierarchy: level-1 direct reports + their reports
+        const level1 = allUsers.filter((u) => u.manager_id === recipient.id).map((u) => u.id);
+        const level2 = allUsers.filter((u) => level1.includes(u.manager_id)).map((u) => u.id);
+        subordinateIds = [...new Set([...level1, ...level2])];
       } else if (recipient.role === "sales_manager") {
         // Sales Manager sees only their direct reports
         subordinateIds = allUsers
           .filter((u) => u.manager_id === recipient.id)
           .map((u) => u.id);
+      } else if (["sales_employee", "inside_sales"].includes(recipient.role)) {
+        // Individual contributors see only their own data
+        subordinateIds = [recipient.id];
       }
 
       if (!subordinateIds?.length) continue;
@@ -1727,99 +1832,92 @@ async function sendRoleBasedDSR({ dayStart, dayEnd, dateLabel, todayStr }) {
 
       if (!scopedStaff.length) continue;
 
-      // Generate PDF (only includes staff with activity data)
-      const staffForPdf = scopedStaff.filter((s) => employeeData[s.id]);
-      const pdfBuffer = await generateActivityPdf({
+      // Compute quick stats for email body
+      let qActs=0, qLeads=0, qMtg=0, qCalls=0, qEmails=0;
+      for (const s of scopedStaff) {
+        const st = employeeData[s.id]?.stats || {};
+        qActs+=st.total||0; qLeads+=st.newLeads||0; qMtg+=st.meetings||0;
+        qCalls+=st.calls||0; qEmails+=st.emails||0;
+      }
+
+      // Generate enterprise PDF with all 9 sections
+      const pdfBuffer = await generateEnterpriseDSRPdf({
         employeeData,
-        staff:           staffForPdf.length ? staffForPdf : scopedStaff,
+        staff:          scopedStaff,
         reportDateLabel: dateLabel,
-        reportType:      "Daily",
-        generatedAt:     new Date().toISOString(),
+        recipientRole:  recipient.role,
+        recipientName:  recipient.full_name || recipient.email,
+        generatedAt:    new Date().toISOString(),
       });
 
-      // Build HTML and text bodies
-      const firstName = (recipient.full_name || "").split(" ")[0] || "Team";
+      // Professional email greeting — PDF carries all detail
+      const firstName  = (recipient.full_name || "").split(" ")[0] || "Team";
+      const ddmmyyyy   = todayStr.split("-").reverse().join("/");
+      const greeting   = new Date().getUTCHours() < 12 ? "Good Morning" : "Good Evening";
 
-      const empRows = scopedStaff.map((s) => {
-        const ed  = employeeData[s.id];
-        const st  = ed?.stats || {};
-        const hasActivity = st.total > 0;
-        return `<tr style="border-bottom:1px solid #F3F4F6;">
-          <td style="padding:11px 14px;font-size:13px;font-weight:600;color:#111827;">${s.full_name || s.email}</td>
-          <td style="padding:11px 14px;font-size:12px;color:#6B7280;">${rl(s.role)}</td>
-          <td style="padding:11px 14px;text-align:center;font-size:14px;font-weight:700;color:${hasActivity ? "#4F46E5" : "#D1D5DB"};">${st.total || 0}</td>
-          <td style="padding:11px 14px;text-align:center;font-size:13px;color:#2563EB;">${st.calls || 0}</td>
-          <td style="padding:11px 14px;text-align:center;font-size:13px;color:#0891B2;">${st.emails || 0}</td>
-          <td style="padding:11px 14px;text-align:center;font-size:13px;color:#059669;">${st.meetings || 0}</td>
-          <td style="padding:11px 14px;text-align:center;font-size:13px;font-weight:700;color:${hasActivity ? "#7C3AED" : "#D1D5DB"};">${hasActivity ? `${st.efficiency || 0}%` : "—"}</td>
-          <td style="padding:11px 14px;font-size:12px;color:${hasActivity ? "#6B7280" : "#EF4444"};font-style:${hasActivity ? "normal" : "italic"};">${hasActivity ? "Reported" : "No Activity Reported Today"}</td>
-        </tr>`;
-      }).join("");
+      const statPills = [
+        { label: "New Leads",  value: qLeads,  bg: "#EFF6FF", cl: "#2563EB" },
+        { label: "Activities", value: qActs,   bg: "#F0FDF4", cl: "#16A34A" },
+        { label: "Meetings",   value: qMtg,    bg: "#FEF3C7", cl: "#D97706" },
+        { label: "Calls",      value: qCalls,  bg: "#F5F3FF", cl: "#7C3AED" },
+        { label: "Emails",     value: qEmails, bg: "#FFF1F2", cl: "#E11D48" },
+      ].map(p => `<td style="padding:14px 18px;text-align:center;border-right:1px solid #E2E8F0;">
+        <div style="font-size:24px;font-weight:800;color:${p.cl};">${p.value}</div>
+        <div style="font-size:11px;color:#6B7280;font-weight:500;margin-top:3px;">${p.label}</div>
+      </td>`).join("");
 
       const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
-<body style="margin:0;padding:0;background:#F5F7FA;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;padding:32px 16px;"><tr><td align="center">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:760px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #E5E7EB;">
-  <tr><td style="height:4px;background:linear-gradient(90deg,#4F46E5,#7C3AED);"></td></tr>
-  <tr><td style="padding:28px 32px 16px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-      <td>
-        <div style="font-size:22px;font-weight:800;color:#111827;margin-bottom:4px;">Hi ${firstName}, — Daily Sales Report</div>
-        <div style="font-size:13px;color:#6B7280;">${dateLabel} &nbsp;&middot;&nbsp; ${scopedStaff.length} member${scopedStaff.length !== 1 ? "s" : ""} &nbsp;&middot;&nbsp; Full PDF attached</div>
-      </td>
-      <td style="text-align:right;vertical-align:top;">
-        <span style="font-size:11px;padding:4px 10px;background:#EEF2FF;color:#4F46E5;border-radius:99px;font-weight:700;border:1px solid #C7D2FE;">${rl(recipient.role)}</span>
-      </td>
-    </tr></table>
+<body style="margin:0;padding:0;background:#F0F4F8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F0F4F8;padding:32px 16px;"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #E5E7EB;">
+  <tr><td style="background:#1E3A5F;padding:24px 32px;">
+    <div style="font-size:20px;font-weight:800;color:#FFFFFF;letter-spacing:-.3px;">CCENTRIK <span style="font-weight:400;color:#94A3B8;font-size:13px;">CRM</span></div>
+    <div style="font-size:12px;color:#94A3B8;margin-top:4px;letter-spacing:.05em;text-transform:uppercase;">Daily Sales Report</div>
   </td></tr>
-  <tr><td style="padding:0 32px 28px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;">
-      <tr style="background:#F9FAFB;">
-        <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;">Employee</th>
-        <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Role</th>
-        <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Activities</th>
-        <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Calls</th>
-        <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Emails</th>
-        <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Meetings</th>
-        <th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Score</th>
-        <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;">Status</th>
-      </tr>
-      ${empRows}
+  <tr><td style="padding:28px 32px 20px;">
+    <div style="font-size:20px;font-weight:700;color:#0F172A;margin-bottom:6px;">${greeting}, ${firstName}</div>
+    <div style="font-size:13.5px;color:#475569;line-height:1.7;margin-bottom:20px;">
+      Please find attached the <strong>Daily Sales Report for ${ddmmyyyy}</strong>.<br/>
+      This report covers all CRM activity by your team today, including new leads, calls, meetings, emails, and pipeline updates.
+    </div>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;margin-bottom:20px;">
+      <tr>${statPills}</tr>
     </table>
+    <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:12px 16px;font-size:12.5px;color:#1E40AF;line-height:1.6;">
+      📎 The full detailed report — including all sections — is attached as a PDF.
+    </div>
   </td></tr>
-  <tr><td style="background:#F9FAFB;padding:16px 32px;border-top:1px solid #E5E7EB;font-size:11.5px;color:#9CA3AF;">
-    &copy; ${new Date().getFullYear()} CCENTRIK &nbsp;&middot;&nbsp; Automated Daily DSR &nbsp;&middot;&nbsp; Sent at 9:00 PM IST &nbsp;&middot;&nbsp; Do not reply
+  <tr><td style="background:#F9FAFB;padding:14px 32px;border-top:1px solid #E5E7EB;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td style="font-size:11.5px;color:#9CA3AF;">© ${new Date().getFullYear()} CCENTRIK &nbsp;·&nbsp; Sent: ${dateLabel} &nbsp;·&nbsp; Do not reply</td>
+      <td style="text-align:right;"><span style="font-size:11px;padding:3px 9px;background:#EEF2FF;color:#4F46E5;border-radius:99px;font-weight:700;border:1px solid #C7D2FE;">${rl(recipient.role)}</span></td>
+    </tr></table>
   </td></tr>
 </table></td></tr></table></body></html>`;
 
       const text = [
-        `CCENTRIK DAILY SALES REPORT — ${dateLabel}`,
-        `Sent to: ${rl(recipient.role)} (${recipient.full_name || recipient.email})`,
-        "=".repeat(70),
-        ...scopedStaff.map((s) => {
-          const st = employeeData[s.id]?.stats || {};
-          return st.total > 0
-            ? `${(s.full_name || s.email).padEnd(28)} | ${rl(s.role).padEnd(14)} | Activities: ${st.total} | Calls: ${st.calls || 0} | Emails: ${st.emails || 0} | Meetings: ${st.meetings || 0} | Score: ${st.efficiency || 0}%`
-            : `${(s.full_name || s.email).padEnd(28)} | ${rl(s.role).padEnd(14)} | No Activity Reported Today`;
-        }),
-        "=".repeat(70),
-        "Full PDF report is attached.",
+        `CCENTRIK DAILY SALES REPORT — ${ddmmyyyy}`,
+        `For: ${recipient.full_name||recipient.email} (${rl(recipient.role)})`,
+        "=".repeat(60),
+        `New Leads: ${qLeads}  |  Activities: ${qActs}  |  Meetings: ${qMtg}  |  Calls: ${qCalls}  |  Emails: ${qEmails}`,
+        "",
+        "Full PDF is attached with complete activity details.",
         "— Ccentrik CRM",
       ].join("\n");
 
       await sendMail({
         to:      [recipient.email],
-        subject: `Ccentrik Daily DSR — ${dateLabel}`,
+        subject: `Daily Sales Report – ${ddmmyyyy}`,
         html,
         text,
         attachments: [{
-          filename:     `Ccentrik-DSR-Daily-${todayStr}.pdf`,
+          filename:     `Ccentrik-DSR-${todayStr}.pdf`,
           content:      pdfBuffer.toString("base64"),
           content_type: "application/pdf",
         }],
       });
 
-      console.log(`[RoleDSRCron] Sent to ${recipient.email} (${rl(recipient.role)}) — ${scopedStaff.length} subordinates`);
+      console.log(`[RoleDSRCron] Sent to ${recipient.email} (${rl(recipient.role)}) — ${scopedStaff.length} members`);
       sent++;
     } catch (err) {
       console.error(`[RoleDSRCron] Error for ${recipient.email}:`, err.message);
@@ -1830,6 +1928,7 @@ async function sendRoleBasedDSR({ dayStart, dayEnd, dateLabel, todayStr }) {
   console.log(`[RoleDSRCron] Done — ${sent}/${recipients.length} emails sent`);
   return { sent, total_recipients: recipients.length, errors: errors.length ? errors : undefined };
 }
+
 
 // ─── GET /api/reports/comprehensive-inactivity-cron ───────────────────────────
 // Runs every day at 10:30 AM IST (covering the 10:40 AM IST requirement).
@@ -1857,8 +1956,8 @@ router.get("/comprehensive-inactivity-cron", async (req, res) => {
 
   console.log(`[ComprehensiveInactivityCron] ${nowUtc.toISOString()} → IST slot: ${currentSlot}`);
 
-  if (currentSlot !== "10:30 AM") {
-    return res.json({ success: true, slot: currentSlot, sent: 0, message: "Not the 10:30 AM IST window — skipped" });
+  if (currentSlot !== "11:00 AM") {
+    return res.json({ success: true, slot: currentSlot, sent: 0, message: "Not the 11:00 AM IST window — skipped" });
   }
 
   try {
@@ -1958,42 +2057,47 @@ async function sendComprehensiveInactivityAlerts(nowIst) {
         console.log(`[ComprehensiveInactivityCron] Login Activity sent to ${user.email} (${rl(user.role)}) — ${loginData.filter((u) => u.loggedInToday).length}/${loginData.length} active`);
       }
 
-      // ── Email 2: Inactivity Report ───────────────────────────────────────────
-      if (["owner", "sales_head", "sales_manager"].includes(user.role)) {
-        const inactiveUsers = scope
-          .map((u) => inactivityMap[u.id])
-          .filter((u) => u && u.daysInactive >= ROLE_INACTIVITY_THRESHOLD)
-          .map((u) => ({
-            ...u,
-            shortId:     u.id.split("-")[0].toUpperCase(),
-            managerName: u.manager_id && userById[u.manager_id]
-              ? (userById[u.manager_id].full_name || userById[u.manager_id].email)
-              : "—",
-          }));
+      // ── Email 2: Inactivity Report ─────────────────────────────────────────────
+      // Dual condition: a user is inactive ONLY IF BOTH
+      //   - No login for 3+ days  AND  - No CRM activity for 3+ days
+      // "Logged in but no CRM work" is shown as a separate informational section.
+      const ddmmyyyy = todayStr.split("-").reverse().join("/");
 
-        if (inactiveUsers.length > 0) {
+      if (["owner", "sales_head", "sales_manager"].includes(user.role)) {
+        const enrichUser = (u) => ({
+          ...u,
+          shortId:     u.id.split("-")[0].toUpperCase(),
+          managerName: u.manager_id && userById[u.manager_id]
+            ? (userById[u.manager_id].full_name || userById[u.manager_id].email)
+            : "—",
+        });
+
+        const inactiveUsers    = scope.map((u) => inactivityMap[u.id]).filter((u) => u?.isInactive).map(enrichUser);
+        const loggedInNoWork   = scope.map((u) => inactivityMap[u.id]).filter((u) => u?.isLoggedInNoWork).map(enrichUser);
+
+        if (inactiveUsers.length > 0 || loggedInNoWork.length > 0) {
           await sendMail({
             to:      user.email,
-            subject: `Inactivity Report — ${inactiveUsers.length} member${inactiveUsers.length !== 1 ? "s" : ""} inactive · ${generatedAt}`,
-            html:    buildInactivityReportHtml(user, inactiveUsers, generatedAt, todayStr, rl, fmtTs),
+            subject: `Daily Inactivity Report – ${ddmmyyyy}`,
+            html:    buildInactivityReportHtml(user, inactiveUsers, loggedInNoWork, generatedAt, todayStr, rl, fmtTs),
             text:    buildInactivityReportText(user, inactiveUsers, generatedAt, rl),
           });
           sent++;
-          console.log(`[ComprehensiveInactivityCron] Inactivity sent to ${user.email} (${rl(user.role)}) — ${inactiveUsers.length} inactive`);
+          console.log(`[ComprehensiveInactivityCron] Inactivity sent to ${user.email} (${rl(user.role)}) — ${inactiveUsers.length} inactive, ${loggedInNoWork.length} logged-in-no-work`);
         }
 
       } else {
-        // employee / inside_sales: self-inactivity only
+        // employee / inside_sales: self-alert only when BOTH conditions are met
         const self = inactivityMap[user.id];
-        if (self && self.daysInactive >= ROLE_INACTIVITY_THRESHOLD) {
+        if (self?.isInactive) {
           await sendMail({
             to:      user.email,
-            subject: `Action Required: You have been inactive on Ccentrik CRM for ${self.daysInactive} day${self.daysInactive !== 1 ? "s" : ""}`,
-            html:    buildSelfInactivityHtml(user, self.daysInactive, nowIst),
-            text:    buildSelfInactivityText(user, self.daysInactive),
+            subject: `Daily Inactivity Report – ${ddmmyyyy}`,
+            html:    buildSelfInactivityHtml(user, self.daysWithoutCRMActivity, nowIst),
+            text:    buildSelfInactivityText(user, self.daysWithoutCRMActivity),
           });
           sent++;
-          console.log(`[ComprehensiveInactivityCron] Self-inactivity sent to ${user.email} (${rl(user.role)}) — ${self.daysInactive}d inactive`);
+          console.log(`[ComprehensiveInactivityCron] Self-inactivity sent to ${user.email} (${rl(user.role)}) — ${self.daysWithoutCRMActivity}d no CRM work`);
         }
       }
 
@@ -2095,8 +2199,11 @@ function buildLoginActivityReportText(recipient, loginData, todayStr, rl) {
 }
 
 // ─── Inactivity Report HTML ───────────────────────────────────────────────────
-function buildInactivityReportHtml(recipient, inactiveUsers, generatedAt, todayStr, rl, fmtTs) {
+// inactiveUsers    = BOTH no-login AND no-CRM-activity >= threshold (truly inactive)
+// loggedInNoWork   = logged in recently but no CRM activity >= threshold (informational)
+function buildInactivityReportHtml(recipient, inactiveUsers, loggedInNoWork, generatedAt, todayStr, rl, fmtTs) {
   const firstName = (recipient.full_name || "").split(" ")[0] || "Team";
+  const ddmmyyyy  = todayStr.split("-").reverse().join("/");
 
   const tRows = inactiveUsers.map((e) => `
     <tr style="border-bottom:1px solid #F3F4F6;">
@@ -2104,11 +2211,25 @@ function buildInactivityReportHtml(recipient, inactiveUsers, generatedAt, todayS
       <td style="padding:10px 12px;font-size:11.5px;color:#6B7280;font-family:monospace;">${e.shortId}</td>
       <td style="padding:10px 12px;font-size:12px;color:#374151;">${rl(e.role)}</td>
       <td style="padding:10px 12px;font-size:12px;color:#374151;">${e.managerName}</td>
-      <td style="padding:10px 12px;font-size:12px;color:#374151;">${fmtTs(e.lastActivity)}</td>
       <td style="padding:10px 12px;font-size:12px;color:#374151;">${fmtTs(e.lastLogin)}</td>
-      <td style="padding:10px 12px;text-align:center;font-size:13px;font-weight:700;color:#DC2626;">${e.daysInactive === 999 ? "Never active" : `${e.daysInactive}d`}</td>
+      <td style="padding:10px 12px;font-size:12px;color:#374151;">${fmtTs(e.lastActivity)}</td>
+      <td style="padding:10px 12px;text-align:center;font-size:13px;font-weight:700;color:#DC2626;">${e.daysWithoutLogin===999?"Never":""+e.daysWithoutLogin+"d"}</td>
+      <td style="padding:10px 12px;text-align:center;font-size:13px;font-weight:700;color:#DC2626;">${e.daysWithoutCRMActivity===999?"Never":""+e.daysWithoutCRMActivity+"d"}</td>
       <td style="padding:10px 12px;text-align:center;">
         <span style="font-size:11px;padding:2px 8px;border-radius:99px;background:#FEF2F2;color:#DC2626;border:1px solid #FECACA;font-weight:600;">Inactive</span>
+      </td>
+    </tr>`).join("");
+
+  const noWorkRows = (loggedInNoWork || []).map((e) => `
+    <tr style="border-bottom:1px solid #F3F4F6;">
+      <td style="padding:9px 12px;font-size:13px;font-weight:600;color:#111827;">${e.name}</td>
+      <td style="padding:9px 12px;font-size:12px;color:#374151;">${rl(e.role)}</td>
+      <td style="padding:9px 12px;font-size:12px;color:#374151;">${e.managerName}</td>
+      <td style="padding:9px 12px;font-size:12px;color:#374151;">${fmtTs(e.lastLogin)}</td>
+      <td style="padding:9px 12px;font-size:12px;color:#374151;">${fmtTs(e.lastActivity)}</td>
+      <td style="padding:9px 12px;text-align:center;font-size:13px;font-weight:700;color:#D97706;">${e.daysWithoutCRMActivity===999?"Never":""+e.daysWithoutCRMActivity+"d"}</td>
+      <td style="padding:9px 12px;text-align:center;">
+        <span style="font-size:11px;padding:2px 8px;border-radius:99px;background:#FEF9C3;color:#92400E;border:1px solid #FCD34D;font-weight:600;">Logged In, No CRM Work</span>
       </td>
     </tr>`).join("");
 
@@ -2121,35 +2242,57 @@ function buildInactivityReportHtml(recipient, inactiveUsers, generatedAt, todayS
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
       <td>
         <div style="font-size:21px;font-weight:800;color:#111827;margin-bottom:4px;">Hi ${firstName}, — Inactivity Report</div>
-        <div style="font-size:13px;color:#6B7280;">${inactiveUsers.length} member${inactiveUsers.length !== 1 ? "s" : ""} inactive for ${ROLE_INACTIVITY_THRESHOLD}+ days &nbsp;·&nbsp; ${todayStr}</div>
+        <div style="font-size:13px;color:#6B7280;">Daily Inactivity Report &nbsp;·&nbsp; ${ddmmyyyy} &nbsp;·&nbsp; ${inactiveUsers.length} inactive</div>
       </td>
       <td style="text-align:right;vertical-align:top;">
         <span style="font-size:11px;padding:4px 10px;background:#FEF2F2;color:#DC2626;border-radius:99px;font-weight:700;border:1px solid #FECACA;">${rl(recipient.role)}</span>
       </td>
     </tr></table>
   </td></tr>
-  <tr><td style="padding:0 32px 14px;">
-    <div style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:8px;padding:12px 16px;font-size:12.5px;color:#92400E;line-height:1.6;">
-      The following ${inactiveUsers.length > 1 ? "members" : "member"} ${inactiveUsers.length > 1 ? "have" : "has"} not performed any CRM activity for <strong>${ROLE_INACTIVITY_THRESHOLD}+</strong> consecutive days.
+  ${inactiveUsers.length > 0 ? `
+  <tr><td style="padding:0 32px 6px;">
+    <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:11px 16px;font-size:12.5px;color:#7F1D1D;line-height:1.6;">
+      <strong>Truly Inactive</strong> — no login AND no CRM activity for <strong>${ROLE_INACTIVITY_THRESHOLD}+</strong> consecutive days. Both conditions must be met.
     </div>
   </td></tr>
-  <tr><td style="padding:0 32px 28px;overflow-x:auto;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;min-width:700px;">
+  <tr><td style="padding:8px 32px 20px;overflow-x:auto;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;min-width:760px;">
       <tr style="background:#F9FAFB;">
-        <th style="padding:9px 12px;text-align:left;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Name</th>
-        <th style="padding:9px 12px;text-align:left;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">ID</th>
-        <th style="padding:9px 12px;text-align:left;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Role</th>
-        <th style="padding:9px 12px;text-align:left;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Reporting Manager</th>
-        <th style="padding:9px 12px;text-align:left;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Last Activity</th>
-        <th style="padding:9px 12px;text-align:left;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Last Login</th>
-        <th style="padding:9px 12px;text-align:center;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Inactive Days</th>
-        <th style="padding:9px 12px;text-align:center;font-size:10.5px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Status</th>
+        <th style="padding:9px 10px;text-align:left;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Name</th>
+        <th style="padding:9px 10px;text-align:left;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">ID</th>
+        <th style="padding:9px 10px;text-align:left;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Role</th>
+        <th style="padding:9px 10px;text-align:left;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Manager</th>
+        <th style="padding:9px 10px;text-align:left;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Last Login</th>
+        <th style="padding:9px 10px;text-align:left;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Last CRM Activity</th>
+        <th style="padding:9px 10px;text-align:center;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">No Login</th>
+        <th style="padding:9px 10px;text-align:center;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">No CRM Work</th>
+        <th style="padding:9px 10px;text-align:center;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Status</th>
       </tr>
       <tbody>${tRows}</tbody>
     </table>
+  </td></tr>` : ''}
+  ${noWorkRows ? `
+  <tr><td style="padding:0 32px 6px;">
+    <div style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:8px;padding:11px 16px;font-size:12.5px;color:#92400E;line-height:1.6;">
+      <strong>Logged In but No CRM Work</strong> — these members logged in recently but performed no meaningful CRM activity for ${ROLE_INACTIVITY_THRESHOLD}+ days. <em>Informational only — not counted as inactive.</em>
+    </div>
   </td></tr>
+  <tr><td style="padding:8px 32px 28px;overflow-x:auto;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;min-width:700px;">
+      <tr style="background:#F9FAFB;">
+        <th style="padding:9px 10px;text-align:left;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Name</th>
+        <th style="padding:9px 10px;text-align:left;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Role</th>
+        <th style="padding:9px 10px;text-align:left;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Manager</th>
+        <th style="padding:9px 10px;text-align:left;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Last Login</th>
+        <th style="padding:9px 10px;text-align:left;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Last CRM Activity</th>
+        <th style="padding:9px 10px;text-align:center;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Days No CRM Work</th>
+        <th style="padding:9px 10px;text-align:center;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;white-space:nowrap;">Status</th>
+      </tr>
+      <tbody>${noWorkRows}</tbody>
+    </table>
+  </td></tr>` : ''}
   <tr><td style="background:#F9FAFB;padding:14px 32px;border-top:1px solid #E5E7EB;font-size:11.5px;color:#9CA3AF;">
-    &copy; ${new Date().getFullYear()} CCENTRIK &nbsp;·&nbsp; Automated Inactivity Report &nbsp;·&nbsp; Generated: ${generatedAt} &nbsp;·&nbsp; Do not reply
+    &copy; ${new Date().getFullYear()} CCENTRIK &nbsp;·&nbsp; Daily Inactivity Report &nbsp;·&nbsp; Generated: ${generatedAt} &nbsp;·&nbsp; Do not reply
   </td></tr>
 </table></td></tr></table></body></html>`;
 }

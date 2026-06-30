@@ -510,4 +510,328 @@ function generateActivityPdf({ employeeData, staff, reportDateLabel, reportType,
   });
 }
 
-module.exports = { generateDSRPdf, generateActivityPdf };
+// ─── Enterprise multi-section DSR PDF ─────────────────────────────────────────
+// Used by role-dsr-cron. Includes all 9 sections per master spec:
+// Executive Summary / New Leads / Updated Leads / Activity Summary /
+// Meetings / Calls / Emails / Pipeline & Deals / Employee Performance
+function generateEnterpriseDSRPdf({ employeeData, staff, reportDateLabel, recipientRole, recipientName, generatedAt }) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ size: 'A4', margins: { top:0,bottom:0,left:0,right:0 }, bufferPages: true, autoFirstPage: true });
+      const bufs = [];
+      doc.on('data', b => bufs.push(b));
+      doc.on('end',  () => resolve(Buffer.concat(bufs)));
+      doc.on('error', reject);
+
+      const PW=595.28, PH=841.89, ML=36, MR=36, CW=PW-ML-MR;
+      const HDR_H=72, FTR_H=28, CS=HDR_H+16;
+
+      const NAVY='#1E3A5F', DARK='#0F172A', MED='#475569', LIGHT='#94A3B8';
+      const BDR='#E2E8F0', BG1='#F8FAFC', BG2='#F1F5F9', WHITE='#FFFFFF';
+      const GREEN='#059669', AMBER='#D97706', ERED='#DC2626';
+
+      const pad  = n => String(n||0).padStart(2,'0');
+      const ist  = ts => ts ? new Date(new Date(ts).getTime()+5.5*60*60*1000) : null;
+      const fmtD = ts => { const d=ist(ts); return d?`${pad(d.getUTCDate())}/${pad(d.getUTCMonth()+1)}`:'—'; };
+      const fmtT = ts => { const d=ist(ts); if(!d) return '—'; const h=d.getUTCHours(),m=d.getUTCMinutes(); return `${pad(h%12||12)}:${pad(m)} ${h<12?'AM':'PM'}`; };
+      const fmtDT= ts => ts ? fmtD(ts)+' '+fmtT(ts) : '—';
+      const tr   = (s,n=28) => { const x=String(s||'—'); return x.length>n?x.slice(0,n)+'…':x; };
+      const rl   = r => r==='owner'?'Super Admin':r==='sales_head'?'Sales Head':r==='sales_manager'?'Sales Manager':r==='inside_sales'?'Inside Sales':r==='sales_employee'?'Sales Employee':(r||'Staff').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+      const sl   = s => { const l=(s||'').toLowerCase(); return l==='done'||l==='completed'||l==='complete'?'Done':l==='pending'||l==='todo'?'Pending':l.includes('progress')?'In Prog.':s?(s.charAt(0).toUpperCase()+s.slice(1)):'—'; };
+      const isDone=s=>['done','completed','complete'].includes((s||'').toLowerCase());
+      const TMAP = {call:'Call',phone_call:'Call',outbound_call:'Out. Call',inbound_call:'In. Call',follow_up:'Follow-up',follow_up_call:'F/U Call',follow_up_email:'F/U Email',email:'Email',email_sent:'Email',email_received:'Email',meeting:'Meeting',meeting_virtual:'Virtual Mtg',meeting_person:'In-Person',virtual_meeting:'Virtual Mtg',in_person:'In-Person',note:'Note',task:'Task',task_created:'Task',reminder:'Reminder',whatsapp:'WhatsApp',whatsapp_message:'WhatsApp',whatsapp_follow_up:'WhatsApp',visit:'Visit',client_visit:'Visit',linkedin_connect:'LinkedIn',linkedin_message:'LinkedIn',linkedin_follow_up:'LinkedIn'};
+      const tl   = t => TMAP[(t||'').toLowerCase().replace(/[-\s]/g,'_')]||(t||'Activity').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+      const fmtR = v => { const n=Number(v)||0; if(!n) return '—'; if(n>=10000000) return `₹${(n/10000000).toFixed(1)}Cr`; if(n>=100000) return `₹${(n/100000).toFixed(1)}L`; if(n>=1000) return `₹${(n/1000).toFixed(1)}K`; return `₹${n}`; };
+      const genStr = new Date(generatedAt||Date.now()).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})+' IST';
+      const CALL_T=new Set(['call','phone_call','outbound_call','inbound_call','follow_up_call']);
+      const EMAIL_T=new Set(['email','email_sent','email_received','follow_up_email']);
+      const MTG_T=new Set(['meeting','meeting_virtual','meeting_person','virtual_meeting','in_person']);
+      const t2   = t=>(t||'').toLowerCase().replace(/[-\s]/g,'_');
+
+      // ── Aggregate across scoped staff ─────────────────────────────────────────
+      let tLeads=0,tActs=0,tMtg=0,tCalls=0,tEmails=0,tPend=0,tDone=0,tOver=0,tDeals=0;
+      const allNew=[], allUpd=[], allActs=[], allDeals=[];
+      for (const s of staff) {
+        const ed = employeeData[s.id]; if (!ed) continue;
+        const lm = ed.leadMap||{};
+        const nm = s.full_name||s.email;
+        tLeads+=ed.stats.newLeads||0; tActs+=ed.stats.total||0; tMtg+=ed.stats.meetings||0;
+        tCalls+=ed.stats.calls||0; tEmails+=ed.stats.emails||0; tPend+=ed.stats.pending||0;
+        tDone+=ed.stats.completed||0; tOver+=ed.stats.overdue||0; tDeals+=ed.stats.dealsCreated||0;
+        (ed.newLeads||[]).forEach(l=>allNew.push({...l,_by:nm,lm}));
+        (ed.updatedLeads||[]).forEach(l=>allUpd.push({...l,_by:nm,lm}));
+        (ed.activities||[]).forEach(a=>allActs.push({...a,_emp:nm,lm}));
+        (ed.deals||[]).forEach(d=>allDeals.push({...d,_emp:nm}));
+      }
+      const allMtg   = allActs.filter(a=>MTG_T.has(t2(a.type)));
+      const allCalls = allActs.filter(a=>CALL_T.has(t2(a.type)));
+      const allEmails= allActs.filter(a=>EMAIL_T.has(t2(a.type)));
+
+      // ── Layout state ─────────────────────────────────────────────────────────
+      let y = CS;
+
+      // ── Draw page header ──────────────────────────────────────────────────────
+      const drawHeader = () => {
+        doc.rect(0,0,PW,HDR_H).fill(NAVY);
+        doc.font('Helvetica-Bold').fontSize(19).fillColor(WHITE).text('CCENTRIK',ML,13,{lineBreak:false});
+        doc.font('Helvetica').fontSize(7).fillColor('#94A3B8').text('CRM',ML+88,18,{lineBreak:false});
+        doc.font('Helvetica').fontSize(8).fillColor('#CBD5E1').text('DAILY SALES REPORT',ML,39,{lineBreak:false});
+        doc.font('Helvetica-Bold').fontSize(10).fillColor(WHITE).text(reportDateLabel,PW-MR-220,13,{width:220,align:'right',lineBreak:false});
+        if (recipientName) doc.font('Helvetica').fontSize(8).fillColor('#94A3B8').text(`${tr(recipientName,24)} · ${rl(recipientRole)}`,PW-MR-220,31,{width:220,align:'right',lineBreak:false});
+        doc.font('Helvetica').fontSize(7).fillColor('#64748B').text(`Generated: ${genStr}`,PW-MR-220,49,{width:220,align:'right',lineBreak:false});
+      };
+      drawHeader();
+
+      // ── Page-break check ──────────────────────────────────────────────────────
+      const nb = need => {
+        if (y+need > PH-FTR_H-14) { doc.addPage(); drawHeader(); y=CS; }
+      };
+
+      // ── Section title ─────────────────────────────────────────────────────────
+      const sh = title => {
+        nb(36);
+        doc.rect(ML,y,4,22).fill(NAVY);
+        doc.rect(ML+4,y,CW-4,22).fill(BG2).strokeColor(BDR).lineWidth(0.4).stroke();
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(DARK).text(title.toUpperCase(),ML+12,y+7,{lineBreak:false});
+        y+=28;
+      };
+
+      // ── KPI card grid ─────────────────────────────────────────────────────────
+      const kpiGrid = (items,perRow=5) => {
+        const gap=5, cardW=(CW-gap*(perRow-1))/perRow, cardH=56;
+        let col=0,rx=y;
+        for (const item of items) {
+          if(col===0){nb(cardH+gap);rx=y;}
+          const x=ML+col*(cardW+gap);
+          doc.rect(x,rx,cardW,cardH).fill(WHITE).strokeColor(BDR).lineWidth(0.5).stroke();
+          doc.rect(x,rx,cardW,3).fill(NAVY);
+          doc.font('Helvetica-Bold').fontSize(17).fillColor(DARK).text(String(item.value??0),x+7,rx+7,{width:cardW-14,lineBreak:false});
+          doc.font('Helvetica').fontSize(6.5).fillColor(MED).text(item.label,x+7,rx+36,{width:cardW-14,lineBreak:false});
+          col++; if(col>=perRow){col=0;y=rx+cardH+gap;}
+        }
+        if(col>0) y=rx+cardH+gap;
+        y+=8;
+      };
+
+      // ── Table ─────────────────────────────────────────────────────────────────
+      const RH=21;
+      const tbl = (cols,rows,empty='No data for this period.') => {
+        const totalW=cols.reduce((s,c)=>s+c.w,0);
+        const xs=[]; let cx=ML; cols.forEach(c=>{xs.push(cx);cx+=c.w;});
+        nb(RH+2);
+        doc.rect(ML,y,totalW,RH).fill(DARK);
+        cols.forEach((c,i)=>doc.font('Helvetica-Bold').fontSize(7).fillColor(WHITE).text(c.label,xs[i]+3,y+7,{width:c.w-6,lineBreak:false,align:c.align||'left'}));
+        y+=RH;
+        if(!rows.length){
+          nb(RH); doc.rect(ML,y,totalW,RH).fill(BG1).strokeColor(BDR).lineWidth(0.3).stroke();
+          doc.font('Helvetica').fontSize(8).fillColor(LIGHT).text(empty,ML,y+7,{width:totalW,align:'center',lineBreak:false});
+          y+=RH+10; return;
+        }
+        rows.forEach((row,ri)=>{
+          nb(RH);
+          doc.rect(ML,y,totalW,RH).fill(ri%2?BG1:WHITE).strokeColor(BDR).lineWidth(0.3).stroke();
+          row.forEach((cell,ci)=>{
+            const col=cols[ci];
+            const txt=String(cell?.text??cell??'—');
+            const clr=cell?.color||DARK;
+            doc.font(cell?.bold?'Helvetica-Bold':'Helvetica').fontSize(7.5).fillColor(clr)
+              .text(txt,xs[ci]+3,y+7,{width:col.w-6,lineBreak:false,align:col.align||'left'});
+          });
+          y+=RH;
+        });
+        y+=10;
+      };
+
+      // ════════════════════════════════════════════════════════════════════════
+      // 1. EXECUTIVE SUMMARY
+      // ════════════════════════════════════════════════════════════════════════
+      sh(`Executive Summary — ${staff.length} Team Member${staff.length!==1?'s':''}`);
+      kpiGrid([
+        {label:'New Leads Added',      value:tLeads},
+        {label:'Total Activities',     value:tActs},
+        {label:'Meetings',             value:tMtg},
+        {label:'Calls',                value:tCalls},
+        {label:'Emails',               value:tEmails},
+        {label:'Completed Activities', value:tDone},
+        {label:'Pending Activities',   value:tPend},
+        {label:'Overdue Activities',   value:tOver},
+        {label:'Deals This Period',    value:tDeals},
+        {label:'Updated Leads',        value:allUpd.length},
+      ], 5);
+
+      // ════════════════════════════════════════════════════════════════════════
+      // 2. NEW LEADS
+      // ════════════════════════════════════════════════════════════════════════
+      sh(`New Leads (${allNew.length})`);
+      tbl(
+        [{label:'#',w:24,align:'center'},{label:'Company',w:115},{label:'Contact Person',w:100},{label:'Source',w:70},{label:'Assigned To',w:110},{label:'Created',w:104,align:'right'}],
+        allNew.map((l,i)=>[
+          {text:String(i+1),color:LIGHT},
+          {text:tr(l.company||l.company_name||l.full_name||'—',19),bold:true},
+          {text:tr(l.full_name||l.contact_name||'—',17)},
+          {text:tr(l.source||'—',12),color:MED},
+          {text:tr(l._by||'—',18),color:MED},
+          {text:fmtDT(l.created_at),color:MED},
+        ])
+      );
+
+      // ════════════════════════════════════════════════════════════════════════
+      // 3. UPDATED LEADS
+      // ════════════════════════════════════════════════════════════════════════
+      sh(`Updated Leads (${allUpd.length})`);
+      tbl(
+        [{label:'Lead / Company',w:165},{label:'Current Stage',w:100},{label:'Updated By',w:120},{label:'Last Updated',w:138,align:'right'}],
+        allUpd.map(l=>[
+          {text:tr(l.company||l.full_name||'—',27),bold:true},
+          {text:tr(l.stage||'—',17),color:MED},
+          {text:tr(l._by||'—',20),color:MED},
+          {text:fmtDT(l.updated_at),color:MED},
+        ])
+      );
+
+      // ════════════════════════════════════════════════════════════════════════
+      // 4. ACTIVITY SUMMARY
+      // ════════════════════════════════════════════════════════════════════════
+      sh(`Activity Summary (${allActs.length})`);
+      tbl(
+        [{label:'Company',w:105},{label:'Employee',w:90},{label:'Type',w:68},{label:'Description',w:135},{label:'Date',w:60},{label:'Status',w:65,align:'center'}],
+        allActs.map(a=>{
+          const lead=a.lm?.[a.lead_id]; const co=lead?.company||lead?.company_name||'—';
+          return [
+            {text:tr(co,17),bold:true},
+            {text:tr(a._emp,15),color:MED},
+            {text:tr(tl(a.type),12),color:NAVY},
+            {text:tr(a.description||a.title||'—',23)},
+            {text:fmtD(a.created_at),color:MED},
+            {text:sl(a.status),color:isDone(a.status)?GREEN:MED},
+          ];
+        })
+      );
+
+      // ════════════════════════════════════════════════════════════════════════
+      // 5. MEETINGS
+      // ════════════════════════════════════════════════════════════════════════
+      sh(`Meetings (${allMtg.length})`);
+      tbl(
+        [{label:'Company',w:105},{label:'Employee',w:95},{label:'Meeting Type',w:80},{label:'Date & Time',w:95},{label:'Outcome / Notes',w:148}],
+        allMtg.map(a=>{
+          const lead=a.lm?.[a.lead_id];
+          return [
+            {text:tr(lead?.company||lead?.company_name||'—',17),bold:true},
+            {text:tr(a._emp,16),color:MED},
+            {text:tr(tl(a.type),14),color:NAVY},
+            {text:fmtDT(a.created_at),color:MED},
+            {text:tr(a.description||a.title||'—',25)},
+          ];
+        })
+      );
+
+      // ════════════════════════════════════════════════════════════════════════
+      // 6. CALLS
+      // ════════════════════════════════════════════════════════════════════════
+      sh(`Calls (${allCalls.length})`);
+      tbl(
+        [{label:'Company',w:115},{label:'Employee',w:95},{label:'Call Summary',w:170},{label:'Follow-up',w:60,align:'center'},{label:'Time',w:83,align:'right'}],
+        allCalls.map(a=>{
+          const lead=a.lm?.[a.lead_id];
+          const hasFU=!!(a.next_follow_up_date||a.metadata?.next_activity);
+          return [
+            {text:tr(lead?.company||lead?.company_name||'—',19),bold:true},
+            {text:tr(a._emp,16),color:MED},
+            {text:tr(a.description||a.title||'—',29)},
+            {text:hasFU?'Yes':'No',color:hasFU?GREEN:LIGHT},
+            {text:fmtDT(a.created_at),color:MED},
+          ];
+        })
+      );
+
+      // ════════════════════════════════════════════════════════════════════════
+      // 7. EMAILS
+      // ════════════════════════════════════════════════════════════════════════
+      sh(`Emails (${allEmails.length})`);
+      tbl(
+        [{label:'Company',w:115},{label:'Employee',w:95},{label:'Subject / Description',w:185},{label:'Status',w:60,align:'center'},{label:'Sent',w:68,align:'right'}],
+        allEmails.map(a=>{
+          const lead=a.lm?.[a.lead_id];
+          return [
+            {text:tr(lead?.company||lead?.company_name||'—',19),bold:true},
+            {text:tr(a._emp,16),color:MED},
+            {text:tr(a.metadata?.subject||a.description||a.title||'—',31)},
+            {text:sl(a.status),color:isDone(a.status)?GREEN:MED},
+            {text:fmtT(a.created_at),color:MED},
+          ];
+        })
+      );
+
+      // ════════════════════════════════════════════════════════════════════════
+      // 8. PIPELINE & DEALS
+      // ════════════════════════════════════════════════════════════════════════
+      sh(`Pipeline & Deals (${allDeals.length})`);
+      tbl(
+        [{label:'Deal / Company',w:150},{label:'Employee',w:105},{label:'Stage',w:90},{label:'Value',w:72,align:'right'},{label:'Status',w:60,align:'center'},{label:'Created',w:46,align:'center'}],
+        allDeals.map(d=>{
+          const isWon=(d.status||'').toLowerCase()==='won';
+          const isLost=(d.status||'').toLowerCase()==='lost';
+          return [
+            {text:tr(d.name||'—',24),bold:true},
+            {text:tr(d._emp||'—',17),color:MED},
+            {text:tr(d.stage||'—',15),color:MED},
+            {text:fmtR(d.value),color:isWon?GREEN:DARK},
+            {text:isWon?'Won':isLost?'Lost':'Active',color:isWon?GREEN:isLost?ERED:MED},
+            {text:fmtD(d.created_at),color:LIGHT},
+          ];
+        })
+      );
+
+      // ════════════════════════════════════════════════════════════════════════
+      // 9. EMPLOYEE PERFORMANCE
+      // ════════════════════════════════════════════════════════════════════════
+      sh(`Employee Performance (${staff.length})`);
+      tbl(
+        [
+          {label:'Employee',  w:115},
+          {label:'Role',      w:80},
+          {label:'Leads',     w:38,align:'center'},
+          {label:'Activities',w:55,align:'center'},
+          {label:'Calls',     w:38,align:'center'},
+          {label:'Emails',    w:42,align:'center'},
+          {label:'Meetings',  w:50,align:'center'},
+          {label:'Done',      w:38,align:'center'},
+          {label:'Pending',   w:47,align:'center'},
+          {label:'Score',     w:20,align:'center'},
+        ],
+        staff.map(s=>{
+          const st=employeeData[s.id]?.stats||{};
+          const has=st.total>0;
+          return [
+            {text:tr(s.full_name||s.email,19),bold:true},
+            {text:tr(rl(s.role),13),color:MED},
+            {text:String(st.newLeads||0),color:has?DARK:LIGHT},
+            {text:String(st.total||0),color:has?DARK:LIGHT},
+            {text:String(st.calls||0),color:has?DARK:LIGHT},
+            {text:String(st.emails||0),color:has?DARK:LIGHT},
+            {text:String(st.meetings||0),color:has?DARK:LIGHT},
+            {text:String(st.completed||0),color:has?GREEN:LIGHT},
+            {text:String(st.pending||0),color:has&&st.pending>0?AMBER:LIGHT},
+            {text:has?`${st.efficiency||0}%`:'—',color:has?NAVY:LIGHT},
+          ];
+        })
+      );
+
+      // ── Footers on every page ─────────────────────────────────────────────────
+      const range=doc.bufferedPageRange();
+      for(let i=0;i<range.count;i++){
+        doc.switchToPage(range.start+i);
+        const fy=PH-FTR_H;
+        doc.rect(0,fy,PW,FTR_H).fill(BG2).strokeColor(BDR).lineWidth(0.3).stroke();
+        doc.font('Helvetica').fontSize(7.5).fillColor(LIGHT)
+          .text(`© ${new Date().getFullYear()} CCENTRIK CRM  ·  Daily Sales Report  ·  ${reportDateLabel}  ·  Do not reply`,ML,fy+8,{width:CW*0.72,lineBreak:false});
+        doc.font('Helvetica').fontSize(7.5).fillColor(MED)
+          .text(`Page ${i+1} of ${range.count}`,ML+CW*0.72,fy+8,{width:CW*0.28,align:'right',lineBreak:false});
+      }
+      doc.end();
+    } catch(err){ reject(err); }
+  });
+}
+
+module.exports = { generateDSRPdf, generateActivityPdf, generateEnterpriseDSRPdf };
