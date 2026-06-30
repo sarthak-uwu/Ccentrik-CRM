@@ -434,7 +434,7 @@ function generateActivityPdf({ employeeData, staff, reportDateLabel, reportType,
         [
           {label:'Time',           key:a=>ts(a.created_at),                                     w:52 },
           {label:'Activity Type',  key:a=>tlbl(a.type),                                         w:100},
-          {label:'Lead / Company', key:a=>{ const l=leadMap[a.lead_id]; return l?(l.full_name||l.company||'-'):'-'; }, w:140, max:28},
+          {label:'Lead / Company', key:a=>{ const l=leadMap[a.lead_id]; return l?(l.contact_name||l.company_name||'-'):'-'; }, w:140, max:28},
           {label:'Description',    key:a=>trunc(a.title||a.description||'',35),                 w:descW},
           {label:'Status',         key:a=>slbl(a.status), w:72, color:a=>scol(a.status), bold:true},
         ],
@@ -450,8 +450,8 @@ function generateActivityPdf({ employeeData, staff, reportDateLabel, reportType,
       if (allLeads.length) {
         tbl(
           [
-            {label:'Company', key:l=>l.company||'-',                                              w:140, max:26},
-            {label:'Contact', key:l=>l.full_name||'-',                                            w:120, max:22},
+            {label:'Company', key:l=>l.company_name||'-',                                          w:140, max:26},
+            {label:'Contact', key:l=>l.contact_name||'-',                                         w:120, max:22},
             {label:'Stage',   key:l=>(l.stage||'-').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()), w:100, max:18},
             {label:'Status',  key:l=>(l.status||'-').replace(/\b\w/g,c=>c.toUpperCase()),         w:90, max:16},
             {label:'Email',   key:l=>l.email||'-',                                                w:CW-140-120-100-90, max:24},
@@ -667,8 +667,8 @@ function generateEnterpriseDSRPdf({ employeeData, staff, reportDateLabel, recipi
         [{label:'#',w:24,align:'center'},{label:'Company',w:115},{label:'Contact Person',w:100},{label:'Source',w:70},{label:'Assigned To',w:110},{label:'Created',w:104,align:'right'}],
         allNew.map((l,i)=>[
           {text:String(i+1),color:LIGHT},
-          {text:tr(l.company||l.company_name||l.full_name||'—',19),bold:true},
-          {text:tr(l.full_name||l.contact_name||'—',17)},
+          {text:tr(l.company_name||l.contact_name||'—',19),bold:true},
+          {text:tr(l.contact_name||'—',17)},
           {text:tr(l.source||'—',12),color:MED},
           {text:tr(l._by||'—',18),color:MED},
           {text:fmtDT(l.created_at),color:MED},
@@ -682,7 +682,7 @@ function generateEnterpriseDSRPdf({ employeeData, staff, reportDateLabel, recipi
       tbl(
         [{label:'Lead / Company',w:165},{label:'Current Stage',w:100},{label:'Updated By',w:120},{label:'Last Updated',w:138,align:'right'}],
         allUpd.map(l=>[
-          {text:tr(l.company||l.full_name||'—',27),bold:true},
+          {text:tr(l.company_name||l.contact_name||'—',27),bold:true},
           {text:tr(l.stage||'—',17),color:MED},
           {text:tr(l._by||'—',20),color:MED},
           {text:fmtDT(l.updated_at),color:MED},
@@ -696,7 +696,7 @@ function generateEnterpriseDSRPdf({ employeeData, staff, reportDateLabel, recipi
       tbl(
         [{label:'Company',w:105},{label:'Employee',w:90},{label:'Type',w:68},{label:'Description',w:135},{label:'Date',w:60},{label:'Status',w:65,align:'center'}],
         allActs.map(a=>{
-          const lead=a.lm?.[a.lead_id]; const co=lead?.company||lead?.company_name||'—';
+          const lead=a.lm?.[a.lead_id]; const co=lead?.company_name||lead?.contact_name||'—';
           return [
             {text:tr(co,17),bold:true},
             {text:tr(a._emp,15),color:MED},
@@ -717,7 +717,7 @@ function generateEnterpriseDSRPdf({ employeeData, staff, reportDateLabel, recipi
         allMtg.map(a=>{
           const lead=a.lm?.[a.lead_id];
           return [
-            {text:tr(lead?.company||lead?.company_name||'—',17),bold:true},
+            {text:tr(lead?.company_name||lead?.contact_name||'—',17),bold:true},
             {text:tr(a._emp,16),color:MED},
             {text:tr(tl(a.type),14),color:NAVY},
             {text:fmtDT(a.created_at),color:MED},
@@ -736,7 +736,7 @@ function generateEnterpriseDSRPdf({ employeeData, staff, reportDateLabel, recipi
           const lead=a.lm?.[a.lead_id];
           const hasFU=!!(a.next_follow_up_date||a.metadata?.next_activity);
           return [
-            {text:tr(lead?.company||lead?.company_name||'—',19),bold:true},
+            {text:tr(lead?.company_name||lead?.contact_name||'—',19),bold:true},
             {text:tr(a._emp,16),color:MED},
             {text:tr(a.description||a.title||'—',29)},
             {text:hasFU?'Yes':'No',color:hasFU?GREEN:LIGHT},
@@ -754,7 +754,7 @@ function generateEnterpriseDSRPdf({ employeeData, staff, reportDateLabel, recipi
         allEmails.map(a=>{
           const lead=a.lm?.[a.lead_id];
           return [
-            {text:tr(lead?.company||lead?.company_name||'—',19),bold:true},
+            {text:tr(lead?.company_name||lead?.contact_name||'—',19),bold:true},
             {text:tr(a._emp,16),color:MED},
             {text:tr(a.metadata?.subject||a.description||a.title||'—',31)},
             {text:sl(a.status),color:isDone(a.status)?GREEN:MED},

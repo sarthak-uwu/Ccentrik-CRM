@@ -1784,8 +1784,19 @@ async function sendRoleBasedDSR({ dayStart, dayEnd, dateLabel, todayStr }) {
 
   // All roles receive a DSR — scope varies by role
   const RECIPIENT_ROLES = ["owner", "sales_head", "sales_manager", "sales_employee", "inside_sales"];
-  const recipients = allUsers.filter((u) => RECIPIENT_ROLES.includes(u.role));
+  let recipients = allUsers.filter((u) => RECIPIENT_ROLES.includes(u.role));
   if (!recipients.length) return { sent: 0, total_recipients: 0 };
+
+  // DSR_TEST_NAMES restricts delivery during testing phase (comma-separated full names)
+  // Remove this env var to restore normal production delivery
+  const testNames = process.env.DSR_TEST_NAMES
+    ? process.env.DSR_TEST_NAMES.split(",").map((n) => n.trim().toLowerCase()).filter(Boolean)
+    : null;
+  if (testNames?.length) {
+    const before = recipients.length;
+    recipients = recipients.filter((u) => testNames.some((t) => (u.full_name || "").toLowerCase().includes(t)));
+    console.log(`[RoleDSR] TEST MODE active — ${recipients.length}/${before} recipients match DSR_TEST_NAMES`);
+  }
 
   // Bulk fetch activity data for ALL non-owner users in one pass
   const allStaffIds = allUsers.filter((u) => u.role !== "owner").map((u) => u.id);
@@ -2585,5 +2596,43 @@ async function runLeadInactivityCheck(nowIst) {
   console.log(`[LeadInactivityCron] Done — ${processed} leads, ${warned7} 7d, ${warned25} 25d, ${unassigned} auto-unassigned`);
   return { processed, warned7, warned25, unassigned, errors: errors.length ? errors : undefined };
 }
+
+// ─── GET /api/reports/dsr-score-config ───────────────────────────────────────
+// Returns the admin-configured scoring parameters for the DSR Teams table.
+router.get("/dsr-score-config", authenticate, authorize("owner", "sales_head"), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("dsr_score_config")
+      .select("metrics")
+      .eq("id", 1)
+      .single();
+    if (error && error.code !== "PGRST116") throw error;
+    res.json({ metrics: data?.metrics || [] });
+  } catch (err) {
+    console.error("[ScoreConfig] GET error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── PUT /api/reports/dsr-score-config ───────────────────────────────────────
+// Saves the scoring parameter configuration (owner/sales_head only).
+router.put("/dsr-score-config", authenticate, authorize("owner", "sales_head"), async (req, res) => {
+  try {
+    const { metrics } = req.body;
+    if (!Array.isArray(metrics)) return res.status(400).json({ error: "metrics must be an array" });
+    const { error } = await supabase
+      .from("dsr_score_config")
+      .upsert(
+        { id: 1, metrics, updated_by: req.profile.id, updated_at: new Date().toISOString() },
+        { onConflict: "id" }
+      );
+    if (error) throw error;
+    console.log(`[ScoreConfig] Updated by ${req.profile.email} — ${metrics.length} metrics`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("[ScoreConfig] PUT error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 module.exports = router;

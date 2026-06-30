@@ -561,14 +561,14 @@ async function generateEmployeeActivityData(staffIds, dayStart, dayEnd) {
   let leadMap = {};
   if (leadIds.length > 0) {
     const { data: lds } = await supabase.from("leads")
-      .select("id, full_name, company, phone, email, source, stage, designation")
+      .select("id, contact_name, company_name, phone, email, source, stage, designation")
       .in("id", leadIds);
     (lds || []).forEach(l => { leadMap[l.id] = l; });
   }
 
   // Leads created in period by these employees
   const { data: newLeadsRaw } = await supabase.from("leads")
-    .select("id, full_name, company, phone, email, source, stage, designation, owner_id, created_at")
+    .select("id, contact_name, company_name, phone, email, source, stage, designation, owner_id, created_at")
     .gte("created_at", dayStart)
     .lte("created_at", dayEnd)
     .in("owner_id", staffIds);
@@ -581,7 +581,7 @@ async function generateEmployeeActivityData(staffIds, dayStart, dayEnd) {
 
   // Leads updated today but NOT created today (stage / field changes)
   const { data: updatedLeadsRaw } = await supabase.from("leads")
-    .select("id, full_name, company, phone, email, source, stage, owner_id, updated_at, created_at")
+    .select("id, contact_name, company_name, phone, email, source, stage, owner_id, updated_at, created_at")
     .gte("updated_at", dayStart)
     .lte("updated_at", dayEnd)
     .lt("created_at", dayStart)

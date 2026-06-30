@@ -14,7 +14,7 @@ import {
   BarChart2, Clock, AlertCircle, ChevronLeft, ChevronRight, Calendar,
   Users, Target, ArrowRight, Award, Download, Printer,
   LayoutGrid, CalendarDays, PieChart, Activity, X, Search,
-  DollarSign, Star, BarChart3, Bell, Send, Loader2, Settings, History, Lock,
+  DollarSign, Star, BarChart3, Bell, Send, Loader2, Settings, History, Lock, Plus, Trash2,
 } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
@@ -2389,6 +2389,128 @@ function InactivityAlertModal({ onClose }) {
   );
 }
 
+/* ─── Score Configuration Modal ──────────────────────────────────────────── */
+function ScoreConfigModal({ onClose }) {
+  const { user }                    = useAuth();
+  const [metrics, setMetrics]       = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [saving, setSaving]         = useState(false);
+  const [addMode, setAddMode]       = useState(false);
+  const [newM, setNewM]             = useState({ name: "", description: "", points: "" });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        const r = await fetch(`${API}/api/reports/dsr-score-config`, { headers: { Authorization: `Bearer ${token}` } });
+        if (r.ok) { const d = await r.json(); setMetrics(d.metrics || []); }
+      } catch {}
+      setLoading(false);
+    })();
+  }, [user]);
+
+  const persist = async (updated) => {
+    setSaving(true);
+    try {
+      const token = await user.getIdToken();
+      const r = await fetch(`${API}/api/reports/dsr-score-config`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ metrics: updated }),
+      });
+      if (r.ok) { setMetrics(updated); toast.success("Score configuration saved"); }
+      else toast.error("Failed to save");
+    } catch { toast.error("Failed to save"); }
+    setSaving(false);
+  };
+
+  const addMetric = () => {
+    if (!newM.name.trim()) return;
+    const entry = { id: Date.now().toString(), name: newM.name.trim(), description: newM.description.trim(), points: parseInt(newM.points) || 0, enabled: true };
+    setNewM({ name: "", description: "", points: "" });
+    setAddMode(false);
+    persist([...metrics, entry]);
+  };
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", padding: 16 }}>
+      <div style={{ background: "var(--surface)", borderRadius: 16, padding: 28, width: 540, maxWidth: "100%", maxHeight: "80vh", overflow: "auto", border: "1px solid var(--border)", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <Settings size={15} style={{ color: "#6366F1" }} />
+          <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>Score Configuration</span>
+          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", display: "flex" }}><X size={17} /></button>
+        </div>
+        <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 20, lineHeight: 1.6 }}>
+          Define scoring parameters for your team. Assign point values to activity types — scores will appear in the Teams table once parameters are configured. No formula is assumed; you define the rules.
+        </p>
+
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
+        ) : (
+          <>
+            {metrics.length === 0 && !addMode && (
+              <div style={{ textAlign: "center", padding: 32, color: "var(--text-muted)", background: "var(--surface-2)", borderRadius: 10, marginBottom: 14, fontSize: 13, border: "1px dashed var(--border)" }}>
+                No scoring parameters configured yet.<br />Click "Add Parameter" to define your first metric.
+              </div>
+            )}
+
+            {metrics.map((m) => (
+              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "var(--surface-2)", borderRadius: 9, marginBottom: 7, border: "1px solid var(--border)" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: m.enabled ? "var(--text)" : "var(--text-muted)" }}>{m.name}</div>
+                  {m.description && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{m.description}</div>}
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 800, color: m.enabled ? "#6366F1" : "var(--text-muted)", minWidth: 48, textAlign: "right" }}>{m.points} pts</span>
+                <button onClick={() => persist(metrics.map(x => x.id === m.id ? { ...x, enabled: !x.enabled } : x))} disabled={saving}
+                  style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 8px", borderRadius: 6, border: `1px solid ${m.enabled ? "#10B981" : "#EF4444"}`, color: m.enabled ? "#10B981" : "#EF4444", background: "none", cursor: "pointer" }}>
+                  {m.enabled ? "ON" : "OFF"}
+                </button>
+                <button onClick={() => persist(metrics.filter(x => x.id !== m.id))} disabled={saving}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "#EF4444", display: "flex", padding: 2 }}>
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+
+            {addMode ? (
+              <div style={{ background: "rgba(99,102,241,0.06)", borderRadius: 10, padding: 16, border: "1px solid rgba(99,102,241,0.3)", marginTop: 10 }}>
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  <input placeholder="Metric name  e.g. Call, Meeting" value={newM.name} onChange={e => setNewM(p => ({ ...p, name: e.target.value }))}
+                    style={{ flex: 2, padding: "7px 10px", borderRadius: 7, border: "1px solid var(--border)", fontSize: 12.5, background: "var(--surface)", color: "var(--text)" }} />
+                  <input placeholder="Points" type="number" min="0" value={newM.points} onChange={e => setNewM(p => ({ ...p, points: e.target.value }))}
+                    style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: "1px solid var(--border)", fontSize: 12.5, background: "var(--surface)", color: "var(--text)" }} />
+                </div>
+                <input placeholder="Description (optional)" value={newM.description} onChange={e => setNewM(p => ({ ...p, description: e.target.value }))}
+                  style={{ width: "100%", padding: "7px 10px", borderRadius: 7, border: "1px solid var(--border)", fontSize: 12.5, background: "var(--surface)", color: "var(--text)", marginBottom: 10, boxSizing: "border-box" }} />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={addMetric} disabled={saving || !newM.name.trim()}
+                    style={{ padding: "7px 18px", background: "#6366F1", color: "#fff", border: "none", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", opacity: !newM.name.trim() ? 0.5 : 1 }}>
+                    {saving ? "Saving…" : "Add"}
+                  </button>
+                  <button onClick={() => { setAddMode(false); setNewM({ name: "", description: "", points: "" }); }}
+                    style={{ padding: "7px 14px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12.5, cursor: "pointer", color: "var(--text-muted)" }}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => setAddMode(true)}
+                style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "rgba(99,102,241,0.06)", border: "1px dashed #6366F1", borderRadius: 9, fontSize: 12.5, fontWeight: 600, color: "#6366F1", cursor: "pointer", width: "100%" }}>
+                <Plus size={14} /> Add Parameter
+              </button>
+            )}
+
+            <div style={{ marginTop: 18, padding: "10px 14px", background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.25)", borderRadius: 9, fontSize: 11.5, color: "#B45309" }}>
+              Scores calculated from these parameters will appear in the Teams table. Parameters marked OFF are excluded from scoring.
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    MAIN PAGE
 ═══════════════════════════════════════════════════════════════════════ */
@@ -2407,6 +2529,7 @@ export default function DSRPage() {
   const [dsrDownloadOpen,      setDsrDownloadOpen]      = useState(false);
   const [schedulerOpen,        setSchedulerOpen]        = useState(false);
   const [inactivityAlertOpen,  setInactivityAlertOpen]  = useState(false);
+  const [scoreConfigOpen,      setScoreConfigOpen]      = useState(false);
   const [activeTab, setActiveTab]           = useState("overview");
   const [range, setRange]                   = useState("daily");
   const [selectedDate, setSelectedDate]     = useState(new Date());
@@ -3637,6 +3760,10 @@ export default function DSRPage() {
                 <Award size={14} style={{ color: "#F59E0B" }} />
                 <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>Team Performance</span>
                 <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", padding: "2px 9px", borderRadius: 99, background: "var(--surface-2)", border: "1px solid var(--border)" }}>{allUsers.length} members</span>
+                <button onClick={() => setScoreConfigOpen(true)}
+                  style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 11px", background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: 8, fontSize: 11.5, fontWeight: 600, color: "#6366F1", cursor: "pointer" }}>
+                  <Settings size={12} /> Configure Scoring
+                </button>
                 <span style={{ marginLeft: "auto", fontSize: 11.5, color: "var(--text-muted)" }}>{periodLabel}</span>
               </div>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
@@ -3705,6 +3832,11 @@ export default function DSRPage() {
       <AnimatePresence>
         {inactivityAlertOpen && <InactivityAlertModal onClose={() => setInactivityAlertOpen(false)} />}
       </AnimatePresence>
+
+      {/* ── Score Configuration Modal (owner / sales_head only) ── */}
+      {scoreConfigOpen && isOwnerOrHead && (
+        <ScoreConfigModal onClose={() => setScoreConfigOpen(false)} />
+      )}
     </div>
   );
 }
