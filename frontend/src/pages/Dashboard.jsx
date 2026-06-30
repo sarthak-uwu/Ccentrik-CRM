@@ -1430,9 +1430,12 @@ function DSRSnapshotWidget({ userId, navigate, dragHandleProps, collapsed, onTog
 /* ─── Inactive Lead Alerts Widget ──────────────────────────────────────── */
 function InactiveLeadAlertsWidget({ navigate, dragHandleProps, collapsed, onToggle }) {
   const { profile, getToken, isOwner, isSalesHead, isFieldUser } = useAuth();
-  const [assignModal, setAssignModal] = useState(null); // { leadId, leadName }
-  const [assignTo,    setAssignTo]    = useState("");
-  const [assigning,   setAssigning]   = useState(false);
+  const [assignModal,    setAssignModal]    = useState(null); // { leadId, leadName }
+  const [assignTo,       setAssignTo]       = useState("");
+  const [assigning,      setAssigning]      = useState(false);
+  const [empLeadsModal,  setEmpLeadsModal]  = useState(null); // { empId, empName }
+  const [empLeads,       setEmpLeads]       = useState([]);
+  const [empLeadsLoading, setEmpLeadsLoading] = useState(false);
 
   const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
 
@@ -1490,6 +1493,20 @@ function InactiveLeadAlertsWidget({ navigate, dragHandleProps, collapsed, onTogg
     } finally {
       setAssigning(false);
     }
+  };
+
+  const openEmpLeads = async (emp) => {
+    setEmpLeadsModal({ empId: emp.id, empName: emp.full_name });
+    setEmpLeads([]);
+    setEmpLeadsLoading(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API}/api/leads/inactive-by-employee/${emp.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) setEmpLeads(await res.json());
+    } catch {}
+    setEmpLeadsLoading(false);
   };
 
   const daysAgo = (ts) => ts ? Math.floor((Date.now() - new Date(ts).getTime()) / 86400000) : null;
@@ -1558,7 +1575,7 @@ function InactiveLeadAlertsWidget({ navigate, dragHandleProps, collapsed, onTogg
                       </div>
                       <StatusBadge status={lead.inactivity_status} lastTs={lead.last_activity_at} />
                       <button
-                        onClick={() => navigate(`/leads?id=${lead.id}`)}
+                        onClick={() => navigate(`/leads?selected=${lead.id}`)}
                         style={{ background: "none", border: "1px solid var(--border)", borderRadius: 7, padding: "3px 9px", cursor: "pointer", fontSize: 11, color: "var(--text-2)", fontFamily: "inherit" }}
                       >
                         View
@@ -1609,7 +1626,10 @@ function InactiveLeadAlertsWidget({ navigate, dragHandleProps, collapsed, onTogg
                 <div style={{ marginTop: 14 }}>
                   <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Employee Distribution</div>
                   {employeeBreakdown.slice(0, 8).map(emp => (
-                    <div key={emp.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                    <div key={emp.id} onClick={() => openEmpLeads(emp)}
+                      style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--border)", cursor: "pointer", borderRadius: 6, transition: "background 0.12s" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "var(--surface-2)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <div style={{ flex: 1, fontSize: 12.5, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{emp.full_name}</div>
                       <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                         {emp.warning7 > 0 && (
@@ -1622,7 +1642,7 @@ function InactiveLeadAlertsWidget({ navigate, dragHandleProps, collapsed, onTogg
                           <span style={{ fontSize: 10, fontWeight: 700, color: "#EF4444", background: "#FEF2F2", border: "1px solid #FECACA", padding: "1px 6px", borderRadius: 99 }}>{emp.autoUnassigned}×off</span>
                         )}
                       </div>
-                      <span style={{ fontSize: 11, color: "var(--text-muted)", minWidth: 16, textAlign: "right" }}>{emp.total}</span>
+                      <span style={{ fontSize: 11, color: "#EF4444", fontWeight: 700, minWidth: 16, textAlign: "right" }}>{emp.total}</span>
                     </div>
                   ))}
                 </div>
@@ -1684,6 +1704,58 @@ function InactiveLeadAlertsWidget({ navigate, dragHandleProps, collapsed, onTogg
                 {assigning ? "Assigning..." : "Assign Lead"}
               </button>
             </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── Employee inactive leads modal ── */}
+      {empLeadsModal && createPortal(
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: 16 }}
+          onClick={e => e.target === e.currentTarget && setEmpLeadsModal(null)}>
+          <div style={{ background: "var(--surface)", borderRadius: 16, padding: 24, width: 560, maxWidth: "100%", maxHeight: "80vh", overflow: "auto", border: "1px solid var(--border)", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", flex: 1 }}>
+                Inactive Leads — {empLeadsModal.empName}
+              </span>
+              <button onClick={() => setEmpLeadsModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: 18, lineHeight: 1 }}>✕</button>
+            </div>
+
+            {empLeadsLoading ? (
+              <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)", fontSize: 13 }}>Loading leads…</div>
+            ) : empLeads.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)", fontSize: 13 }}>No inactive leads found for this employee.</div>
+            ) : (
+              empLeads.map(lead => {
+                const days = daysAgo(lead.last_activity_at);
+                const statusColor = lead.inactivity_status === "auto_unassigned" ? "#EF4444" : lead.inactivity_status === "warning_25" ? "#F97316" : "#F59E0B";
+                const statusLabel = lead.inactivity_status === "auto_unassigned" ? "Auto-Unassigned" : lead.inactivity_status === "warning_25" ? "25d Warning" : "7d Reminder";
+                return (
+                  <div key={lead.id} style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: "#991B1B" }}>{lead.company_name || lead.contact_name || "—"}</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: statusColor, background: "#fff", border: `1px solid ${statusColor}`, padding: "1px 7px", borderRadius: 99 }}>{statusLabel}</span>
+                        </div>
+                        {lead.company_name && lead.contact_name && (
+                          <div style={{ fontSize: 11, color: "#EF4444", marginTop: 2 }}>{lead.contact_name}</div>
+                        )}
+                        <div style={{ fontSize: 11.5, color: "#B45309", marginTop: 5, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                          <span>Last activity: <strong>{days !== null ? `${days}d ago` : "Never"}</strong></span>
+                          {lead.stage && <span>Stage: <strong style={{ textTransform: "capitalize" }}>{lead.stage.replace(/_/g, " ")}</strong></span>}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => { setEmpLeadsModal(null); navigate(`/leads?selected=${lead.id}`); }}
+                        style={{ flexShrink: 0, padding: "5px 13px", background: "#EF4444", color: "#fff", border: "none", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                        Open
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>,
         document.body

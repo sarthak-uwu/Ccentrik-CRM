@@ -228,6 +228,24 @@ router.get("/inactive-summary", authenticate, async (req, res) => {
   }
 });
 
+// GET /api/leads/inactive-by-employee/:employeeId
+// Owner/Sales Head only — returns all inactive leads for a specific employee.
+router.get("/inactive-by-employee/:employeeId", authenticate, authorize("owner", "sales_head"), async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { data: leads, error } = await supabase
+      .from("leads")
+      .select("id, company_name, contact_name, assigned_to, previous_assigned_to, stage, last_activity_at, inactivity_status")
+      .or(`assigned_to.eq.${employeeId},previous_assigned_to.eq.${employeeId}`)
+      .in("inactivity_status", ["warning_7", "warning_25", "auto_unassigned"])
+      .order("last_activity_at", { ascending: true, nullsFirst: true });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(leads || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/leads/:id
 router.get("/:id", authenticate, async (req, res) => {
   const { data, error } = await supabase
