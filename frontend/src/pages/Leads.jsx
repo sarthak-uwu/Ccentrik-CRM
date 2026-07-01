@@ -1982,7 +1982,13 @@ export default function Leads() {
     const rows = parseCSVText(text).filter((r) => r["Company"] || r["Contact Name"]);
     if (rows.length === 0) { toast.error("No valid rows found"); e.target.value = ""; return; }
 
-    const { data: existingRaw } = await supabase.from("leads").select("id, company_name, contact_name, stage, other_notes, created_at");
+    // Fetch only leads visible to the current user so duplicate check respects role scope.
+    // Employees compare against their own leads only; managers/admins see their visible scope.
+    let existingQuery = supabase.from("leads").select("id, company_name, contact_name, stage, other_notes, created_at");
+    if (!["owner", "sales_head"].includes(profile?.role)) {
+      existingQuery = existingQuery.eq("assigned_to", profile?.id);
+    }
+    const { data: existingRaw } = await existingQuery;
     const existing = existingRaw || [];
 
     let ok = 0, exactDups = 0, partialSimilar = 0, fail = 0;

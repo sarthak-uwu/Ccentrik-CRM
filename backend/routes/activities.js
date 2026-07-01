@@ -55,6 +55,24 @@ router.post("/", authenticate, async (req, res) => {
     .select()
     .single();
   if (error) return res.status(400).json({ error: error.message });
+
+  // Immediately update last_activity_at on the linked lead and reset inactivity status.
+  // This ensures the dashboard reflects the new activity without waiting for the nightly cron.
+  const activityTs = data.created_at || new Date().toISOString();
+  if (data.lead_id) {
+    supabase.from("leads")
+      .update({ last_activity_at: activityTs, inactivity_status: "active" })
+      .eq("id", data.lead_id)
+      .then(() => {}).catch(() => {});
+  }
+  // For deals, update updated_at so StaleDealsWidget reflects the new activity.
+  if (data.deal_id) {
+    supabase.from("deals")
+      .update({ updated_at: activityTs })
+      .eq("id", data.deal_id)
+      .then(() => {}).catch(() => {});
+  }
+
   res.status(201).json(data);
 });
 

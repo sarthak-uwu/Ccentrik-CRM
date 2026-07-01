@@ -1450,8 +1450,8 @@ function InactiveLeadAlertsWidget({ navigate, dragHandleProps, collapsed, onTogg
       return res.json();
     },
     enabled: !!profile?.id,
-    staleTime: 5 * 60 * 1000,
-    refetchInterval: 10 * 60 * 1000,
+    staleTime: 0,
+    refetchInterval: 60 * 1000,
   });
 
   const { data: teamData } = useQuery({
@@ -1907,6 +1907,10 @@ export default function Dashboard() {
         qc.invalidateQueries({ queryKey: ["activities"] });
         qc.invalidateQueries({ queryKey: ["recent-activity"] });
         qc.invalidateQueries({ queryKey: ["dsr-snap-acts", profile.id] });
+        qc.invalidateQueries({ queryKey: ["inactive-lead-summary"] });
+        qc.invalidateQueries({ queryKey: ["deals-all"] });
+        qc.invalidateQueries({ queryKey: ["my-deals", profile.id] });
+        qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, () => {
         qc.invalidateQueries({ queryKey: ["my-tasks"] });
@@ -1923,6 +1927,7 @@ export default function Dashboard() {
         qc.invalidateQueries({ queryKey: ["activities"] });
         qc.invalidateQueries({ queryKey: ["my-tasks"] });
         qc.invalidateQueries({ queryKey: ["recent-activity"] });
+        qc.invalidateQueries({ queryKey: ["inactive-lead-summary"] });
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "meetings" }, () => {
         qc.invalidateQueries({ queryKey: ["upcoming-meetings"] });

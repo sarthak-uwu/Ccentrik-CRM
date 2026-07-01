@@ -1248,6 +1248,9 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                 onSuccess={() => {
                   qc.invalidateQueries({ queryKey: ["unified-timeline-lead", lead.id] });
                   qc.invalidateQueries({ queryKey: ["activities"] });
+                  qc.invalidateQueries({ queryKey: ["inactive-lead-summary"] });
+                  qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
+                  qc.invalidateQueries({ queryKey: ["recent-activity"] });
                 }}
               />
 

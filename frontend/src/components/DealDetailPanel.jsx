@@ -1072,6 +1072,10 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
                 onSuccess={() => {
                   qc.invalidateQueries({ queryKey: ["unified-timeline-deal", deal.id] });
                   qc.invalidateQueries({ queryKey: ["activities"] });
+                  qc.invalidateQueries({ queryKey: ["deals-all"] });
+                  qc.invalidateQueries({ queryKey: ["my-deals"] });
+                  qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
+                  qc.invalidateQueries({ queryKey: ["recent-activity"] });
                 }}
               />
 

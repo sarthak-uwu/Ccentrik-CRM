@@ -59,7 +59,7 @@ function runDetection(newFields, existingRecords, notesKey, phoneKey) {
   for (const rec of existingRecords) {
     const existF = extractFields(rec, notesKey, phoneKey);
     const { score, reasons } = computeScore(newFields, existF);
-    if (score >= 70) exact.push({ record: rec, score, reasons });
+    if (score >= 60) exact.push({ record: rec, score, reasons });
     else if (score >= 25) partial.push({ record: rec, score, reasons });
   }
 
