@@ -1,5 +1,5 @@
 const normalize = (v) => (v || "").trim().toLowerCase();
-const normalizePhone = (v) => (v || "").replace(/\D/g, "");
+const normalizePhone = (v) => (v || "").replace(/\D/g, "").slice(-10); // last 10 digits
 
 function parseNotes(record, key) {
   const val = record[key];
@@ -11,11 +11,12 @@ function parseNotes(record, key) {
 function extractFields(record, notesKey, phoneKey) {
   const notes = parseNotes(record, notesKey);
   return {
-    company: normalize(record.company_name || record.title || ""),
-    contact: normalize(record.contact_name || ""),
-    email: normalize(notes.email || ""),
-    phone: normalizePhone(notes[phoneKey] || ""),
-    website: normalize(notes.website || ""),
+    company:  normalize(record.company_name || record.title || ""),
+    contact:  normalize(record.contact_name || ""),
+    email:    normalize(notes.email || ""),
+    phone:    normalizePhone(notes[phoneKey] || ""),
+    linkedin: normalize(notes.linkedin || ""),
+    website:  normalize(notes.website || ""),
   };
 }
 
@@ -25,9 +26,9 @@ function computeScore(newF, existF) {
 
   if (newF.company && existF.company) {
     if (newF.company === existF.company) {
-      score += 60; reasons.push("Company name matches");
+      score += 50; reasons.push("Company name matches");
     } else if (newF.company.includes(existF.company) || existF.company.includes(newF.company)) {
-      score += 30; reasons.push("Company name is similar");
+      score += 25; reasons.push("Company name is similar");
     }
   }
 
@@ -68,8 +69,8 @@ function runDetection(newFields, existingRecords, notesKey, phoneKey) {
 }
 
 /**
- * Detect duplicates for a new record against existing DB records.
- * newRecord must have company_name/title, contact_name, and the notesKey field (JSON string or object).
+ * Score-based detection for partial/similar matches (used for warnings).
+ * Returns { exact, partial } arrays.
  */
 export function detectDuplicates(newRecord, existingRecords, { notesKey = "other_notes", phoneKey = "phone" } = {}) {
   const newFields = extractFields(newRecord, notesKey, phoneKey);
@@ -77,16 +78,82 @@ export function detectDuplicates(newRecord, existingRecords, { notesKey = "other
 }
 
 /**
- * Detect duplicates for a flat object (used in CSV import paths).
- * flat must have: company_name, contact_name, email, phone/contact (varies by phoneKey).
+ * Score-based detection for flat/CSV objects (used for warnings in CSV import).
  */
 export function detectDuplicatesFlat(flat, existingRecords, { notesKey = "other_notes", phoneKey = "phone" } = {}) {
   const newFields = {
-    company: normalize(flat.company_name || flat.title || ""),
-    contact: normalize(flat.contact_name || ""),
-    email: normalize(flat.email || ""),
-    phone: normalizePhone(flat[phoneKey] || flat.phone || ""),
-    website: normalize(flat.website || ""),
+    company:  normalize(flat.company_name || flat.title || ""),
+    contact:  normalize(flat.contact_name || ""),
+    email:    normalize(flat.email || ""),
+    phone:    normalizePhone(flat[phoneKey] || flat.phone || ""),
+    linkedin: normalize(flat.linkedin || ""),
+    website:  normalize(flat.website || ""),
   };
   return runDetection(newFields, existingRecords, notesKey, phoneKey);
+}
+
+/**
+ * STRICT exact duplicate detection.
+ *
+ * A record is an exact duplicate when:
+ *   1. Company name matches exactly (required)
+ *   2. No provided field (contact, email, phone, linkedin, website) differs between the two records
+ *      — "differs" means BOTH records have a non-empty value AND those values do not match
+ *   3. At least one contact identifier (email OR phone) matches
+ *
+ * This means:
+ *   - Same company + different contact → ALLOW
+ *   - Same company + same contact + different email → ALLOW
+ *   - Same company + same contact + different phone → ALLOW
+ *   - Same company + same contact + same email + same phone + different linkedin → ALLOW
+ *   - Same company + same contact + same email + same phone → BLOCK
+ *
+ * Returns array of { record, reasons } for exact matches.
+ */
+export function detectExactDuplicates(newRecord, existingRecords, { notesKey = "other_notes", phoneKey = "phone" } = {}) {
+  const nf = extractFields(newRecord, notesKey, phoneKey);
+
+  // Need a company name and at least one contact method
+  if (!nf.company) return [];
+  if (!nf.email && !nf.phone) return [];
+
+  const results = [];
+
+  for (const rec of existingRecords) {
+    const ef = extractFields(rec, notesKey, phoneKey);
+    if (!ef.company || ef.company !== nf.company) continue;
+
+    // Any provided field that differs → NOT an exact duplicate
+    if (nf.contact  && ef.contact  && nf.contact  !== ef.contact)  continue;
+    if (nf.email    && ef.email    && nf.email    !== ef.email)    continue;
+    if (nf.phone    && ef.phone    && nf.phone    !== ef.phone)    continue;
+    if (nf.linkedin && ef.linkedin && nf.linkedin !== ef.linkedin) continue;
+    if (nf.website  && ef.website  && nf.website  !== ef.website)  continue;
+
+    // At least one contact identifier must match
+    const emailMatch = nf.email && ef.email && nf.email === ef.email;
+    const phoneMatch = nf.phone && ef.phone && nf.phone === ef.phone;
+    if (!emailMatch && !phoneMatch) continue;
+
+    const reasons = ["Company name matches"];
+    if (emailMatch) reasons.push("Email matches");
+    if (phoneMatch) reasons.push("Phone matches");
+    if (nf.contact && ef.contact && nf.contact === ef.contact) reasons.push("Contact name matches");
+
+    results.push({ record: rec, reasons });
+  }
+
+  return results;
+}
+
+/**
+ * Flat version of detectExactDuplicates (for CSV import rows).
+ */
+export function detectExactDuplicatesFlat(flat, existingRecords, { notesKey = "other_notes", phoneKey = "phone" } = {}) {
+  const newRecord = {
+    company_name: flat.company_name || flat.title || "",
+    contact_name: flat.contact_name || "",
+    [notesKey]: { email: flat.email || "", [phoneKey]: flat[phoneKey] || flat.phone || "", linkedin: flat.linkedin || "", website: flat.website || "" },
+  };
+  return detectExactDuplicates(newRecord, existingRecords, { notesKey, phoneKey });
 }

@@ -17,7 +17,7 @@ import { changeHistoryService, LEAD_TRACKED_FIELDS } from "../services/changeHis
 import { ActivityEngine } from "../services/activityEngine";
 import { ContactSubStatusModal, ContactSubStatusInline } from "../components/ContactSubStatusModal";
 import { DuplicateCheckModal } from "../components/DuplicateCheckModal";
-import { detectDuplicates, detectDuplicatesFlat } from "../utils/duplicateCheck";
+import { detectDuplicates, detectDuplicatesFlat, detectExactDuplicates, detectExactDuplicatesFlat } from "../utils/duplicateCheck";
 import SkeletonTable from "../components/SkeletonTable";
 import { ColumnToggle, TemplateMenu } from "../components/TableControls";
 import { useTablePreferences } from "../hooks/useTablePreferences";
@@ -1940,11 +1940,20 @@ export default function Leads() {
         } catch { /* non-critical */ }
       }
     } else {
-      const { exact, partial } = detectDuplicates(payload, rawLeads, { notesKey: "other_notes", phoneKey: "phone" });
-      if (exact.length > 0) {
-        setPendingDupCreate({ payload, duplicates: exact, type: "exact" });
+      // 1. Strict exact check against visible records (shows record details to user)
+      const exactMatches = detectExactDuplicates(payload, rawLeads, { notesKey: "other_notes", phoneKey: "phone" });
+      if (exactMatches.length > 0) {
+        setPendingDupCreate({ payload, duplicates: exactMatches, type: "exact" });
         return;
       }
+      // 2. Cross-role backend check — catches duplicates in records the user can't see
+      const dupCheck = await leadsService.checkDuplicate(payload);
+      if (dupCheck.duplicate) {
+        setPendingDupCreate({ payload, duplicates: [], type: "exact", crossRole: true });
+        return;
+      }
+      // 3. Score-based partial/similar warning
+      const { partial } = detectDuplicates(payload, rawLeads, { notesKey: "other_notes", phoneKey: "phone" });
       if (partial.length > 0) {
         setPendingDupCreate({ payload, duplicates: partial, type: "partial" });
         return;
@@ -1982,13 +1991,10 @@ export default function Leads() {
     const rows = parseCSVText(text).filter((r) => r["Company"] || r["Contact Name"]);
     if (rows.length === 0) { toast.error("No valid rows found"); e.target.value = ""; return; }
 
-    // Fetch only leads visible to the current user so duplicate check respects role scope.
-    // Employees compare against their own leads only; managers/admins see their visible scope.
-    let existingQuery = supabase.from("leads").select("id, company_name, contact_name, stage, other_notes, created_at");
-    if (!["owner", "sales_head"].includes(profile?.role)) {
-      existingQuery = existingQuery.eq("assigned_to", profile?.id);
-    }
-    const { data: existingRaw } = await existingQuery;
+    // Fetch ALL leads for cross-role exact duplicate detection (requirement: check all CRM records).
+    const { data: existingRaw } = await supabase
+      .from("leads")
+      .select("id, company_name, contact_name, stage, other_notes, created_at");
     const existing = existingRaw || [];
 
     let ok = 0, exactDups = 0, partialSimilar = 0, fail = 0;
@@ -2001,14 +2007,16 @@ export default function Leads() {
         email: row["Email"] || "",
         phone: row["Phone"] || "",
       };
-      const { exact, partial } = detectDuplicatesFlat(flat, existing, { notesKey: "other_notes", phoneKey: "phone" });
+      // Exact match: silently skip (hard block); partial match: import but flag
+      const exactDupList = detectExactDuplicatesFlat(flat, existing, { notesKey: "other_notes", phoneKey: "phone" });
+      const { partial } = detectDuplicatesFlat(flat, existing, { notesKey: "other_notes", phoneKey: "phone" });
 
-      if (exact.length > 0) {
+      if (exactDupList.length > 0) {
         exactDups++;
         exactDupRows.push({
           company: flat.company_name, contact: flat.contact_name,
           email: flat.email, phone: flat.phone,
-          matchedWith: exact[0].record.company_name, reasons: exact[0].reasons.join("; "),
+          matchedWith: exactDupList[0].record.company_name, reasons: exactDupList[0].reasons.join("; "),
         });
         continue;
       }
@@ -2683,7 +2691,7 @@ export default function Leads() {
           onCancel={() => setPendingDupCreate(null)}
           onProceed={handleDupLeadProceed}
           onViewExisting={handleDupLeadViewExisting}
-          canProceed={["owner", "sales_head"].includes(profile?.role)}
+          crossRole={pendingDupCreate.crossRole || false}
         />
       )}
       {importSummary && (

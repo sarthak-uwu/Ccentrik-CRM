@@ -50,6 +50,17 @@ export const leadsService = {
     return data;
   },
 
+  async checkDuplicate(payload) {
+    const token = await auth.currentUser?.getIdToken();
+    const res = await fetch(`${API}/api/leads/check-duplicate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+    });
+    if (res.status === 409) return await res.json();
+    return { duplicate: false };
+  },
+
   async update(id, payload) {
     const { data, error } = await supabase
       .from("leads")

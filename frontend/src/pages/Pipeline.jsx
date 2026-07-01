@@ -14,7 +14,7 @@ import { ActivityEngine } from "../services/activityEngine";
 import PipelineDetailPanel from "../components/PipelineDetailPanel";
 import { ContactSubStatusModal } from "../components/ContactSubStatusModal";
 import { DuplicateCheckModal } from "../components/DuplicateCheckModal";
-import { detectDuplicates } from "../utils/duplicateCheck";
+import { detectDuplicates, detectExactDuplicates } from "../utils/duplicateCheck";
 import { supabase } from "../supabaseClient";
 import toast from "react-hot-toast";
 import {
@@ -1877,11 +1877,20 @@ export default function Pipeline() {
         trackedFields:  PIPELINE_TRACKED_FIELDS,
       });
     } else {
-      const { exact, partial } = detectDuplicates(data, allEntries, { notesKey: "other_notes", phoneKey: "phone" });
-      if (exact.length > 0) {
-        setPendingDupCreate({ payload: data, duplicates: exact, type: "exact" });
+      // 1. Strict exact check against visible records (shows record details)
+      const exactMatches = detectExactDuplicates(data, allEntries, { notesKey: "other_notes", phoneKey: "phone" });
+      if (exactMatches.length > 0) {
+        setPendingDupCreate({ payload: data, duplicates: exactMatches, type: "exact" });
         return;
       }
+      // 2. Cross-role backend check — catches duplicates in records the user can't see
+      const dupCheck = await leadsService.checkDuplicate(data);
+      if (dupCheck.duplicate) {
+        setPendingDupCreate({ payload: data, duplicates: [], type: "exact", crossRole: true });
+        return;
+      }
+      // 3. Score-based partial/similar warning
+      const { partial } = detectDuplicates(data, allEntries, { notesKey: "other_notes", phoneKey: "phone" });
       if (partial.length > 0) {
         setPendingDupCreate({ payload: data, duplicates: partial, type: "partial" });
         return;
@@ -2457,7 +2466,7 @@ export default function Pipeline() {
           onCancel={() => setPendingDupCreate(null)}
           onProceed={handleDupPipelineProceed}
           onViewExisting={handleDupPipelineViewExisting}
-          canProceed={["owner", "sales_head"].includes(profile?.role)}
+          crossRole={pendingDupCreate.crossRole || false}
         />
       )}
     </div>

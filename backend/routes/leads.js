@@ -138,6 +138,69 @@ router.post("/bulk", authenticate, authorize(...CAN_EDIT), async (req, res) => {
   res.status(201).json({ inserted: data.length, data });
 });
 
+// ── Exact-duplicate helpers (mirrors frontend duplicateCheck.js logic) ────────
+const _normStr   = (v) => (v || "").trim().toLowerCase();
+const _normPhone = (v) => (v || "").replace(/\D/g, "").slice(-10);
+
+function _parseNotes(rec, key) {
+  const v = rec[key];
+  if (!v) return {};
+  if (typeof v === "object" && !Array.isArray(v)) return v;
+  try { return JSON.parse(v); } catch { return {}; }
+}
+
+function _extractDupFields(rec, notesKey, phoneKey) {
+  const n = _parseNotes(rec, notesKey);
+  return {
+    company:  _normStr(rec.company_name || rec.title || ""),
+    contact:  _normStr(rec.contact_name || ""),
+    email:    _normStr(n.email || ""),
+    phone:    _normPhone(n[phoneKey] || ""),
+    linkedin: _normStr(n.linkedin || ""),
+    website:  _normStr(n.website || ""),
+  };
+}
+
+function findExactDuplicate(newRecord, existingRecords, { notesKey = "other_notes", phoneKey = "phone" } = {}) {
+  const nf = _extractDupFields(newRecord, notesKey, phoneKey);
+  if (!nf.company || (!nf.email && !nf.phone)) return null;
+  for (const rec of existingRecords) {
+    const ef = _extractDupFields(rec, notesKey, phoneKey);
+    if (!ef.company || ef.company !== nf.company) continue;
+    if (nf.contact  && ef.contact  && nf.contact  !== ef.contact)  continue;
+    if (nf.email    && ef.email    && nf.email    !== ef.email)    continue;
+    if (nf.phone    && ef.phone    && nf.phone    !== ef.phone)    continue;
+    if (nf.linkedin && ef.linkedin && nf.linkedin !== ef.linkedin) continue;
+    if (nf.website  && ef.website  && nf.website  !== ef.website)  continue;
+    const emailMatch = nf.email && ef.email && nf.email === ef.email;
+    const phoneMatch = nf.phone && ef.phone && nf.phone === ef.phone;
+    if (!emailMatch && !phoneMatch) continue;
+    return rec;
+  }
+  return null;
+}
+
+// POST /api/leads/check-duplicate
+// Checks ALL leads (no role filter) for exact duplicates.
+// Returns 409 when a duplicate is found; 200 when clear.
+router.post("/check-duplicate", authenticate, async (req, res) => {
+  const { role, id: profileId } = req.profile;
+  const { data: allLeads, error } = await supabase
+    .from("leads")
+    .select("id, company_name, contact_name, other_notes, assigned_to");
+  if (error) return res.status(500).json({ error: "Failed to check duplicates" });
+
+  const dup = findExactDuplicate(req.body, allLeads || []);
+  if (!dup) return res.status(200).json({ duplicate: false });
+
+  const isVisible = role === "owner" || role === "sales_head" || dup.assigned_to === profileId;
+  return res.status(409).json({
+    duplicate: true,
+    crossRole: !isVisible,
+    existingRecordId: dup.id,
+  });
+});
+
 // GET /api/leads/inactive-summary
 // Role-scoped inactivity data for the dashboard widget.
 router.get("/inactive-summary", authenticate, async (req, res) => {

@@ -25,7 +25,7 @@ import { useTablePreferences } from "../hooks/useTablePreferences";
 import DealDetailPanel from "../components/DealDetailPanel";
 import { ContactSubStatusModal, ATTEMPTED_CONTACT_REASONS, ENGAGED_REASONS } from "../components/ContactSubStatusModal";
 import { DuplicateCheckModal } from "../components/DuplicateCheckModal";
-import { detectDuplicates } from "../utils/duplicateCheck";
+import { detectDuplicates, detectExactDuplicates } from "../utils/duplicateCheck";
 
 const DEAL_SUB_STATUS_META = {
   attempted_contact: { label: "Attempted Contact Reason", reasons: ATTEMPTED_CONTACT_REASONS },
@@ -1496,11 +1496,14 @@ export default function Deals() {
       });
     } else {
       const finalPayload = { ...payload, stage: data.stage || defaultStage, is_locked: isFieldUser };
-      const { exact, partial } = detectDuplicates(finalPayload, rawDeals, { notesKey: "notes", phoneKey: "contact" });
-      if (exact.length > 0) {
-        setPendingDupCreate({ payload: finalPayload, duplicates: exact, type: "exact" });
+      // Strict exact duplicate check — blocks creation entirely
+      const exactMatches = detectExactDuplicates(finalPayload, rawDeals, { notesKey: "notes", phoneKey: "contact" });
+      if (exactMatches.length > 0) {
+        setPendingDupCreate({ payload: finalPayload, duplicates: exactMatches, type: "exact" });
         return;
       }
+      // Score-based partial/similar warning — allows proceed
+      const { partial } = detectDuplicates(finalPayload, rawDeals, { notesKey: "notes", phoneKey: "contact" });
       if (partial.length > 0) {
         setPendingDupCreate({ payload: finalPayload, duplicates: partial, type: "partial" });
         return;
@@ -2291,7 +2294,7 @@ export default function Deals() {
           onCancel={() => setPendingDupCreate(null)}
           onProceed={handleDupDealProceed}
           onViewExisting={handleDupDealViewExisting}
-          canProceed={["owner", "sales_head"].includes(profile?.role)}
+          crossRole={false}
         />
       )}
     </div>
