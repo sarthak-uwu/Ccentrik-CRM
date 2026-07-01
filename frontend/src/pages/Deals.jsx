@@ -23,6 +23,34 @@ import SkeletonTable from "../components/SkeletonTable";
 import { ColumnToggle, TemplateMenu } from "../components/TableControls";
 import { useTablePreferences } from "../hooks/useTablePreferences";
 import DealDetailPanel from "../components/DealDetailPanel";
+import { ContactSubStatusModal, ATTEMPTED_CONTACT_REASONS, ENGAGED_REASONS } from "../components/ContactSubStatusModal";
+import { DuplicateCheckModal } from "../components/DuplicateCheckModal";
+import { detectDuplicates } from "../utils/duplicateCheck";
+
+const DEAL_SUB_STATUS_META = {
+  attempted_contact: { label: "Attempted Contact Reason", reasons: ATTEMPTED_CONTACT_REASONS },
+  engaged:           { label: "Engaged Reason",           reasons: ENGAGED_REASONS           },
+};
+
+function ContactSubStatusInlineDeal({ status, value, remarks, onChange, onRemarksChange }) {
+  const meta = DEAL_SUB_STATUS_META[status];
+  if (!meta) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div>
+        <label className="crm-label">{meta.label} <span style={{ color: "#EF4444" }}>*</span></label>
+        <select className="crm-input" value={value || ""} onChange={(e) => onChange(e.target.value)}>
+          <option value="">— Select a reason —</option>
+          {meta.reasons.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="crm-label">Remarks <span style={{ fontSize: 10, fontWeight: 400 }}>(optional)</span></label>
+        <textarea className="crm-input" value={remarks || ""} onChange={(e) => onRemarksChange(e.target.value)} placeholder="Add context..." rows={2} style={{ resize: "vertical" }} />
+      </div>
+    </div>
+  );
+}
 import { changeHistoryService, DEAL_TRACKED_FIELDS } from "../services/changeHistoryService";
 import { SourceBadge } from "../components/SourceBadge";
 import { ActivityEngine } from "../services/activityEngine";
@@ -119,8 +147,10 @@ function closingSoon(deal) {
 
 // ─── Stage config ─────────────────────────────────────────────────────────────
 const FUNNEL_STATUSES = [
-  { key: "new",               label: "New",               color: "#6B7280", bg: "#F3F4F6",  dark: "rgba(107,114,128,0.12)", probability: 5   },
-  { key: "contacted",         label: "Contacted",         color: "#3B82F6", bg: "#DBEAFE",  dark: "rgba(59,130,246,0.12)",  probability: 15  },
+  { key: "new",               label: "New",               color: "#6B7280", bg: "#F3F4F6",  dark: "rgba(107,114,128,0.12)", probability: 5,   hasSubStatus: false },
+  { key: "attempted_contact", label: "Attempted Contact", color: "#F59E0B", bg: "#FEF3C7",  dark: "rgba(245,158,11,0.12)",  probability: 8,   hasSubStatus: true  },
+  { key: "engaged",           label: "Engaged",           color: "#3B82F6", bg: "#DBEAFE",  dark: "rgba(59,130,246,0.12)",  probability: 12,  hasSubStatus: true  },
+  { key: "contacted",         label: "Contacted",         color: "#6366F1", bg: "#EEF2FF",  dark: "rgba(99,102,241,0.12)",  probability: 15  },
   { key: "meeting_scheduled", label: "Meeting Scheduled", color: "#8B5CF6", bg: "#EDE9FE",  dark: "rgba(139,92,246,0.12)",  probability: 30  },
   { key: "proposal_sent",     label: "Proposal Sent",     color: "#F59E0B", bg: "#FEF3C7",  dark: "rgba(245,158,11,0.12)",  probability: 50  },
   { key: "negotiation",       label: "Negotiation",       color: "#F97316", bg: "#FFEDD5",  dark: "rgba(249,115,22,0.12)",  probability: 70  },
@@ -339,7 +369,7 @@ function LostReasonModal({ deal, onClose, onConfirm }) {
 function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = false }) {
   const { symbol } = useCurrency();
   const extra = parseJSON(deal?.notes);
-  const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm({
+  const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm({
     defaultValues: {
       stage:        deal?.stage || "new",
       temperature:  deal?.temperature || "",
@@ -359,6 +389,11 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
   const selectedStage = watch("stage");
   const selectedTemp  = watch("temperature");
 
+  const DEAL_SUB_STATUS_KEYS = ["attempted_contact", "engaged"];
+  const showDealSubStatus = DEAL_SUB_STATUS_KEYS.includes(selectedStage);
+  const [dealSubStatusReason,  setDealSubStatusReason]  = useState(extra.contact_sub_status?.reason  || "");
+  const [dealSubStatusRemarks, setDealSubStatusRemarks] = useState(extra.contact_sub_status?.remarks || "");
+
   const [selectedServices, setSelectedServices] = useState(() => extra.services || []);
   const [svcOpen, setSvcOpen] = useState(false);
   const toggleService = (svc) =>
@@ -369,6 +404,13 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
       toast.error("Please provide at least one contact detail — Email or Phone is required");
       return;
     }
+    if (DEAL_SUB_STATUS_KEYS.includes(fd.stage) && !dealSubStatusReason) {
+      toast.error("Please select a reason for the status before saving.");
+      return;
+    }
+    const subStatus = DEAL_SUB_STATUS_KEYS.includes(fd.stage) && dealSubStatusReason
+      ? { reason: dealSubStatusReason, remarks: dealSubStatusRemarks || null, updated_at: new Date().toISOString() }
+      : (extra.contact_sub_status || undefined);
     await onSave({
       title:        fd.company_name,
       company_name: fd.company_name,
@@ -378,7 +420,7 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
       value:        fd.value ? Number(fd.value) : null,
       close_date:   fd.close_date || null,
       assigned_to:  fd.assigned_to || null,
-      notes: toJSON({ headquarters: fd.headquarters, country: fd.country, designation: fd.designation, email: fd.email, contact: fd.contact, remarks: fd.remarks, lead_code: extra.lead_code || undefined, source: extra.source || undefined, industry: extra.industry || undefined, services: selectedServices.length ? selectedServices : undefined }),
+      notes: toJSON({ headquarters: fd.headquarters, country: fd.country, designation: fd.designation, email: fd.email, contact: fd.contact, remarks: fd.remarks, lead_code: extra.lead_code || undefined, source: extra.source || undefined, industry: extra.industry || undefined, services: selectedServices.length ? selectedServices : undefined, contact_sub_status: subStatus }),
     });
   };
 
@@ -422,6 +464,17 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
                 </label>
               ))}
             </div>
+            {showDealSubStatus && (
+              <div style={{ marginTop: 10 }}>
+                <ContactSubStatusInlineDeal
+                  status={selectedStage}
+                  value={dealSubStatusReason}
+                  remarks={dealSubStatusRemarks}
+                  onChange={(v) => { setDealSubStatusReason(v); }}
+                  onRemarksChange={setDealSubStatusRemarks}
+                />
+              </div>
+            )}
           </div>
           {/* Temperature picker */}
           <div>
@@ -1298,6 +1351,8 @@ export default function Deals() {
   const [showViewPref, setShowViewPref] = useState(() => !sessionStorage.getItem("dealsView"));
   const [showForm, setShowForm]     = useState(false);
   const [editDeal, setEditDeal]     = useState(null);
+  const [pendingDealSubStatus, setPendingDealSubStatus] = useState(null); // { dealId, newStatus, prevStatus }
+  const [pendingDupCreate,     setPendingDupCreate]     = useState(null); // { payload, duplicates, type }
   const [defaultStage, setDefaultStage] = useState("new");
   const [search, setSearch]         = useState("");
   const [filterStage,    setFilterStage]    = useState([]);
@@ -1440,8 +1495,31 @@ export default function Deals() {
         userId: profile?.id, trackedFields: DEAL_TRACKED_FIELDS,
       });
     } else {
-      await createMutation.mutateAsync({ ...payload, stage: data.stage || defaultStage, is_locked: isFieldUser });
+      const finalPayload = { ...payload, stage: data.stage || defaultStage, is_locked: isFieldUser };
+      const { exact, partial } = detectDuplicates(finalPayload, rawDeals, { notesKey: "notes", phoneKey: "contact" });
+      if (exact.length > 0) {
+        setPendingDupCreate({ payload: finalPayload, duplicates: exact, type: "exact" });
+        return;
+      }
+      if (partial.length > 0) {
+        setPendingDupCreate({ payload: finalPayload, duplicates: partial, type: "partial" });
+        return;
+      }
+      await createMutation.mutateAsync(finalPayload);
     }
+  };
+
+  const handleDupDealProceed = async () => {
+    const { payload } = pendingDupCreate;
+    setPendingDupCreate(null);
+    await createMutation.mutateAsync(payload);
+  };
+
+  const handleDupDealViewExisting = (record) => {
+    setPendingDupCreate(null);
+    setShowForm(false);
+    setEditDeal(null);
+    setSelectedDeal(record);
   };
 
   const handleMarkWon = (deal) => {
@@ -1500,6 +1578,13 @@ export default function Deals() {
     }
 
     if (newStage === "lost") { setLostDeal(deal); return; }
+
+    // Sub-status stages require reason — show modal before committing
+    if (["attempted_contact", "engaged"].includes(newStage)) {
+      setPendingDealSubStatus({ dealId: deal.id, newStatus: newStage, prevStatus: deal.stage, deal });
+      return;
+    }
+
     const update = { id: active.id, stage: newStage };
     if (newStage === "won") update.closed_at = new Date().toISOString();
     updateMutation.mutate(update);
@@ -1511,6 +1596,19 @@ export default function Deals() {
     }
   };
 
+  const confirmDealSubStatus = (reason, remarks) => {
+    if (!pendingDealSubStatus) return;
+    const { dealId, newStatus, prevStatus, deal } = pendingDealSubStatus;
+    const prevExtra = parseJSON(deal?.notes);
+    updateMutation.mutate({
+      id: dealId, stage: newStatus,
+      notes: toJSON({ ...prevExtra, contact_sub_status: { reason, remarks: remarks || null, updated_at: new Date().toISOString() } }),
+    });
+    toast.success(`Moved to ${FUNNEL_STATUSES.find(s => s.key === newStatus)?.label}`);
+    ActivityEngine.dealStageChanged({ userId: profile?.id, dealId, company: deal?.company_name || deal?.title, oldStage: prevStatus, newStage: newStatus });
+    setPendingDealSubStatus(null);
+  };
+
   const openAddForStage = (stageKey) => {
     setDefaultStage(stageKey);
     setEditDeal(null);
@@ -1518,7 +1616,17 @@ export default function Deals() {
   };
 
   const setViewPersist = (v) => { setView(v); };
-  const toggleInfoLock = () => setInfoLocked((prev) => { const next = !prev; localStorage.setItem("deals_info_locked", next ? "1" : "0"); return next; });
+  const toggleInfoLock = async () => {
+    const next = !infoLocked;
+    setInfoLocked(next);
+    localStorage.setItem("deals_info_locked", next ? "1" : "0");
+    await supabase.from("crm_settings").upsert({ key: "deals_info_lock", value: next.toString(), updated_by: profile?.id, updated_at: new Date().toISOString() });
+    await supabase.from("deals").update({ is_locked: next });
+    qc.invalidateQueries({ queryKey: ["deals"] });
+    qc.invalidateQueries({ queryKey: ["deals-all"] });
+    qc.invalidateQueries({ queryKey: ["my-deals"] });
+    toast.success(next ? "All deals locked" : "All deals unlocked");
+  };
   const selectViewPref = (v) => {
     setView(v);
     sessionStorage.setItem("dealsView", v);
@@ -1536,6 +1644,15 @@ export default function Deals() {
   };
 
   const rawDeals = dealsData?.data || [];
+
+  // Keep selectedDeal in sync when its data refreshes in the cache (mirrors Pipeline's pattern)
+  const selectedDealId = selectedDeal?.id;
+  useEffect(() => {
+    if (!selectedDealId) return;
+    const updated = rawDeals.find((d) => d.id === selectedDealId);
+    if (updated) setSelectedDeal(updated);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawDeals, selectedDealId]);
 
   // Auto-open detail panel when navigated from a task/notification link (/deals?selected=<id>)
   useEffect(() => {
@@ -2155,6 +2272,26 @@ export default function Deals() {
           deal={selectedDeal}
           onClose={() => setSelectedDeal(null)}
           onEdit={(d) => { setSelectedDeal(null); setEditDeal(d); }}
+        />
+      )}
+
+      {pendingDealSubStatus && (
+        <ContactSubStatusModal
+          status={pendingDealSubStatus.newStatus}
+          onConfirm={confirmDealSubStatus}
+          onCancel={() => setPendingDealSubStatus(null)}
+        />
+      )}
+      {pendingDupCreate && (
+        <DuplicateCheckModal
+          type={pendingDupCreate.type}
+          duplicates={pendingDupCreate.duplicates}
+          entityType="deal"
+          teamMembers={teamMembers}
+          onCancel={() => setPendingDupCreate(null)}
+          onProceed={handleDupDealProceed}
+          onViewExisting={handleDupDealViewExisting}
+          canProceed={["owner", "sales_head"].includes(profile?.role)}
         />
       )}
     </div>

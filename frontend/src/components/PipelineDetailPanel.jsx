@@ -705,6 +705,12 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
   const canChangePoc   = isSalesHead && !contactLocked;
   const contacts       = Array.isArray(entry?.contacts) ? entry.contacts : [];
   const peopleContacts = Array.isArray(extra.people_contacts) ? extra.people_contacts : [];
+  // Fallback: if no people_contacts array, synthesize one from direct record fields so legacy records always show contacts
+  const displayContacts = peopleContacts.length > 0 ? peopleContacts : (() => {
+    const hasContact = entry?.contact_name || extra.email || extra.phone;
+    if (!hasContact) return [];
+    return [{ id: "__legacy__", name: entry?.contact_name || "", designation: entry?.designation || "", email: extra.email || "", phone: extra.phone || "", linkedin_url: extra.contact_linkedin_url || "", is_primary: true, __synthetic: true }];
+  })();
   const pocHistory     = Array.isArray(extra.poc_history) ? extra.poc_history : [];
   const stageInfo      = PIPELINE_STAGES.find((s) => s.key === (entry?.pipeline_stage || "new_prospect")) || PIPELINE_STAGES[0];
 
@@ -882,7 +888,7 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
               const active = activeTab === tab.key;
               const badge  = tab.key === "timeline" && activities?.length ? activities.length
                            : tab.key === "history" && historyRecords?.length ? historyRecords.length
-                           : tab.key === "contacts" ? (peopleContacts.length || null)
+                           : tab.key === "contacts" ? (displayContacts.length || null)
                            : null;
               return (
                 <button key={tab.key} onClick={() => setActiveTab(tab.key)}
@@ -1031,8 +1037,8 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
                 <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: 7 }}>
                   <Users size={15} strokeWidth={2} style={{ color: "#8B5CF6" }} />
                   People & Contacts
-                  {peopleContacts.length > 0 && (
-                    <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 8px", borderRadius: 99, background: "rgba(139,92,246,0.1)", color: "#8B5CF6" }}>{peopleContacts.length}</span>
+                  {displayContacts.length > 0 && (
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 8px", borderRadius: 99, background: "rgba(139,92,246,0.1)", color: "#8B5CF6" }}>{displayContacts.length}</span>
                   )}
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
@@ -1094,7 +1100,7 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
                 />
               )}
 
-              {peopleContacts.length === 0 && !showAddContact ? (
+              {displayContacts.length === 0 && !showAddContact ? (
                 <div style={{ textAlign: "center", padding: "36px 24px", color: "var(--text-muted)" }}>
                   <div style={{ width: 52, height: 52, borderRadius: 14, background: "var(--surface-2)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
                     <Users size={22} style={{ opacity: 0.3 }} />
@@ -1102,15 +1108,15 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
                   <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text-2)", marginBottom: 4 }}>No contacts added yet</div>
                   <div style={{ fontSize: 12, opacity: 0.5 }}>Add people you work with at this company</div>
                 </div>
-              ) : peopleContacts.length > 0 ? (
+              ) : displayContacts.length > 0 ? (
                 <div>
-                  {[...peopleContacts]
+                  {[...displayContacts]
                     .sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0))
                     .map((contact) => (
                       <PeopleContactCard
                         key={contact.id}
                         contact={contact}
-                        canEdit={canEdit}
+                        canEdit={canEdit && !contact.__synthetic}
                         onSetPrimary={(c) => setPocMutation.mutate({ contactId: c.id, contactName: c.name })}
                         onDelete={(id) => deleteContactMutation.mutate(id)}
                         isPending={setPocMutation.isPending}

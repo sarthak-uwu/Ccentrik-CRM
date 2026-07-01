@@ -5,6 +5,7 @@ const { authenticate, authorize } = require("../middleware/auth");
 const { sendMail } = require("../config/mail");
 const { generateTSRData, generateStaffDSRData, generateEmployeeActivityData, buildTSRHtml, buildTSRText } = require("../utils/dsrReport");
 const { generateDSRPdf, generateActivityPdf, generateEnterpriseDSRPdf } = require("../utils/dsrPdf");
+const { fetchDailyPlanningData, generateDailyPlanningPdf, buildDailyPlanningEmailHtml } = require("../utils/dailyPlanningReport");
 
 // Roles allowed to receive DSR emails — enforced at every endpoint
 const DSR_ALLOWED_ROLES = ["owner", "sales_head"];
@@ -2632,6 +2633,96 @@ router.put("/dsr-score-config", authenticate, authorize("owner", "sales_head"), 
   } catch (err) {
     console.error("[ScoreConfig] PUT error:", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/reports/daily-planning-cron ─────────────────────────────────────
+// Fires via GitHub Actions cron (*/30 * * * *).
+// Targets the 10:30 AM IST slot — closest 30-min boundary to 10:40 AM IST.
+router.get("/daily-planning-cron", async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.headers.authorization !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const forceRun = req.query.force === "true";
+  const nowUtc   = new Date();
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+  const nowIst   = new Date(nowUtc.getTime() + istOffsetMs);
+  const h24      = nowIst.getUTCHours();
+  const rawMin   = nowIst.getUTCMinutes();
+  const slot_m   = rawMin < 30 ? 0 : 30;
+  const h12      = h24 % 12 || 12;
+  const ampm     = h24 < 12 ? "AM" : "PM";
+  const currentSlot = `${String(h12).padStart(2, "0")}:${String(slot_m).padStart(2, "0")} ${ampm}`;
+
+  if (!forceRun && currentSlot !== "10:30 AM") {
+    return res.json({ success: true, slot: currentSlot, message: "Not the 10:30 AM IST window — skipped" });
+  }
+
+  console.log(`[DailyPlanning] Starting report generation — slot ${currentSlot}, forced=${forceRun}`);
+
+  try {
+    // Resolve IST day boundaries
+    const pad = n => String(n).padStart(2, "0");
+    const todayStr = `${nowIst.getUTCFullYear()}-${pad(nowIst.getUTCMonth() + 1)}-${pad(nowIst.getUTCDate())}`;
+    const dayStart = new Date(`${todayStr}T00:00:00+05:30`).toISOString();
+    const dayEnd   = nowUtc.toISOString(); // up to now (10:30 AM IST)
+
+    // Fetch all data
+    const data = await fetchDailyPlanningData(nowIst, dayStart, dayEnd);
+    console.log(`[DailyPlanning] Data fetched — pipeline:${data.stalePipeline.length} leads:${data.staleLeads.length} deals:${data.staleDeals.length}`);
+
+    // Generate PDF
+    const reportDateLabel = new Date(nowUtc).toLocaleDateString("en-IN", {
+      weekday: "long", day: "numeric", month: "long", year: "numeric",
+      timeZone: "Asia/Kolkata",
+    });
+    const pdfBuffer = await generateDailyPlanningPdf(data, reportDateLabel, nowUtc.toISOString());
+    console.log(`[DailyPlanning] PDF generated — ${pdfBuffer.length} bytes`);
+
+    // Find recipients: owner (Super Admin) and sales_head
+    const { data: recipients, error: recipErr } = await supabase
+      .from("profiles")
+      .select("id, full_name, email, role")
+      .in("role", ["owner", "sales_head"])
+      .not("email", "is", null)
+      .not("status", "in", '("deleted","inactive")');
+
+    if (recipErr) throw recipErr;
+
+    const uniqueEmails = [...new Set((recipients || []).map(r => r.email).filter(Boolean))];
+    if (uniqueEmails.length === 0) {
+      console.warn("[DailyPlanning] No recipients found — aborting email send");
+      return res.json({ success: true, sent_to: 0, message: "No owner/sales_head recipients found" });
+    }
+
+    // Build and send email
+    const html     = buildDailyPlanningEmailHtml(data, reportDateLabel);
+    const pdfName  = `Daily-Planning-Report-${todayStr}.pdf`;
+
+    await sendMail({
+      to:      uniqueEmails,
+      subject: `Ccentrik Daily Planning Report — ${reportDateLabel}`,
+      html,
+      text:    `Ccentrik Daily Planning Report — ${reportDateLabel}\n\nStale Pipeline: ${data.summary.stalePipeline} | Stale Leads: ${data.summary.staleLeads} | Stale Deals: ${data.summary.staleDeals}\nEmployee Action — Active: ${data.summary.activeToday} | No Action: ${data.summary.inactiveToday}\nToday's Meetings: ${data.summary.todayMeetings} | Missed: ${data.summary.missedMeetings} | Overdue Activities: ${data.summary.overdueActivities}\n\nSee attached PDF for full details.`,
+      attachments: [{
+        filename:     pdfName,
+        content:      pdfBuffer.toString("base64"),
+        content_type: "application/pdf",
+      }],
+    });
+
+    console.log(`[DailyPlanning] Email sent to ${uniqueEmails.length} recipient(s): ${uniqueEmails.join(", ")}`);
+    return res.json({
+      success:    true,
+      sent_to:    uniqueEmails.length,
+      recipients: uniqueEmails,
+      summary:    data.summary,
+    });
+  } catch (err) {
+    console.error("[DailyPlanning] Error:", err.message, err.stack);
+    return res.status(500).json({ error: err.message });
   }
 });
 

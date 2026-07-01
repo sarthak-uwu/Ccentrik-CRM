@@ -15,6 +15,9 @@ import { supabase } from "../supabaseClient";
 import LeadDetailPanel from "../components/LeadDetailPanel";
 import { changeHistoryService, LEAD_TRACKED_FIELDS } from "../services/changeHistoryService";
 import { ActivityEngine } from "../services/activityEngine";
+import { ContactSubStatusModal, ContactSubStatusInline } from "../components/ContactSubStatusModal";
+import { DuplicateCheckModal } from "../components/DuplicateCheckModal";
+import { detectDuplicates, detectDuplicatesFlat } from "../utils/duplicateCheck";
 import SkeletonTable from "../components/SkeletonTable";
 import { ColumnToggle, TemplateMenu } from "../components/TableControls";
 import { useTablePreferences } from "../hooks/useTablePreferences";
@@ -136,13 +139,15 @@ const TEMPERATURES = [
 ];
 
 const LEAD_STATUSES = [
-  { key: "new",       label: "New",       color: "#6B7280", bg: "rgba(107,114,128,0.12)" },
-  { key: "contacted", label: "Contacted", color: "#3B82F6", bg: "rgba(59,130,246,0.12)"  },
-  { key: "qualified", label: "Qualified", color: "#8B5CF6", bg: "rgba(139,92,246,0.12)"  },
-  { key: "proposal",  label: "Proposal",  color: "#F59E0B", bg: "rgba(245,158,11,0.12)"  },
-  { key: "converted", label: "Converted", color: "#10B981", bg: "rgba(16,185,129,0.12)"  },
-  { key: "won",       label: "Won",       color: "#22C55E", bg: "rgba(34,197,94,0.12)"   },
-  { key: "lost",      label: "Lost",      color: "#EF4444", bg: "rgba(239,68,68,0.12)"   },
+  { key: "new",               label: "New",               color: "#6B7280", bg: "rgba(107,114,128,0.12)" },
+  { key: "attempted_contact", label: "Attempted Contact", color: "#F59E0B", bg: "rgba(245,158,11,0.12)",  hasSubStatus: true },
+  { key: "engaged",           label: "Engaged",           color: "#3B82F6", bg: "rgba(59,130,246,0.12)",  hasSubStatus: true },
+  { key: "contacted",         label: "Contacted",         color: "#6366F1", bg: "rgba(99,102,241,0.12)"  },
+  { key: "qualified",         label: "Qualified",         color: "#8B5CF6", bg: "rgba(139,92,246,0.12)"  },
+  { key: "proposal",          label: "Proposal",          color: "#F97316", bg: "rgba(249,115,22,0.12)"  },
+  { key: "converted",         label: "Converted",         color: "#10B981", bg: "rgba(16,185,129,0.12)"  },
+  { key: "won",               label: "Won",               color: "#22C55E", bg: "rgba(34,197,94,0.12)"   },
+  { key: "lost",              label: "Lost",              color: "#EF4444", bg: "rgba(239,68,68,0.12)"   },
 ];
 
 const MEETING_STATUSES = ["—", "Scheduled", "Completed", "Cancelled", "Rescheduled"];
@@ -616,6 +621,11 @@ export function LeadModal({ lead, onClose, onSave, teamMembers, canEditContactIn
   });
 
   const watchSource = watch("source");
+  const watchStage  = watch("stage");
+  const SUB_STATUS_FORM_KEYS = ["attempted_contact", "engaged"];
+  const showSubStatus = SUB_STATUS_FORM_KEYS.includes(watchStage);
+  const [subStatusReason,  setSubStatusReason]  = useState(extra.contact_sub_status?.reason  || "");
+  const [subStatusRemarks, setSubStatusRemarks] = useState(extra.contact_sub_status?.remarks || "");
 
   const toggleService = (svc) => {
     setSelectedServices((prev) =>
@@ -628,6 +638,11 @@ export function LeadModal({ lead, onClose, onSave, teamMembers, canEditContactIn
     const activePoc = persons.find((p) => p.id === pocId) || persons[0] || {};
     if (!activePoc.email?.trim() && !activePoc.phone?.trim()) {
       toast.error("Please provide at least one contact detail — Email or Phone is required");
+      return;
+    }
+    // Validate sub-status reason when stage is Attempted Contact or Engaged
+    if (SUB_STATUS_FORM_KEYS.includes(formData.stage) && !subStatusReason) {
+      toast.error("Please select a reason for the status before saving.");
       return;
     }
     const personsWithFlag = persons.map((p) => ({ ...p, is_primary: p.id === pocId }));
@@ -661,6 +676,9 @@ export function LeadModal({ lead, onClose, onSave, teamMembers, canEditContactIn
         custom_service:   selectedServices.includes("Other Project Services") ? customService : "",
         contact_locked:   true,
         supervisor_id:    supervisorId || null,
+        contact_sub_status: SUB_STATUS_FORM_KEYS.includes(formData.stage) && subStatusReason
+          ? { reason: subStatusReason, remarks: subStatusRemarks || null, updated_at: new Date().toISOString() }
+          : (extra.contact_sub_status || null),
       }),
     });
   };
@@ -927,11 +945,20 @@ export function LeadModal({ lead, onClose, onSave, teamMembers, canEditContactIn
 
             {/* ── Stage + Status ── */}
             <SectionDivider label="Status & Stage" />
-            <div>
+            <div style={{ gridColumn: showSubStatus ? "1 / -1" : undefined }}>
               <label className="crm-label">Lead Status</label>
-              <select className="crm-input" {...register("stage")}>
+              <select className="crm-input" {...register("stage")} onChange={(e) => { setValue("stage", e.target.value); setSubStatusReason(""); setSubStatusRemarks(""); }}>
                 {LEAD_STATUSES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
               </select>
+              {showSubStatus && (
+                <ContactSubStatusInline
+                  status={watchStage}
+                  value={subStatusReason}
+                  remarks={subStatusRemarks}
+                  onChange={setSubStatusReason}
+                  onRemarksChange={setSubStatusRemarks}
+                />
+              )}
             </div>
             <div>
               <label className="crm-label">Meeting Status</label>
@@ -1614,6 +1641,9 @@ export default function Leads() {
   const [editLead, setEditLead]           = useState(null);
   const [selectedLead, setSelectedLead]   = useState(null);
   const [convertLead, setConvertLead]     = useState(null);
+  const [pendingSubStatus, setPendingSubStatus] = useState(null); // { leadId, newStatus, prevStatus }
+  const [pendingDupCreate, setPendingDupCreate] = useState(null); // { payload, duplicates, type }
+  const [importSummary, setImportSummary]       = useState(null); // { total, ok, exactDups, partialSimilar, fail, rows }
   const [proposalLead, setProposalLead]   = useState(null);
   const [hideConverted, setHideConverted] = useState(true);
   const [search, setSearch]             = useState("");
@@ -1647,10 +1677,61 @@ export default function Leads() {
   const canEditContactInfo = isOwner || isSalesHead || !phoneEmailLocked;
 
   const toggleLock = async () => {
-    const newVal = (!phoneEmailLocked).toString();
+    const next = !phoneEmailLocked;
+    const newVal = next.toString();
     await supabase.from("crm_settings").upsert({ key: "phone_email_lock", value: newVal, updated_by: profile?.id, updated_at: new Date().toISOString() });
+    await supabase.from("leads").update({ is_locked: next }).neq("stage", "pipeline");
     await refetchLock();
-    toast.success(newVal === "true" ? "Information locked for field users" : "Information unlocked");
+    qc.invalidateQueries({ queryKey: ["leads"] });
+    toast.success(next ? "All leads locked" : "All leads unlocked");
+  };
+
+  const SUB_STATUS_KEYS = new Set(["attempted_contact", "engaged"]);
+
+  const handleLeadInlineUpdate = async (id, field, value, subStatusReason = null, subStatusRemarks = null) => {
+    const lead = rawLeads.find((l) => l.id === id);
+
+    // If this is a sub-status stage change and no reason provided yet, show modal
+    if (field === "stage" && SUB_STATUS_KEYS.has(value) && !subStatusReason) {
+      setPendingSubStatus({ leadId: id, newStatus: value, prevStatus: lead?.stage });
+      return;
+    }
+
+    // Build update payload — include sub-status in other_notes when applicable
+    let updatePayload = { [field]: value, updated_at: new Date().toISOString() };
+    if (field === "stage" && SUB_STATUS_KEYS.has(value) && subStatusReason) {
+      const prevExtra = parseJSON(lead?.other_notes);
+      updatePayload.other_notes = JSON.stringify({
+        ...prevExtra,
+        contact_sub_status: { reason: subStatusReason, remarks: subStatusRemarks || null, updated_at: new Date().toISOString() },
+      });
+    }
+
+    const { error } = await supabase.from("leads").update(updatePayload).eq("id", id);
+    if (error) {
+      toast.error("Update failed");
+    } else {
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      if (field === "stage") {
+        const statusMeta = LEAD_STATUSES.find((s) => s.key === value);
+        const description = subStatusReason
+          ? `${lead?.company_name || lead?.contact_name || "Lead"}: status → "${statusMeta?.label || value}" · Reason: ${subStatusReason}${subStatusRemarks ? ` · ${subStatusRemarks}` : ""}`
+          : undefined;
+        ActivityEngine.leadStageChanged({ userId: profile?.id, leadId: id, company: lead?.company_name || lead?.contact_name, oldStage: lead?.stage, newStage: value, userName: profile?.full_name, description });
+      } else if (field === "temperature") {
+        ActivityEngine.leadStatusChanged({ userId: profile?.id, leadId: id, company: lead?.company_name || lead?.contact_name, oldStatus: lead?.temperature, newStatus: value, userName: profile?.full_name });
+      }
+    }
+  };
+
+  const handleSubStatusConfirm = (reason, remarks) => {
+    if (!pendingSubStatus) return;
+    handleLeadInlineUpdate(pendingSubStatus.leadId, "stage", pendingSubStatus.newStatus, reason, remarks);
+    setPendingSubStatus(null);
+  };
+
+  const handleSubStatusCancel = () => {
+    setPendingSubStatus(null);
   };
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1859,8 +1940,30 @@ export default function Leads() {
         } catch { /* non-critical */ }
       }
     } else {
+      const { exact, partial } = detectDuplicates(payload, rawLeads, { notesKey: "other_notes", phoneKey: "phone" });
+      if (exact.length > 0) {
+        setPendingDupCreate({ payload, duplicates: exact, type: "exact" });
+        return;
+      }
+      if (partial.length > 0) {
+        setPendingDupCreate({ payload, duplicates: partial, type: "partial" });
+        return;
+      }
       await createMutation.mutateAsync({ ...payload, is_locked: false });
     }
+  };
+
+  const handleDupLeadProceed = async () => {
+    const { payload } = pendingDupCreate;
+    setPendingDupCreate(null);
+    await createMutation.mutateAsync({ ...payload, is_locked: false });
+  };
+
+  const handleDupLeadViewExisting = (record) => {
+    setPendingDupCreate(null);
+    setShowForm(false);
+    setEditLead(null);
+    setSelectedLead(record);
   };
 
   const handleDelete = (e, lead) => {
@@ -1879,46 +1982,76 @@ export default function Leads() {
     const rows = parseCSVText(text).filter((r) => r["Company"] || r["Contact Name"]);
     if (rows.length === 0) { toast.error("No valid rows found"); e.target.value = ""; return; }
 
-    const { data: existing } = await supabase.from("leads").select("company_name, contact_name");
-    const existingSet = new Set(
-      (existing || []).map((l) => `${(l.company_name||"").trim().toLowerCase()}::${(l.contact_name||"").trim().toLowerCase()}`)
-    );
+    const { data: existingRaw } = await supabase.from("leads").select("id, company_name, contact_name, stage, other_notes, created_at");
+    const existing = existingRaw || [];
 
-    let ok = 0, dupes = 0, fail = 0;
-    const dupeNames = [], failReasons = [];
+    let ok = 0, exactDups = 0, partialSimilar = 0, fail = 0;
+    const exactDupRows = [], failReasons = [];
+
     for (const row of rows) {
-      const key = `${(row["Company"]||"").trim().toLowerCase()}::${(row["Contact Name"]||"").trim().toLowerCase()}`;
-      if (existingSet.has(key)) { dupes++; dupeNames.push(row["Company"] || row["Contact Name"]); continue; }
+      const flat = {
+        company_name: row["Company"] || "",
+        contact_name: row["Contact Name"] || "",
+        email: row["Email"] || "",
+        phone: row["Phone"] || "",
+      };
+      const { exact, partial } = detectDuplicatesFlat(flat, existing, { notesKey: "other_notes", phoneKey: "phone" });
+
+      if (exact.length > 0) {
+        exactDups++;
+        exactDupRows.push({
+          company: flat.company_name, contact: flat.contact_name,
+          email: flat.email, phone: flat.phone,
+          matchedWith: exact[0].record.company_name, reasons: exact[0].reasons.join("; "),
+        });
+        continue;
+      }
+
       const payload = csvLeadToPayload(row, profile?.id);
       const { error: insErr } = await supabase.from("leads").insert(payload);
       if (insErr) {
         fail++;
-        const rowName = row["Company"] || row["Contact Name"] || `Row ${ok + dupes + fail}`;
-        failReasons.push(`${rowName}: ${insErr.message}`);
+        failReasons.push(`${flat.company_name || flat.contact_name}: ${insErr.message}`);
       } else {
         ok++;
+        if (partial.length > 0) partialSimilar++;
+        // Add to existing pool so later rows in the same CSV are also checked
+        existing.push({ company_name: flat.company_name, contact_name: flat.contact_name, other_notes: { email: flat.email, phone: flat.phone } });
       }
     }
 
-    // Single summary toast instead of per-row errors
-    if (ok > 0) {
-      qc.invalidateQueries({ queryKey: ["leads"] });
-      const dupeNote  = dupes > 0 ? `, ${dupes} duplicate${dupes > 1 ? "s" : ""} skipped` : "";
-      const failNote  = fail  > 0 ? `, ${fail} failed` : "";
-      toast.success(`Imported ${ok} lead${ok > 1 ? "s" : ""}${dupeNote}${failNote}`);
-    } else if (dupes > 0) {
-      toast(`All ${dupes} rows already exist — nothing imported`, { icon: "⚠️", duration: 5000 });
+    if (ok > 0) qc.invalidateQueries({ queryKey: ["leads"] });
+
+    if (ok > 0 || exactDups > 0) {
+      const parts = [];
+      if (ok > 0) parts.push(`${ok} imported`);
+      if (exactDups > 0) parts.push(`${exactDups} exact duplicate${exactDups > 1 ? "s" : ""} skipped`);
+      if (partialSimilar > 0) parts.push(`${partialSimilar} similar record${partialSimilar > 1 ? "s" : ""} noted`);
+      if (fail > 0) parts.push(`${fail} failed`);
+      toast.success(`Import complete: ${parts.join(", ")}`, { duration: 5000 });
     } else {
       toast.error(`Import failed: ${failReasons[0] || "unknown error"}`);
     }
-    if (failReasons.length > 0) {
-      console.warn("[Import] Failed rows:", failReasons);
+    if (failReasons.length > 0) console.warn("[Import] Failed rows:", failReasons);
+
+    if (exactDups > 0 || partialSimilar > 0) {
+      setImportSummary({ total: rows.length, ok, exactDups, partialSimilar, fail, exactDupRows });
     }
+
     e.target.value = "";
   };
 
   const rawLeads = leadsData?.data || [];
   const teamMembers = teamData?.data || [];
+
+  // Keep selectedLead in sync when its data refreshes in the cache (mirrors Pipeline's pattern)
+  const selectedLeadId = selectedLead?.id;
+  useEffect(() => {
+    if (!selectedLeadId) return;
+    const updated = rawLeads.find((l) => l.id === selectedLeadId);
+    if (updated) setSelectedLead(updated);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawLeads, selectedLeadId]);
 
   // Auto-open detail panel when navigated from a notification link (/leads?selected=<id>)
   useEffect(() => {
@@ -2361,15 +2494,40 @@ export default function Leads() {
                           </td>
                         )}
                         {isVisible("temp") && (
-                          <td>
-                            {l.temperature ? (
-                              <span className={`temp-badge ${l.temperature}`}>
-                                {l.temperature === "hot" ? "🔥" : l.temperature === "warm" ? "🌡" : "❄️"} {l.temperature.charAt(0).toUpperCase() + l.temperature.slice(1)}
+                          <td onClick={(ev) => ev.stopPropagation()}>
+                            <span style={{ display: "inline-grid" }}>
+                              <span style={{ gridArea: "1/1", fontSize: 11, fontWeight: 700, visibility: "hidden", whiteSpace: "nowrap", pointerEvents: "none", userSelect: "none", paddingRight: 2 }}>
+                                {l.temperature ? `${l.temperature === "hot" ? "🔥" : l.temperature === "warm" ? "🌡" : "❄️"} ${l.temperature.charAt(0).toUpperCase() + l.temperature.slice(1)}` : "— Status —"}
                               </span>
-                            ) : <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>}
+                              <select
+                                value={l.temperature || ""}
+                                onChange={(ev) => handleLeadInlineUpdate(l.id, "temperature", ev.target.value || null)}
+                                style={{ gridArea: "1/1", width: "100%", appearance: "none", WebkitAppearance: "none", MozAppearance: "none", fontSize: 11, fontWeight: 700, border: "none", padding: 0, background: "transparent", color: l.temperature === "hot" ? "#EF4444" : l.temperature === "warm" ? "#F59E0B" : l.temperature === "cold" ? "#3B82F6" : "var(--text-muted)", cursor: "pointer", fontFamily: "inherit", outline: "none" }}
+                              >
+                                <option value="">— Status —</option>
+                                <option value="hot">🔥 Hot</option>
+                                <option value="warm">🌡 Warm</option>
+                                <option value="cold">❄️ Cold</option>
+                              </select>
+                            </span>
                           </td>
                         )}
-                        {isVisible("status") && <td><StatusBadge stage={l.stage} /></td>}
+                        {isVisible("status") && (
+                          <td onClick={(ev) => ev.stopPropagation()}>
+                            <span style={{ display: "inline-grid" }}>
+                              <span style={{ gridArea: "1/1", fontSize: 11, fontWeight: 700, visibility: "hidden", whiteSpace: "nowrap", pointerEvents: "none", userSelect: "none", paddingRight: 2 }}>
+                                {LEAD_STATUSES.find((s) => s.key === l.stage)?.label || l.stage || "— Stage —"}
+                              </span>
+                              <select
+                                value={l.stage || ""}
+                                onChange={(ev) => handleLeadInlineUpdate(l.id, "stage", ev.target.value)}
+                                style={{ gridArea: "1/1", width: "100%", appearance: "none", WebkitAppearance: "none", MozAppearance: "none", fontSize: 11, fontWeight: 700, border: "none", padding: 0, background: "transparent", color: LEAD_STATUSES.find((s) => s.key === l.stage)?.color || "var(--text-muted)", cursor: "pointer", fontFamily: "inherit", outline: "none" }}
+                              >
+                                {LEAD_STATUSES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+                              </select>
+                            </span>
+                          </td>
+                        )}
                         {isVisible("date") && (
                           <td style={{ fontSize: 11.5, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
                             {fmt(parseJSON(l.other_notes).lead_created_at || l.created_at)}
@@ -2502,6 +2660,74 @@ export default function Leads() {
           />
         )}
       </AnimatePresence>
+
+      {pendingSubStatus && (
+        <ContactSubStatusModal
+          status={pendingSubStatus.newStatus}
+          onConfirm={handleSubStatusConfirm}
+          onCancel={handleSubStatusCancel}
+        />
+      )}
+      {pendingDupCreate && (
+        <DuplicateCheckModal
+          type={pendingDupCreate.type}
+          duplicates={pendingDupCreate.duplicates}
+          entityType="lead"
+          teamMembers={teamMembers}
+          onCancel={() => setPendingDupCreate(null)}
+          onProceed={handleDupLeadProceed}
+          onViewExisting={handleDupLeadViewExisting}
+          canProceed={["owner", "sales_head"].includes(profile?.role)}
+        />
+      )}
+      {importSummary && (
+        <ImportSummaryModal summary={importSummary} onClose={() => setImportSummary(null)} />
+      )}
     </div>
+  );
+}
+
+function ImportSummaryModal({ summary, onClose }) {
+  const { total, ok, exactDups, partialSimilar, fail, exactDupRows } = summary;
+
+  const downloadReport = () => {
+    const headers = ["Company", "Contact", "Email", "Phone", "Matched With", "Reasons"];
+    const rows = exactDupRows.map((r) => [r.company, r.contact, r.email, r.phone, r.matchedWith, r.reasons].map((v) => `"${(v || "").replace(/"/g, '""')}"`).join(","));
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "duplicate_report.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background: "var(--bg-card, #1e1e2e)", border: "1px solid var(--border)", borderRadius: 12, width: "100%", maxWidth: 420, boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
+        <div style={{ padding: "18px 24px 14px", borderBottom: "1px solid var(--border)" }}>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "var(--text)" }}>Import Summary</h3>
+        </div>
+        <div style={{ padding: "16px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px 20px" }}>
+          {[
+            { label: "Total Rows", value: total, color: "var(--text)" },
+            { label: "Imported",   value: ok,    color: "#10B981" },
+            { label: "Exact Duplicates Skipped", value: exactDups, color: "#EF4444" },
+            { label: "Similar Records Noted",    value: partialSimilar, color: "#F59E0B" },
+            { label: "Failed", value: fail, color: fail > 0 ? "#EF4444" : "var(--text-muted)" },
+          ].map(({ label, value, color }) => (
+            <div key={label}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{label}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color }}>{value}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ padding: "12px 24px 18px", borderTop: "1px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          {exactDupRows.length > 0 && (
+            <button onClick={downloadReport} className="btn-secondary" style={{ fontSize: 12.5 }}>Download Duplicate Report</button>
+          )}
+          <button onClick={onClose} className="btn-primary" style={{ fontSize: 13 }}>Done</button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }

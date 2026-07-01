@@ -908,13 +908,24 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
           {activeTab === "contacts" && (() => {
             const leadExtra = (() => { try { return JSON.parse(linkedLead?.other_notes || "{}"); } catch { return {}; } })();
             const peopleContacts = Array.isArray(leadExtra.people_contacts) ? leadExtra.people_contacts : [];
-            const dealContact    = deal?.contact_name || deal?.company_name ? {
-              id:         "deal-contact",
-              name:       deal.contact_name || "—",
-              email:      deal.customer_email || extra.email || null,
-              phone:      extra.contact || null,
+            // Fallback: if linked lead has no people_contacts, synthesize from its direct fields
+            const linkedLeadFallback = linkedLead && (linkedLead.contact_name || leadExtra.email || leadExtra.phone) ? {
+              id:          "deal-contact",
+              name:        linkedLead.contact_name || deal?.contact_name || "—",
+              email:       leadExtra.email || deal?.customer_email || null,
+              phone:       leadExtra.phone || null,
+              designation: linkedLead.designation || leadExtra.designation || null,
+              linkedin_url: leadExtra.contact_linkedin_url || null,
+              is_primary:  true,
+            } : null;
+            // For deals with no linked lead, still fall back to deal's own contact fields
+            const dealOnlyFallback = !linkedLead && (deal?.contact_name || deal?.company_name) ? {
+              id:          "deal-contact",
+              name:        deal.contact_name || "—",
+              email:       deal.customer_email || extra.email || null,
+              phone:       extra.contact || null,
               designation: extra.designation || null,
-              is_primary: true,
+              is_primary:  true,
             } : null;
 
             if (!deal?.lead_id && !linkedLead) {
@@ -934,7 +945,8 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
               );
             }
 
-            const contacts = peopleContacts.length > 0 ? peopleContacts : (dealContact ? [dealContact] : []);
+            const fallback = linkedLeadFallback || dealOnlyFallback;
+            const contacts = peopleContacts.length > 0 ? peopleContacts : (fallback ? [fallback] : []);
             const sorted   = [...contacts].sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0));
 
             return (

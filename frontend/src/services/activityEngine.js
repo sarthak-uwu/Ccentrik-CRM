@@ -44,6 +44,16 @@ export const ActivityEngine = {
           description: `${company || "Prospect"} converted to lead`,
           userId, leadId, relatedType: "pipeline" }),
 
+  pipelineStageChanged: ({ userId, leadId, company, oldStage, newStage, userName }) =>
+    log({ type: "stage_change", title: "Pipeline Stage Changed",
+          description: `${company || "Prospect"}: stage changed from "${(oldStage || "—").replace(/_/g," ")}" to "${(newStage || "—").replace(/_/g," ")}" by ${userName || "user"}`,
+          userId, leadId, relatedType: "pipeline", metadata: { oldStage, newStage } }),
+
+  pipelineSourceChanged: ({ userId, leadId, company, oldSource, newSource, userName }) =>
+    log({ type: "note", title: "Pipeline Source Changed",
+          description: `${company || "Prospect"}: source changed from "${oldSource || "—"}" to "${newSource || "—"}" by ${userName || "user"}`,
+          userId, leadId, relatedType: "pipeline", metadata: { oldSource, newSource } }),
+
   // ── Leads ──────────────────────────────────────────────────────────────────
   leadCreated: ({ userId, leadId, company }) =>
     log({ type: "record_created", title: "Lead Created",
@@ -57,6 +67,11 @@ export const ActivityEngine = {
     log({ type: "stage_change", title: "Lead Stage Changed",
           description: `${company || "Lead"}: ${(oldStage || "—").replace(/_/g," ")} → ${(newStage || "—").replace(/_/g," ")}`,
           userId, leadId, metadata: { oldStage, newStage } }),
+
+  leadStatusChanged: ({ userId, leadId, company, oldStatus, newStatus, userName }) =>
+    log({ type: "note", title: "Lead Status Changed",
+          description: `${company || "Lead"}: status changed from "${oldStatus || "—"}" to "${newStatus || "—"}" by ${userName || "user"}`,
+          userId, leadId, metadata: { oldStatus, newStatus } }),
 
   leadAssigned: ({ userId, leadId, company, assigneeName }) =>
     log({ type: "assignment", title: "Lead Assigned",

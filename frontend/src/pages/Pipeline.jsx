@@ -12,6 +12,9 @@ import { teamService } from "../services/teamService";
 import { changeHistoryService } from "../services/changeHistoryService";
 import { ActivityEngine } from "../services/activityEngine";
 import PipelineDetailPanel from "../components/PipelineDetailPanel";
+import { ContactSubStatusModal } from "../components/ContactSubStatusModal";
+import { DuplicateCheckModal } from "../components/DuplicateCheckModal";
+import { detectDuplicates } from "../utils/duplicateCheck";
 import { supabase } from "../supabaseClient";
 import toast from "react-hot-toast";
 import {
@@ -1516,10 +1519,13 @@ export default function Pipeline() {
   });
   const pipelineLocked = pipelineLockSetting ?? false;
   const togglePipelineLock = async () => {
-    const newVal = (!pipelineLocked).toString();
+    const next = !pipelineLocked;
+    const newVal = next.toString();
     await supabase.from("crm_settings").upsert({ key: "pipeline_lock", value: newVal, updated_by: profile?.id, updated_at: new Date().toISOString() });
+    await supabase.from("leads").update({ is_locked: next }).eq("stage", "pipeline");
     await refetchPipelineLock();
-    toast.success(newVal === "true" ? "Information locked for field users" : "Information unlocked");
+    qc.invalidateQueries({ queryKey: ["pipeline"] });
+    toast.success(next ? "All pipeline records locked" : "All pipeline records unlocked");
   };
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1527,6 +1533,8 @@ export default function Pipeline() {
   const [editEntry,      setEditEntry]      = useState(null);
   const [convertEntry,   setConvertEntry]   = useState(null);
   const [selectedEntry,  setSelectedEntry]  = useState(null);
+  const [pendingSubStatus, setPendingSubStatus] = useState(null); // { entryId, newStage, prevStage }
+  const [pendingDupCreate, setPendingDupCreate] = useState(null); // { payload, duplicates, type }
   const [search,          setSearch]          = useState("");
   const [filterStage,     setFilterStage]     = useState([]);
   const [filterIndustry,  setFilterIndustry]  = useState([]);
@@ -1702,24 +1710,40 @@ export default function Pipeline() {
           assigned_to:    assignedTo       || profile?.id,
           created_by:     profile?.id,
           is_locked:      false,
-          other_notes: JSON.stringify({
-            email:                r.email    || "",
-            phone:                r.phone    || "",
-            website:              r.website  || "",
-            industry:             r.industry || "",
-            country: (() => {
-              const raw = (r.headquarters_country || r.country || "").trim();
-              if (!raw) return "";
-              const byCode = COUNTRIES.find((c) => c.code.toLowerCase() === raw.toLowerCase());
-              if (byCode) return byCode.code;
-              const byName = COUNTRIES.find((c) => c.name.toLowerCase() === raw.toLowerCase());
-              return byName ? byName.code : raw;
-            })(),
-            state:                r.headquarters_state || r.state || "",
-            city:                 r.headquarters_city  || r.city  || "",
-            contact_linkedin_url: r.contact_linkedin_url || "",
-            notes:                r.notes    || "",
-          }),
+          other_notes: JSON.stringify((() => {
+            const people_contacts = [];
+            if (r.contact_name || r.email || r.phone) {
+              people_contacts.push({
+                id:           `${Date.now()}-${Math.random()}`,
+                name:         r.contact_name        || "",
+                designation:  r.designation         || "",
+                email:        r.email               || "",
+                phone:        r.phone               || "",
+                linkedin_url: r.contact_linkedin_url || "",
+                is_primary:   true,
+              });
+            }
+            return {
+              email:                r.email    || "",
+              phone:                r.phone    || "",
+              website:              r.website  || "",
+              industry:             r.industry || "",
+              country: (() => {
+                const raw = (r.headquarters_country || r.country || "").trim();
+                if (!raw) return "";
+                const byCode = COUNTRIES.find((c) => c.code.toLowerCase() === raw.toLowerCase());
+                if (byCode) return byCode.code;
+                const byName = COUNTRIES.find((c) => c.name.toLowerCase() === raw.toLowerCase());
+                return byName ? byName.code : raw;
+              })(),
+              state:                r.headquarters_state || r.state || "",
+              city:                 r.headquarters_city  || r.city  || "",
+              contact_linkedin_url: r.contact_linkedin_url || "",
+              notes:                r.notes    || "",
+              people_contacts,
+              contact_locked:       people_contacts.length > 0,
+            };
+          })()),
         };
         const { error } = await sb.from("leads").insert([record]);
         if (error) {
@@ -1779,19 +1803,46 @@ export default function Pipeline() {
     onError: (e) => toast.error(e.message),
   });
 
-  const handleInlineUpdate = async (id, field, value) => {
+  const PIPELINE_SUB_STATUS_KEYS = new Set(["attempted_contact", "engaged"]);
+
+  const handleInlineUpdate = async (id, field, value, subStatusReason = null, subStatusRemarks = null) => {
     const entry = allEntries.find((e) => e.id === id);
-    const { error } = await supabase.from("leads").update({ [field]: value, updated_at: new Date().toISOString() }).eq("id", id);
+
+    // Intercept sub-status pipeline stage changes
+    if (field === "pipeline_stage" && PIPELINE_SUB_STATUS_KEYS.has(value) && !subStatusReason) {
+      setPendingSubStatus({ entryId: id, newStage: value, prevStage: entry?.pipeline_stage });
+      return;
+    }
+
+    // Include sub-status in other_notes when applicable
+    let updatePayload = { [field]: value, updated_at: new Date().toISOString() };
+    if (field === "pipeline_stage" && PIPELINE_SUB_STATUS_KEYS.has(value) && subStatusReason) {
+      const prevExtra = (() => { try { return entry?.other_notes ? JSON.parse(entry.other_notes) : {}; } catch { return {}; } })();
+      updatePayload.other_notes = JSON.stringify({
+        ...prevExtra,
+        contact_sub_status: { reason: subStatusReason, remarks: subStatusRemarks || null, updated_at: new Date().toISOString() },
+      });
+    }
+
+    const { error } = await supabase.from("leads").update(updatePayload).eq("id", id);
     if (error) {
       toast.error("Update failed");
     } else {
       qc.invalidateQueries({ queryKey: ["pipeline"] });
       if (field === "pipeline_stage") {
-        ActivityEngine.stageChanged({ userId: profile?.id, leadId: id, company: entry?.company_name, oldStage: entry?.pipeline_stage, newStage: value });
+        ActivityEngine.pipelineStageChanged({ userId: profile?.id, leadId: id, company: entry?.company_name, oldStage: entry?.pipeline_stage, newStage: value, userName: profile?.full_name });
+      } else if (field === "source") {
+        ActivityEngine.pipelineSourceChanged({ userId: profile?.id, leadId: id, company: entry?.company_name, oldSource: entry?.source, newSource: value, userName: profile?.full_name });
       } else if (field === "assigned_to") {
         ActivityEngine.leadAssigned({ userId: profile?.id, leadId: id, company: entry?.company_name });
       }
     }
+  };
+
+  const handlePipelineSubStatusConfirm = (reason, remarks) => {
+    if (!pendingSubStatus) return;
+    handleInlineUpdate(pendingSubStatus.entryId, "pipeline_stage", pendingSubStatus.newStage, reason, remarks);
+    setPendingSubStatus(null);
   };
 
   const convertMutation = useMutation({
@@ -1826,9 +1877,31 @@ export default function Pipeline() {
         trackedFields:  PIPELINE_TRACKED_FIELDS,
       });
     } else {
+      const { exact, partial } = detectDuplicates(data, allEntries, { notesKey: "other_notes", phoneKey: "phone" });
+      if (exact.length > 0) {
+        setPendingDupCreate({ payload: data, duplicates: exact, type: "exact" });
+        return;
+      }
+      if (partial.length > 0) {
+        setPendingDupCreate({ payload: data, duplicates: partial, type: "partial" });
+        return;
+      }
       // lead_code is assigned by the database trigger (fn_set_lead_code) on INSERT
       await createMutation.mutateAsync(data);
     }
+  };
+
+  const handleDupPipelineProceed = async () => {
+    const { payload } = pendingDupCreate;
+    setPendingDupCreate(null);
+    await createMutation.mutateAsync(payload);
+  };
+
+  const handleDupPipelineViewExisting = (record) => {
+    setPendingDupCreate(null);
+    setShowForm(false);
+    setEditEntry(null);
+    setSelectedEntry(record);
   };
 
   const handleConvertClick = (e) => {
@@ -1868,7 +1941,7 @@ export default function Pipeline() {
             )}
           </div>
           <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center" }}>
-            {isSalesHead && (
+            {(isOwner || isSalesHead) && (
               <button
                 onClick={togglePipelineLock}
                 title={pipelineLocked ? "Information Locked — click to unlock" : "Information Unlocked — click to lock"}
@@ -2367,6 +2440,26 @@ export default function Pipeline() {
           />
         )}
       </AnimatePresence>
+
+      {pendingSubStatus && (
+        <ContactSubStatusModal
+          status={pendingSubStatus.newStage}
+          onConfirm={handlePipelineSubStatusConfirm}
+          onCancel={() => setPendingSubStatus(null)}
+        />
+      )}
+      {pendingDupCreate && (
+        <DuplicateCheckModal
+          type={pendingDupCreate.type}
+          duplicates={pendingDupCreate.duplicates}
+          entityType="pipeline"
+          teamMembers={teamMembers}
+          onCancel={() => setPendingDupCreate(null)}
+          onProceed={handleDupPipelineProceed}
+          onViewExisting={handleDupPipelineViewExisting}
+          canProceed={["owner", "sales_head"].includes(profile?.role)}
+        />
+      )}
     </div>
   );
 }

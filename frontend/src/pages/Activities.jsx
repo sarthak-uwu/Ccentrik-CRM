@@ -16,7 +16,7 @@ import EmailCommunicationCenter from "../components/EmailCommunicationCenter";
 import toast from "react-hot-toast";
 import {
   Plus, Search, Pencil, Trash2, X, Phone, Mail, FileText, Bell,
-  Video, RefreshCw, Clock, LayoutList, Table2, Columns, CalendarDays,
+  Video, RefreshCw, Clock, Columns, CalendarDays,
   Flag, Circle, CheckCircle2, AlertCircle, SlidersHorizontal,
   CalendarClock, PhoneCall, Send, CheckCheck, ChevronLeft, ChevronRight,
   GripVertical, Link2, ArrowUpRight, RotateCcw, TrendingUp,
@@ -2563,10 +2563,6 @@ function EmailActivities({ profile }) {
 
 // ─── Views ────────────────────────────────────────────────────────────────────
 
-const VIEWS = [
-  { key: "timeline", label: "List View",  icon: LayoutList },
-  { key: "table",    label: "Table View", icon: Table2     },
-];
 
 const STATUS_TABS = [
   { key: "all",       label: "All"        },
@@ -2587,7 +2583,6 @@ export default function Activities() {
 
   const [activeModule,     setActiveModule]     = useState("tasks"); // "tasks" | "email" | "targets"
   const [emailSubView,     setEmailSubView]     = useState("hub"); // "hub" | "synclog"
-  const [view,             setView]             = useState("timeline");
   const [search,           setSearch]           = useState("");
   const [typeFilter,       setTypeFilter]       = useState("");
   const [visibilityFilter, setVisibilityFilter] = useState("all"); // "all" | "mine"
@@ -2908,7 +2903,7 @@ export default function Activities() {
   const [actPage, setActPage] = useState(1);
   useEffect(() => { setActPage(1); }, [search, typeFilter, priorityFilter, assignedFilter, visibilityFilter, statusFilter, quickFilter]);
   const actTotalPages = Math.ceil(filtered.length / ACT_PAGE_SIZE);
-  const pagedFiltered = view === "table" ? filtered.slice((actPage - 1) * ACT_PAGE_SIZE, actPage * ACT_PAGE_SIZE) : filtered;
+  const pagedFiltered = filtered.slice((actPage - 1) * ACT_PAGE_SIZE, actPage * ACT_PAGE_SIZE);
 
   // Card counts must use deriveStatus() — same logic as the filters — to avoid mismatches
   const _tStart = new Date(); _tStart.setHours(0, 0, 0, 0);
@@ -3124,18 +3119,8 @@ export default function Activities() {
             />
           </div>
 
-          {/* Pagination — only in Table View, left of view switcher */}
-          {view === "table" && <ToolbarPagination currentPage={actPage} totalPages={actTotalPages} onChange={setActPage} />}
-
-          {/* View switcher */}
-          <div style={{ display: "flex", background: "#F3F4F6", border: "1.5px solid #E5E7EB", borderRadius: 9, padding: 2, gap: 1 }}>
-            {VIEWS.map(({ key, label, icon: Icon }) => (
-              <button key={key} onClick={() => setView(key)} title={label}
-                style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 7, border: "none", cursor: "pointer", background: view === key ? "#FFFFFF" : "transparent", color: view === key ? "#111827" : "#9CA3AF", boxShadow: view === key ? "0 1px 3px rgba(0,0,0,0.08)" : "none", transition: "all 0.15s", fontSize: 12, fontWeight: view === key ? 700 : 500, fontFamily: "inherit" }}>
-                <Icon size={12} />{label}
-              </button>
-            ))}
-          </div>
+          {/* Pagination */}
+          <ToolbarPagination currentPage={actPage} totalPages={actTotalPages} onChange={setActPage} />
 
         </div>
 
@@ -3236,8 +3221,7 @@ export default function Activities() {
           </div>
         ) : (
           <>
-            {view === "timeline" && <TimelineView  activities={filtered} onEdit={handleEdit} onDelete={handleDelete} onStatusChange={handleStatusChange} onNew={isOwnerOrHead ? openNew : null} resolveEntity={resolveEntity} resolveEntityFull={resolveEntityFull} />}
-            {view === "table"    && <TableView     activities={pagedFiltered} onEdit={handleEdit} onDelete={handleDelete} onStatusChange={handleStatusChange} resolveEntity={resolveEntity} resolveEntityFull={resolveEntityFull} onRowClick={(g) => setSelectedGroupKey(g.key)} pageOffset={(actPage - 1) * ACT_PAGE_SIZE} />}
+            <TableView activities={pagedFiltered} onEdit={handleEdit} onDelete={handleDelete} onStatusChange={handleStatusChange} resolveEntity={resolveEntity} resolveEntityFull={resolveEntityFull} onRowClick={(g) => setSelectedGroupKey(g.key)} pageOffset={(actPage - 1) * ACT_PAGE_SIZE} />
           </>
         )}
       </div>

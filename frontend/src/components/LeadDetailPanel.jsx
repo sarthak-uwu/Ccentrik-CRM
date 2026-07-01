@@ -715,6 +715,12 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
   const canEdit        = !contactLocked;
   const canChangePoc   = isSalesHead && !contactLocked;
   const peopleContacts = Array.isArray(extra.people_contacts) ? extra.people_contacts : [];
+  // Fallback: synthesize from direct record fields so legacy records always show contacts
+  const displayContacts = peopleContacts.length > 0 ? peopleContacts : (() => {
+    const hasContact = lead?.contact_name || extra.email || extra.phone;
+    if (!hasContact) return [];
+    return [{ id: "__legacy__", name: lead?.contact_name || "", designation: lead?.designation || "", email: extra.email || "", phone: extra.phone || "", linkedin_url: extra.contact_linkedin_url || "", is_primary: true, __synthetic: true }];
+  })();
   const pocHistory     = Array.isArray(extra.poc_history) ? extra.poc_history : [];
   const statusInfo     = LEAD_STATUSES.find((s) => s.key === lead?.stage) || { label: lead?.stage || "—", color: "#6B7280", bg: "rgba(107,114,128,0.12)" };
   const leadId     = lead?.lead_code || (lead?.id ? `LEAD-${lead.id.slice(0, 8).toUpperCase()}` : "—");
@@ -763,7 +769,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
       await leadsService.update(lead.id, { contact_name: contactName, other_notes: JSON.stringify({ ...cur, people_contacts: updatedContacts, poc_history: newHistory, contact_locked: true }) });
       await changeHistoryService.logPocChange({ entityType: "lead", entityId: lead.id, oldName, newName: contactName, userId: profile?.id });
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["leads"] }); qc.invalidateQueries({ queryKey: ["change-history-lead", lead.id] }); toast.success("Point of contact updated"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["leads"] }); qc.invalidateQueries({ queryKey: ["linked-lead"] }); qc.invalidateQueries({ queryKey: ["change-history-lead", lead.id] }); toast.success("Point of contact updated"); },
     onError: (e) => toast.error(e.message || "Failed"),
   });
 
@@ -777,7 +783,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
       if (!hasPrimary) payload.contact_name = newContact.name;
       await leadsService.update(lead.id, payload);
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["leads"] }); setShowAddContact(false); toast.success("Contact added"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["leads"] }); qc.invalidateQueries({ queryKey: ["linked-lead"] }); setShowAddContact(false); toast.success("Contact added"); },
     onError: (e) => toast.error(e.message || "Failed"),
   });
 
@@ -792,7 +798,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
       if (deleted?.is_primary && remaining.length > 0) payload.contact_name = remaining[0].name;
       await leadsService.update(lead.id, payload);
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["leads"] }); toast.success("Contact removed"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["leads"] }); qc.invalidateQueries({ queryKey: ["linked-lead"] }); toast.success("Contact removed"); },
     onError: (e) => toast.error(e.message || "Failed"),
   });
 
@@ -1078,8 +1084,8 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                 <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: 7 }}>
                   <Users size={15} strokeWidth={2} style={{ color: "#8B5CF6" }} />
                   Contact Persons
-                  {peopleContacts.length > 0 && (
-                    <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 8px", borderRadius: 99, background: "rgba(139,92,246,0.1)", color: "#8B5CF6" }}>{peopleContacts.length}</span>
+                  {displayContacts.length > 0 && (
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 8px", borderRadius: 99, background: "rgba(139,92,246,0.1)", color: "#8B5CF6" }}>{displayContacts.length}</span>
                   )}
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
@@ -1141,7 +1147,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                 />
               )}
 
-              {peopleContacts.length === 0 && !showAddContact ? (
+              {displayContacts.length === 0 && !showAddContact ? (
                 <div style={{ textAlign: "center", padding: "36px 24px", color: "var(--text-muted)" }}>
                   <div style={{ width: 52, height: 52, borderRadius: 14, background: "var(--surface-2)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
                     <Users size={22} style={{ opacity: 0.3 }} />
@@ -1149,15 +1155,15 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                   <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text-2)", marginBottom: 4 }}>No contacts added yet</div>
                   <div style={{ fontSize: 12, opacity: 0.5 }}>Add people you work with at this company</div>
                 </div>
-              ) : peopleContacts.length > 0 ? (
+              ) : displayContacts.length > 0 ? (
                 <div>
-                  {[...peopleContacts]
+                  {[...displayContacts]
                     .sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0))
                     .map((contact) => (
                       <LeadPeopleContactCard
                         key={contact.id}
                         contact={contact}
-                        canEdit={canEdit}
+                        canEdit={canEdit && !contact.__synthetic}
                         onSetPrimary={(c) => setPocMutation.mutate({ contactId: c.id, contactName: c.name })}
                         onDelete={(id) => deleteContactMutation.mutate(id)}
                         isPending={setPocMutation.isPending}
