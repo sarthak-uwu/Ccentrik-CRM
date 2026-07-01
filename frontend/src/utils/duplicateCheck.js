@@ -25,9 +25,9 @@ function computeScore(newF, existF) {
 
   if (newF.company && existF.company) {
     if (newF.company === existF.company) {
-      score += 50; reasons.push("Company name matches");
+      score += 60; reasons.push("Company name matches");
     } else if (newF.company.includes(existF.company) || existF.company.includes(newF.company)) {
-      score += 25; reasons.push("Company name is similar");
+      score += 30; reasons.push("Company name is similar");
     }
   }
 
