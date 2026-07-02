@@ -2515,7 +2515,7 @@ function ScoreConfigModal({ onClose }) {
    MAIN PAGE
 ═══════════════════════════════════════════════════════════════════════ */
 export default function DSRPage() {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const qc        = useQueryClient();
   const pickerRef = useRef(null);
   const dateRef   = useRef(null);
@@ -2530,6 +2530,19 @@ export default function DSRPage() {
   const [schedulerOpen,        setSchedulerOpen]        = useState(false);
   const [inactivityAlertOpen,  setInactivityAlertOpen]  = useState(false);
   const [scoreConfigOpen,      setScoreConfigOpen]      = useState(false);
+  const [scoreMetrics,         setScoreMetrics]         = useState(null); // null=loading, array=loaded
+
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        const r = await fetch(`${API}/api/reports/dsr-score-config`, { headers: { Authorization: `Bearer ${token}` } });
+        if (r.ok) { const d = await r.json(); setScoreMetrics(d.metrics || []); }
+        else setScoreMetrics([]);
+      } catch { setScoreMetrics([]); }
+    })();
+  }, [user]);
   const [activeTab, setActiveTab]           = useState("overview");
   const [range, setRange]                   = useState("daily");
   const [selectedDate, setSelectedDate]     = useState(new Date());
@@ -3365,7 +3378,8 @@ export default function DSRPage() {
             {/* ── Right Panel ── */}
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
-              {/* Productivity Score */}
+              {/* Productivity Score — hidden until score parameters are configured */}
+              {scoreMetrics?.length > 0 && (
               <div className="card" style={{ padding: "20px 18px" }}>
                 <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
                   <ScoreRing score={score} size={90} strokeWidth={7} />
@@ -3385,6 +3399,7 @@ export default function DSRPage() {
                   ))}
                 </div>
               </div>
+              )}
 
               {/* Communication Mix */}
               <div className="card" style={{ padding: "16px 18px" }}>
@@ -3560,7 +3575,8 @@ export default function DSRPage() {
         <>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 20 }}>
 
-            {/* Score Breakdown */}
+            {/* Score Breakdown — hidden until score parameters are configured */}
+            {scoreMetrics?.length > 0 && (
             <div className="card" style={{ padding: "22px 24px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18 }}>
                 <Star size={14} style={{ color: "#F59E0B" }} />
@@ -3588,6 +3604,7 @@ export default function DSRPage() {
                 ))}
               </div>
             </div>
+            )}
 
             {/* Completion Metrics */}
             <div className="card" style={{ padding: "22px 24px" }}>
@@ -3682,7 +3699,7 @@ export default function DSRPage() {
                   { label: "Total Activities", value: String(totalActs), sub: ctx, color: "#6366F1" },
                   { label: "Avg per unit",     value: String(avgPerUnit), sub: `per ${range === "weekly" ? "day" : range === "monthly" ? "week" : range === "daily" ? "hour" : "month"}`, color: "#3B82F6" },
                   { label: "Best period",      value: bestDay ? String(bestDay.count) : "—", sub: bestDay ? (bestDay.fullLabel || bestDay.label) : "no data yet", color: "#F59E0B" },
-                  { label: "Activity score",   value: String(score), sub: "out of 100", color: score >= 70 ? "#10B981" : score >= 40 ? "#F59E0B" : "#EF4444" },
+                  ...(scoreMetrics?.length > 0 ? [{ label: "Activity score", value: String(score), sub: "out of 100", color: score >= 70 ? "#10B981" : score >= 40 ? "#F59E0B" : "#EF4444" }] : []),
                   { label: "New leads",        value: String(newLeads.length), sub: `assigned ${ctx}`, color: "#06B6D4" },
                   { label: "Revenue won",      value: fmtCurrency(revenueWon), sub: "closed deals value", color: "#F59E0B" },
                 ].map((item) => (

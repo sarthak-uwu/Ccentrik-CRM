@@ -953,6 +953,10 @@ router.get("/role-dsr-cron", async (req, res) => {
 
 // ─── New DSR engine (dashboard-style, revamped 2026-07) ──────────────────────
 async function sendNewRoleBasedDSR({ dayStart, dayEnd, dateLabel, todayStr }) {
+  // TESTING MODE: if DSR_TEST_EMAIL is set, all emails go only to that address
+  const TEST_EMAIL = process.env.DSR_TEST_EMAIL || null;
+  if (TEST_EMAIL) console.log(`[NewDSR] ⚠️  TEST MODE — all emails redirected to ${TEST_EMAIL}`);
+
   // 1. Collect all day's data in one optimised pass
   const dsrData = await collectDsrData(dayStart, dayEnd, todayStr);
   const { allProfiles, profileMap, statsMap, meetings } = dsrData;
@@ -1028,10 +1032,10 @@ async function sendNewRoleBasedDSR({ dayStart, dayEnd, dateLabel, todayStr }) {
         statsMap,
       });
 
-      // 8. Send
+      // 8. Send (TEST_EMAIL overrides recipient in testing mode)
       await sendMail({
-        to:      [recipient.email],
-        subject,
+        to:      TEST_EMAIL ? [TEST_EMAIL] : [recipient.email],
+        subject: TEST_EMAIL ? `[TEST → ${recipient.email}] ${subject}` : subject,
         html,
         text,
         attachments: [{
