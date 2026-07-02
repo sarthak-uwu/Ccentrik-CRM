@@ -70,7 +70,6 @@ function buildDsrEmailHtml({
   // ── [NEW] Management Dashboard Summary ───────────────────────────────────────
   const activeCount   = scopeProfiles.filter(p => (statsMap[p.id]?.activitiesCompleted || 0) > 0).length;
   const inactiveCount = scopeProfiles.length - activeCount;
-  const prodScore     = scopeProfiles.length > 0 ? Math.round((activeCount / scopeProfiles.length) * 100) : 0;
 
   const kpiData = [
     { label: "Total Employees", value: scopeProfiles.length,                                                color: "#2563EB", bg: "#EFF6FF", bd: "#BFDBFE" },
@@ -86,7 +85,6 @@ function buildDsrEmailHtml({
     { label: "Deals Created",   value: scopeTotals.dealsCreated || 0,                                       color: "#0891B2", bg: "#ECFEFF", bd: "#A5F3FC" },
     { label: "Deals Won",       value: scopeTotals.dealsWon || 0,                                           color: "#059669", bg: "#ECFDF5", bd: "#A7F3D0" },
     { label: "Deals Lost",      value: scopeTotals.dealsLost || 0,                                          color: "#DC2626", bg: "#FEF2F2", bd: "#FECACA" },
-    { label: "Productivity",    value: prodScore + "%",                                                     color: "#7C3AED", bg: "#F5F3FF", bd: "#DDD6FE" },
   ];
 
   function kpiCell(k, last) {
@@ -99,7 +97,7 @@ function buildDsrEmailHtml({
   }
 
   const kpiRow1Html = kpiData.slice(0, 7).map((k, i) => kpiCell(k, i === 6)).join("");
-  const kpiRow2Html = kpiData.slice(7).map((k, i)  => kpiCell(k, i === 6)).join("");
+  const kpiRow2Html = kpiData.slice(7).map((k, i, a) => kpiCell(k, i === a.length - 1)).join("");
 
   const managementSummarySection = `
   <tr><td style="padding:24px 32px 0;">
@@ -135,8 +133,7 @@ function buildDsrEmailHtml({
     <th style="${perfThC}">New Leads</th>
     <th style="${perfThC}">Deals Created</th>
     <th style="${perfThC}">Deals Won</th>
-    <th style="${perfThC}">Pending</th>
-    <th style="${perfThC}">Productivity</th>`;
+    <th style="${perfThC}">Pending</th>`;
 
   const perfRows = empPerfStats.map(({ p, s, total }) => {
     const isHighest    = maxAct > 0 && total === maxAct;
@@ -149,10 +146,8 @@ function buildDsrEmailHtml({
     else if (isLowest)     { rowBg = "#FFFBEB"; badge = `<span style="font-size:9px;background:#D97706;color:#fff;padding:1px 6px;border-radius:99px;margin-left:6px;font-weight:600;">Low</span>`; }
     else if (isNoActivity) { rowBg = "#FEF2F2"; badge = `<span style="font-size:9px;background:#DC2626;color:#fff;padding:1px 6px;border-radius:99px;margin-left:6px;font-weight:600;">No Activity</span>`; }
 
-    const tdl     = `padding:9px 10px;font-size:12px;color:#334155;border-top:1px solid #F1F5F9;text-align:left;background:${rowBg};`;
-    const tdc     = tdl.replace("text-align:left;", "text-align:center;");
-    const empProd = maxAct > 0 ? Math.round((total / maxAct) * 100) : 0;
-    const prodClr = empProd >= 80 ? "#059669" : empProd >= 50 ? "#D97706" : "#DC2626";
+    const tdl = `padding:9px 10px;font-size:12px;color:#334155;border-top:1px solid #F1F5F9;text-align:left;background:${rowBg};`;
+    const tdc = tdl.replace("text-align:left;", "text-align:center;");
 
     return `<tr>
       <td style="${tdl}"><strong>${p.full_name || p.email}</strong>${badge}</td>
@@ -166,7 +161,6 @@ function buildDsrEmailHtml({
       <td style="${tdc}">${s.dealsCreated || 0}</td>
       <td style="${tdc}"><span style="${(s.dealsWon || 0) > 0 ? "color:#059669;font-weight:700;" : ""}">${s.dealsWon || 0}</span></td>
       <td style="${tdc}">${s.activitiesPending || 0}</td>
-      <td style="${tdc}"><span style="font-size:11px;font-weight:700;color:${prodClr};">${empProd}%</span></td>
     </tr>`;
   }).join("") || `<tr><td colspan="12" style="padding:22px;text-align:center;color:#94A3B8;font-size:13px;">No data recorded today.</td></tr>`;
 
