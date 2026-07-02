@@ -1,20 +1,24 @@
 'use strict';
 const PDFDocument = require('pdfkit');
 
+// ── Light-theme colour palette ────────────────────────────────────────────────
 const C = {
-  navy:    '#0F2044',
-  blue:    '#1E3A5F',
-  accent:  '#3B82F6',
-  green:   '#10B981',
-  red:     '#EF4444',
-  yellow:  '#F59E0B',
-  purple:  '#6366F1',
-  gray:    '#64748B',
-  border:  '#E2E8F0',
-  surface: '#F8FAFC',
-  white:   '#FFFFFF',
-  text:    '#1E293B',
-  text2:   '#475569',
+  accent:   '#3B82F6',   // blue — primary accent
+  green:    '#10B981',
+  red:      '#EF4444',
+  yellow:   '#F59E0B',
+  purple:   '#6366F1',
+  gray:     '#64748B',
+  border:   '#E2E8F0',
+  surface:  '#F8FAFC',   // page / card background
+  surface2: '#F1F5F9',   // alternate row / section bg
+  text:     '#1E293B',   // primary text
+  text2:    '#475569',   // secondary text
+  muted:    '#94A3B8',   // muted / labels
+  white:    '#FFFFFF',
+  // header bar (top of each page) — stays branded
+  hdrBg:    '#1E3A5F',
+  hdrText:  '#FFFFFF',
 };
 
 const PW = 595.28;
@@ -23,6 +27,7 @@ const ML = 36;
 const MR = 36;
 const CW = PW - ML - MR; // 523.28
 
+// ── Formatters ────────────────────────────────────────────────────────────────
 function fmtCurrency(n) {
   if (!n) return '₹0';
   if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
@@ -55,6 +60,7 @@ function roleColor(r) {
   return C.accent;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
 async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, statsMap, meetings }) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 0, bufferPages: true });
@@ -65,116 +71,131 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
 
     let pageNum = 0;
 
+    // ── Page chrome ─────────────────────────────────────────────────────────
     function addHeader(subtitle) {
       pageNum++;
-      doc.rect(0, 0, PW, 36).fill(C.navy);
-      doc.font('Helvetica-Bold').fontSize(10).fillColor(C.white).text('Ccentrik CRM', ML, 13, { continued: true });
-      doc.font('Helvetica').fillColor('#94A3B8').text(`  |  ${subtitle || 'Daily Sales Report'}`);
-      doc.font('Helvetica').fontSize(8.5).fillColor('#94A3B8')
-         .text(`Page ${pageNum}`, PW - MR - 36, 14, { width: 36, align: 'right' });
+      // White page background
+      doc.rect(0, 0, PW, PH).fill(C.white);
+      // Narrow branded top bar
+      doc.rect(0, 0, PW, 32).fill(C.hdrBg);
+      doc.font('Helvetica-Bold').fontSize(9.5).fillColor(C.hdrText)
+         .text('Ccentrik CRM', ML, 11, { continued: true });
+      doc.font('Helvetica').fillColor(C.muted)
+         .text(`  |  ${subtitle || 'Daily Sales Report'}`);
+      doc.font('Helvetica').fontSize(8).fillColor(C.muted)
+         .text(`Page ${pageNum}`, PW - MR - 36, 12, { width: 36, align: 'right' });
     }
 
     function addFooter() {
-      doc.rect(0, PH - 26, PW, 26).fill(C.navy);
-      doc.font('Helvetica').fontSize(7.5).fillColor('#94A3B8')
-         .text('Ccentrik CRM  ·  Confidential — Internal Use Only', ML, PH - 16, { width: CW * 0.55 });
-      doc.font('Helvetica').fontSize(7.5).fillColor('#64748B')
-         .text(`Generated: ${generatedAt}`, ML + CW * 0.55, PH - 16, { width: CW * 0.45, align: 'right' });
+      // Light footer strip
+      doc.rect(0, PH - 24, PW, 24).fill(C.surface2);
+      doc.rect(0, PH - 24, PW, 1).fill(C.border);
+      doc.font('Helvetica').fontSize(7.5).fillColor(C.muted)
+         .text('Ccentrik CRM  ·  Confidential — Internal Use Only', ML, PH - 15, { width: CW * 0.55 });
+      doc.font('Helvetica').fontSize(7.5).fillColor(C.muted)
+         .text(`Generated: ${generatedAt}`, ML + CW * 0.55, PH - 15, { width: CW * 0.45, align: 'right' });
     }
 
-    // Start a fresh page, return starting y
     function newPage(subtitle) {
       if (pageNum > 0) { addFooter(); doc.addPage(); }
       addHeader(subtitle);
-      return 44;
+      return 40;
     }
 
+    // ── Layout helpers ───────────────────────────────────────────────────────
     function sectionTitle(title, y) {
-      doc.rect(ML, y, CW, 22).fill('#F1F5F9');
+      doc.rect(ML, y, CW, 22).fill(C.surface2);
       doc.rect(ML, y, 3, 22).fill(C.accent);
       doc.font('Helvetica-Bold').fontSize(9.5).fillColor(C.text).text(title, ML + 10, y + 7);
       return y + 26;
     }
 
-    // Draws table header + rows; handles page breaks by re-drawing header
     function drawTable(cols, rows, startY, subtitle, rowH = 15) {
       let y = startY;
       const drawTHead = () => {
-        doc.rect(ML, y, CW, rowH + 1).fill(C.blue);
+        // Light blue-gray header instead of dark navy
+        doc.rect(ML, y, CW, rowH + 2).fill(C.surface2);
+        doc.rect(ML, y, CW, 1).fill(C.border);
+        doc.rect(ML, y + rowH + 1, CW, 1).fill(C.border);
         let x = ML;
         cols.forEach(col => {
-          doc.font('Helvetica-Bold').fontSize(7.5).fillColor(C.white)
-             .text(col.label, x + 3, y + 4, { width: col.width - 6, ellipsis: true });
+          doc.font('Helvetica-Bold').fontSize(7.5).fillColor(C.text2)
+             .text(col.label, x + 4, y + 5, { width: col.width - 8, ellipsis: true });
           x += col.width;
         });
-        y += rowH + 1;
+        y += rowH + 2;
       };
       drawTHead();
       rows.forEach((row, ri) => {
         if (y > PH - 50) {
-          addFooter(); doc.addPage(); addHeader(subtitle); y = 44;
+          addFooter(); doc.addPage(); addHeader(subtitle); y = 40;
           drawTHead();
         }
+        // Alternate row shading (very subtle)
         doc.rect(ML, y, CW, rowH).fill(ri % 2 === 0 ? C.white : C.surface);
-        doc.rect(ML, y, CW, rowH).stroke('#E2E8F0').strokeColor('#E2E8F0');
+        // Bottom border
+        doc.rect(ML, y + rowH - 1, CW, 1).fill(C.border);
         let rx = ML;
         cols.forEach(col => {
           const cell = row[col.key];
           const val  = cell && typeof cell === 'object' ? cell.v : (cell ?? '—');
           const clr  = cell && typeof cell === 'object' ? (cell.c || C.text) : C.text;
           doc.font('Helvetica').fontSize(7.5).fillColor(clr)
-             .text(String(val), rx + 3, y + 4, { width: col.width - 6, ellipsis: true });
+             .text(String(val), rx + 4, y + 4, { width: col.width - 8, ellipsis: true });
           rx += col.width;
         });
         y += rowH;
       });
+      // Outer border
+      doc.rect(ML, startY, CW, y - startY).stroke(C.border).strokeColor(C.border);
       return y;
     }
 
-    // 4-column stat grid (KPI boxes)
+    // 4-column KPI stat grid
     function statGrid(items, y, cols = 4) {
       const boxW = Math.floor(CW / cols);
-      const boxH = 54;
+      const boxH = 56;
       const gap  = 6;
       items.forEach((item, i) => {
         const col = i % cols;
         const row = Math.floor(i / cols);
         const bx  = ML + col * boxW;
         const by  = y + row * (boxH + gap);
-        const w   = col === cols - 1 ? CW - col * boxW : boxW - 4;
+        const w   = col === cols - 1 ? CW - col * boxW : boxW - 6;
+        // Card: white bg, light border, left colour bar
         doc.rect(bx, by, w, boxH).fill(C.white).stroke(C.border).strokeColor(C.border);
         doc.rect(bx, by, 3, boxH).fill(item.color || C.accent);
-        doc.font('Helvetica-Bold').fontSize(17).fillColor(item.color || C.accent)
-           .text(String(item.value), bx + 8, by + 10, { width: w - 16 });
+        doc.font('Helvetica-Bold').fontSize(18).fillColor(item.color || C.accent)
+           .text(String(item.value), bx + 9, by + 9, { width: w - 18 });
         doc.font('Helvetica').fontSize(7.5).fillColor(C.text2)
-           .text(item.label, bx + 8, by + 34, { width: w - 16, ellipsis: true });
+           .text(item.label, bx + 9, by + 35, { width: w - 18, ellipsis: true });
       });
       return y + Math.ceil(items.length / cols) * (boxH + gap) + 4;
     }
 
-    // Compact 8-column stat grid for per-employee pages
+    // Compact 4-col × N-row mini grid for per-employee section
     function miniStatGrid(items, y) {
       const cols = 4;
       const boxW = Math.floor(CW / cols);
-      const boxH = 42;
+      const boxH = 44;
       const gap  = 5;
       items.forEach((item, i) => {
         const col = i % cols;
         const row = Math.floor(i / cols);
         const bx  = ML + col * boxW;
         const by  = y + row * (boxH + gap);
-        const w   = col === cols - 1 ? CW - col * boxW : boxW - 4;
+        const w   = col === cols - 1 ? CW - col * boxW : boxW - 6;
         doc.rect(bx, by, w, boxH).fill(C.white).stroke(C.border).strokeColor(C.border);
         doc.rect(bx, by, 3, boxH).fill(item.color || C.accent);
-        doc.font('Helvetica-Bold').fontSize(14).fillColor(item.color || C.accent)
-           .text(String(item.value), bx + 7, by + 7, { width: w - 14 });
+        doc.font('Helvetica-Bold').fontSize(15).fillColor(item.color || C.accent)
+           .text(String(item.value), bx + 8, by + 8, { width: w - 16 });
         doc.font('Helvetica').fontSize(7).fillColor(C.text2)
-           .text(item.label, bx + 7, by + 27, { width: w - 14, ellipsis: true });
+           .text(item.label, bx + 8, by + 29, { width: w - 16, ellipsis: true });
       });
       return y + Math.ceil(items.length / cols) * (boxH + gap) + 4;
     }
 
-    // ── Aggregate totals ────────────────────────────────────────────────────
+    // ── Aggregate totals ─────────────────────────────────────────────────────
     const totals = {
       activitiesCompleted: 0, activitiesPending: 0, activitiesOverdue: 0,
       callsMade: 0, emailsSent: 0, notesAdded: 0, meetingsScheduled: 0,
@@ -190,25 +211,29 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
     const totalActs = totals.activitiesCompleted + totals.activitiesPending + totals.activitiesOverdue;
 
     // ─────────────────────────────────────────────────────────────────────────
-    // COVER PAGE
+    // COVER PAGE  (light)
     // ─────────────────────────────────────────────────────────────────────────
-    doc.rect(0, 0, PW, PH).fill(C.navy);
-    doc.rect(0, 0, PW, 5).fill(C.accent);
-    doc.rect(0, PH - 5, PW, 5).fill(C.accent);
+    doc.rect(0, 0, PW, PH).fill(C.white);
 
-    doc.font('Helvetica-Bold').fontSize(30).fillColor(C.white)
-       .text('Ccentrik CRM', ML, 90, { width: CW, align: 'center' });
-    doc.rect(ML + 70, 132, CW - 140, 2).fill(C.accent);
-    doc.font('Helvetica').fontSize(16).fillColor('#94A3B8')
-       .text('Daily Sales Report', ML, 143, { width: CW, align: 'center' });
+    // Top accent bar
+    doc.rect(0, 0, PW, 5).fill(C.accent);
+
+    // Brand header area
+    doc.rect(0, 5, PW, 100).fill(C.surface2);
+    doc.rect(0, 104, PW, 1).fill(C.border);
+
+    doc.font('Helvetica-Bold').fontSize(28).fillColor(C.text)
+       .text('Ccentrik CRM', ML, 28, { width: CW, align: 'center' });
+    doc.font('Helvetica').fontSize(13).fillColor(C.text2)
+       .text('Daily Sales Report', ML, 64, { width: CW, align: 'center' });
 
     // Date badge
-    doc.rect(ML + 90, 178, CW - 180, 38).fill(C.blue);
-    doc.rect(ML + 90, 178, 3, 38).fill(C.accent);
-    doc.font('Helvetica-Bold').fontSize(13.5).fillColor(C.white)
-       .text(dateLabel, ML + 93, 192, { width: CW - 192, align: 'center' });
+    doc.rect(ML + 100, 118, CW - 200, 34).fill(C.surface2).stroke(C.border).strokeColor(C.border);
+    doc.rect(ML + 100, 118, 3, 34).fill(C.accent);
+    doc.font('Helvetica-Bold').fontSize(13).fillColor(C.text)
+       .text(dateLabel, ML + 100, 129, { width: CW - 206, align: 'center' });
 
-    // 4 cover stats
+    // 4 headline stats
     const cStats = [
       { label: 'Total Activities', value: totalActs,                   color: C.accent  },
       { label: 'Leads Created',    value: totals.leadsCreated,         color: C.green   },
@@ -218,97 +243,104 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
     const cBW = CW / 4;
     cStats.forEach((s, i) => {
       const bx = ML + i * cBW;
-      doc.rect(bx + 3, 255, cBW - 6, 72).fill('#1A2F55');
-      doc.rect(bx + 3, 255, 3, 72).fill(s.color);
+      const w  = i === cStats.length - 1 ? CW - i * cBW : cBW - 6;
+      doc.rect(bx, 170, w, 72).fill(C.white).stroke(C.border).strokeColor(C.border);
+      doc.rect(bx, 170, 3, 72).fill(s.color);
       doc.font('Helvetica-Bold').fontSize(22).fillColor(s.color)
-         .text(String(s.value), bx + 10, 267, { width: cBW - 22, align: 'center' });
-      doc.font('Helvetica').fontSize(8).fillColor('#94A3B8')
-         .text(s.label, bx + 10, 301, { width: cBW - 22, align: 'center' });
+         .text(String(s.value), bx + 9, 183, { width: w - 18, align: 'center' });
+      doc.font('Helvetica').fontSize(8).fillColor(C.text2)
+         .text(s.label, bx + 9, 215, { width: w - 18, align: 'center' });
     });
 
-    // Employee list on cover
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#64748B')
-       .text(`${scopeProfiles.length} Employee${scopeProfiles.length !== 1 ? 's' : ''}`, ML, 350, { width: CW, align: 'center' });
-    const empListY = 366;
-    scopeProfiles.slice(0, 6).forEach((p, i) => {
+    // Employee roster
+    const rosterY = 262;
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text2)
+       .text(`${scopeProfiles.length} Employee${scopeProfiles.length !== 1 ? 's' : ''}`, ML, rosterY);
+    doc.rect(ML, rosterY + 14, CW, 1).fill(C.border);
+
+    scopeProfiles.slice(0, 9).forEach((p, i) => {
       const col = i % 3;
       const row = Math.floor(i / 3);
       const bx  = ML + col * (CW / 3);
-      const by  = empListY + row * 28;
-      doc.rect(bx + 4, by, (CW / 3) - 8, 22).fill('#1A2F55');
-      doc.rect(bx + 4, by, 3, 22).fill(roleColor(p.role));
-      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.white)
-         .text(p.full_name || p.email, bx + 12, by + 4, { width: (CW / 3) - 24, ellipsis: true });
-      doc.font('Helvetica').fontSize(7).fillColor('#94A3B8')
-         .text(fmtType(p.role), bx + 12, by + 14, { width: (CW / 3) - 24, ellipsis: true });
+      const by  = rosterY + 22 + row * 34;
+      const w   = (CW / 3) - 8;
+      doc.rect(bx, by, w, 28).fill(C.surface).stroke(C.border).strokeColor(C.border);
+      doc.rect(bx, by, 3, 28).fill(roleColor(p.role));
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text)
+         .text(p.full_name || p.email, bx + 10, by + 5, { width: w - 14, ellipsis: true });
+      doc.font('Helvetica').fontSize(7.5).fillColor(C.text2)
+         .text(fmtType(p.role), bx + 10, by + 16, { width: w - 14, ellipsis: true });
     });
-    if (scopeProfiles.length > 6) {
-      doc.font('Helvetica').fontSize(8).fillColor('#64748B')
-         .text(`+ ${scopeProfiles.length - 6} more`, ML, empListY + 2 * 28 + 4, { width: CW, align: 'center' });
+    if (scopeProfiles.length > 9) {
+      const lastRow = Math.ceil(Math.min(scopeProfiles.length, 9) / 3);
+      doc.font('Helvetica').fontSize(8).fillColor(C.muted)
+         .text(`+ ${scopeProfiles.length - 9} more`, ML, rosterY + 22 + lastRow * 34 + 4);
     }
 
-    doc.font('Helvetica').fontSize(8).fillColor('#475569')
-       .text(`Generated: ${generatedAt}`, ML, PH - 55, { width: CW, align: 'center' });
-    doc.font('Helvetica').fontSize(7.5).fillColor('#334155')
-       .text('CONFIDENTIAL — FOR INTERNAL USE ONLY', ML, PH - 40, { width: CW, align: 'center' });
+    // Bottom labels
+    doc.font('Helvetica').fontSize(8).fillColor(C.muted)
+       .text(`Generated: ${generatedAt}`, ML, PH - 50, { width: CW, align: 'center' });
+    doc.font('Helvetica').fontSize(7.5).fillColor(C.muted)
+       .text('CONFIDENTIAL — FOR INTERNAL USE ONLY', ML, PH - 36, { width: CW, align: 'center' });
+
+    // Bottom accent bar
+    doc.rect(0, PH - 5, PW, 5).fill(C.accent);
     addFooter();
 
     // ─────────────────────────────────────────────────────────────────────────
-    // PAGE 2: EXECUTIVE SUMMARY (aggregate)
+    // EXECUTIVE SUMMARY
     // ─────────────────────────────────────────────────────────────────────────
     let y = newPage('Executive Summary');
-    y = sectionTitle('Executive Summary — Key Performance Indicators', y);
+
+    y = sectionTitle('Key Performance Indicators', y);
     y += 8;
 
     const kpis = [
-      { label: 'Total Activities',   value: totalActs,                  color: C.accent  },
-      { label: 'Completed',          value: totals.activitiesCompleted,  color: C.green   },
-      { label: 'Pending',            value: totals.activitiesPending,    color: C.yellow  },
-      { label: 'Overdue',            value: totals.activitiesOverdue,    color: C.red     },
-      { label: 'Meetings',           value: totals.meetingsScheduled,    color: C.purple  },
-      { label: 'Calls Made',         value: totals.callsMade,            color: C.blue    },
-      { label: 'Emails Sent',        value: totals.emailsSent,           color: C.accent  },
-      { label: 'Notes Added',        value: totals.notesAdded,           color: C.gray    },
-      { label: 'New Leads',          value: totals.leadsCreated,         color: C.green   },
-      { label: 'Deals Created',      value: totals.dealsCreated,         color: C.purple  },
-      { label: 'Leads Converted',    value: totals.leadsConverted,       color: C.accent  },
-      { label: 'Deals Won',          value: totals.dealsWon,             color: C.green   },
-      { label: 'Revenue',            value: fmtCurrency(totals.revenue), color: C.yellow  },
-      { label: 'Tasks Completed',    value: totals.tasksCompleted,       color: C.blue    },
-      { label: 'Follow-ups Done',    value: totals.followUpsCompleted,   color: C.green   },
-      { label: 'Prospects Added',    value: totals.prospectsAdded,       color: C.accent  },
+      { label: 'Total Activities',  value: totalActs,                  color: C.accent  },
+      { label: 'Completed',         value: totals.activitiesCompleted,  color: C.green   },
+      { label: 'Pending',           value: totals.activitiesPending,    color: C.yellow  },
+      { label: 'Overdue',           value: totals.activitiesOverdue,    color: C.red     },
+      { label: 'Meetings',          value: totals.meetingsScheduled,    color: C.purple  },
+      { label: 'Calls Made',        value: totals.callsMade,            color: C.accent  },
+      { label: 'Emails Sent',       value: totals.emailsSent,           color: C.gray    },
+      { label: 'Notes Added',       value: totals.notesAdded,           color: C.gray    },
+      { label: 'New Leads',         value: totals.leadsCreated,         color: C.green   },
+      { label: 'Deals Created',     value: totals.dealsCreated,         color: C.purple  },
+      { label: 'Leads Converted',   value: totals.leadsConverted,       color: C.accent  },
+      { label: 'Deals Won',         value: totals.dealsWon,             color: C.green   },
+      { label: 'Revenue',           value: fmtCurrency(totals.revenue), color: C.yellow  },
+      { label: 'Tasks Completed',   value: totals.tasksCompleted,       color: C.accent  },
+      { label: 'Follow-ups Done',   value: totals.followUpsCompleted,   color: C.green   },
+      { label: 'Prospects Added',   value: totals.prospectsAdded,       color: C.accent  },
     ];
     y = statGrid(kpis, y, 4);
 
     // Performance bars
     if (totalActs > 0 || totals.dealsCreated > 0) {
-      y += 10;
+      y += 12;
       y = sectionTitle('Performance Metrics', y);
-      y += 8;
-      const compPct  = totalActs > 0 ? Math.round((totals.activitiesCompleted / totalActs) * 100) : 0;
-      const convRate = (totals.leadsCreated + totals.prospectsAdded) > 0
-        ? Math.round((totals.leadsConverted / (totals.leadsCreated + totals.prospectsAdded)) * 100) : 0;
-      const winRate  = totals.dealsCreated > 0 ? Math.round((totals.dealsWon / totals.dealsCreated) * 100) : 0;
-      [
-        { label: 'Activity Completion Rate', pct: compPct,  color: C.green  },
-        { label: 'Lead Conversion Rate',     pct: convRate, color: C.accent },
-        { label: 'Deal Win Rate',            pct: winRate,  color: C.purple },
-      ].forEach(m => {
+      y += 10;
+      const bars = [
+        { label: 'Activity Completion Rate', pct: totalActs > 0 ? Math.round((totals.activitiesCompleted / totalActs) * 100) : 0, color: C.green  },
+        { label: 'Lead Conversion Rate',     pct: (totals.leadsCreated + totals.prospectsAdded) > 0 ? Math.round((totals.leadsConverted / (totals.leadsCreated + totals.prospectsAdded)) * 100) : 0, color: C.accent },
+        { label: 'Deal Win Rate',            pct: totals.dealsCreated > 0 ? Math.round((totals.dealsWon / totals.dealsCreated) * 100) : 0, color: C.purple },
+      ];
+      bars.forEach(m => {
         doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text).text(m.label, ML, y, { continued: true });
-        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(m.color).text(`  ${m.pct}%`, { align: 'right' });
+        doc.font('Helvetica-Bold').fillColor(m.color).text(`  ${m.pct}%`, { align: 'right' });
         y += 14;
-        doc.rect(ML, y, CW, 8).fill('#E2E8F0');
-        if (m.pct > 0) doc.rect(ML, y, Math.round(CW * m.pct / 100), 8).fill(m.color);
-        y += 14;
+        doc.rect(ML, y, CW, 7).fill(C.surface2).stroke(C.border).strokeColor(C.border);
+        if (m.pct > 0) doc.rect(ML, y, Math.round(CW * m.pct / 100), 7).fill(m.color);
+        y += 13;
       });
     }
 
-    // Team summary table
+    // Team overview table (multi-employee)
     if (scopeProfiles.length > 1) {
-      y += 10;
+      y += 12;
       y = sectionTitle('Team Performance Overview', y);
       y += 6;
-      // Cols sum: 110+78+55+55+44+44+42+40+55 = 523
+      // Cols: 110+78+55+55+44+44+42+40+55 = 523
       const empCols = [
         { key: 'name',    label: 'Employee',   width: 110 },
         { key: 'role',    label: 'Role',       width: 78  },
@@ -337,12 +369,12 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
       y = drawTable(empCols, empRows, y, 'Executive Summary');
     }
 
-    // Meetings (aggregate, if any)
+    // Meetings (aggregate)
     if (meetings && meetings.length > 0) {
-      if (y > PH - 120) { y = newPage('Meetings'); } else { y += 12; }
+      if (y > PH - 120) { y = newPage('Meetings'); } else { y += 14; }
       y = sectionTitle(`Meetings (${meetings.length})`, y);
       y += 6;
-      // Cols sum: 70+100+95+62+56+140 = 523
+      // Cols: 70+100+95+62+56+140 = 523
       const meetCols = [
         { key: 'time',     label: 'Date/Time', width: 70  },
         { key: 'customer', label: 'Customer',  width: 100 },
@@ -369,61 +401,59 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
     scopeProfiles.forEach(p => {
       const s = statsMap[p.id];
       if (!s) return;
-
       const empLabel = p.full_name || p.email;
-      const pActs    = (s.activityTimeline  || []).length;
+      const pActs    = (s.activityTimeline || []).length;
 
-      // ── Employee header page ─────────────────────────────────────────────
+      // ── Employee header ──────────────────────────────────────────────────
       y = newPage(empLabel);
 
-      // Employee header bar
-      doc.rect(ML, y, CW, 52).fill(C.blue);
+      // Light header card
+      doc.rect(ML, y, CW, 52).fill(C.surface2).stroke(C.border).strokeColor(C.border);
       doc.rect(ML, y, 4, 52).fill(roleColor(p.role));
 
       // Avatar circle
       const av = (p.full_name || p.email || '?')[0].toUpperCase();
-      doc.circle(ML + 32, y + 26, 18).fill('#0F2044');
-      doc.font('Helvetica-Bold').fontSize(14).fillColor(C.white).text(av, ML + 23, y + 18);
+      doc.circle(ML + 32, y + 26, 17).fill(roleColor(p.role));
+      doc.font('Helvetica-Bold').fontSize(14).fillColor(C.white).text(av, ML + 24, y + 18);
 
-      // Name + role
-      doc.font('Helvetica-Bold').fontSize(13).fillColor(C.white)
-         .text(empLabel, ML + 58, y + 10, { width: CW - 160, ellipsis: true });
-      doc.font('Helvetica').fontSize(9).fillColor('#94A3B8')
-         .text(fmtType(p.role), ML + 58, y + 27, { width: CW - 160 });
-      doc.font('Helvetica').fontSize(8.5).fillColor('#64748B')
-         .text(p.email || '—', ML + 58, y + 38, { width: CW - 160 });
+      // Name + role + email
+      doc.font('Helvetica-Bold').fontSize(13).fillColor(C.text)
+         .text(empLabel, ML + 58, y + 9, { width: CW - 170, ellipsis: true });
+      doc.font('Helvetica').fontSize(9).fillColor(roleColor(p.role))
+         .text(fmtType(p.role), ML + 58, y + 26, { width: CW - 170 });
+      doc.font('Helvetica').fontSize(8).fillColor(C.text2)
+         .text(p.email || '—', ML + 58, y + 38, { width: CW - 170 });
 
-      // Last active
       if (s.lastActivityAt) {
-        doc.font('Helvetica').fontSize(8).fillColor('#94A3B8')
-           .text(`Last active: ${fmtDateTime(s.lastActivityAt)}`, PW - MR - 140, y + 20, { width: 136, align: 'right' });
+        doc.font('Helvetica').fontSize(7.5).fillColor(C.muted)
+           .text(`Last active: ${fmtDateTime(s.lastActivityAt)}`, PW - MR - 140, y + 28, { width: 136, align: 'right' });
       }
       y += 62;
 
-      // ── Mini stat grid (8 stats, 4 cols × 2 rows) ───────────────────────
-      const empStats = [
+      // ── 12-stat mini grid ────────────────────────────────────────────────
+      const empKpis = [
         { label: 'Activities',    value: pActs,                  color: C.accent  },
         { label: 'Completed',     value: s.activitiesCompleted,  color: C.green   },
         { label: 'Pending',       value: s.activitiesPending,    color: C.yellow  },
         { label: 'Overdue',       value: s.activitiesOverdue,    color: C.red     },
-        { label: 'Calls',         value: s.callsMade,            color: C.blue    },
-        { label: 'Emails',        value: s.emailsSent,           color: C.accent  },
+        { label: 'Calls',         value: s.callsMade,            color: C.accent  },
+        { label: 'Emails',        value: s.emailsSent,           color: C.gray    },
         { label: 'Leads',         value: s.leadsCreated,         color: C.green   },
         { label: 'Deals',         value: s.dealsCreated,         color: C.purple  },
-        { label: 'Leads Conv.',   value: s.leadsConverted,       color: C.accent  },
+        { label: 'Converted',     value: s.leadsConverted,       color: C.accent  },
         { label: 'Deals Won',     value: s.dealsWon,             color: C.green   },
         { label: 'Revenue',       value: fmtCurrency(s.revenue), color: C.yellow  },
         { label: 'Notes',         value: s.notesAdded,           color: C.gray    },
       ];
-      y = miniStatGrid(empStats, y);
+      y = miniStatGrid(empKpis, y);
 
       // ── Activity Timeline ────────────────────────────────────────────────
       const timeline = s.activityTimeline || [];
       if (timeline.length > 0) {
-        if (y > PH - 120) { y = newPage(empLabel); } else { y += 10; }
+        if (y > PH - 120) { y = newPage(empLabel); } else { y += 12; }
         y = sectionTitle(`Activity Timeline (${timeline.length})`, y);
         y += 6;
-        // Cols sum: 80+98+110+53+182 = 523
+        // Cols: 80+98+110+53+182 = 523
         const actCols = [
           { key: 'time',    label: 'Date/Time', width: 80  },
           { key: 'type',    label: 'Type',      width: 98  },
@@ -444,10 +474,10 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
       // ── Leads ────────────────────────────────────────────────────────────
       const leads = s.todayLeads || [];
       if (leads.length > 0) {
-        if (y > PH - 120) { y = newPage(empLabel); } else { y += 10; }
+        if (y > PH - 120) { y = newPage(empLabel); } else { y += 12; }
         y = sectionTitle(`Leads (${leads.length})`, y);
         y += 6;
-        // Cols sum: 140+115+90+88+90 = 523
+        // Cols: 140+115+90+88+90 = 523
         const leadCols = [
           { key: 'company', label: 'Company', width: 140 },
           { key: 'contact', label: 'Contact', width: 115 },
@@ -468,10 +498,10 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
       // ── Deals ────────────────────────────────────────────────────────────
       const deals = s.todayDeals || [];
       if (deals.length > 0) {
-        if (y > PH - 120) { y = newPage(empLabel); } else { y += 10; }
+        if (y > PH - 120) { y = newPage(empLabel); } else { y += 12; }
         y = sectionTitle(`Deals (${deals.length})`, y);
         y += 6;
-        // Cols sum: 130+120+72+85+76+40 = 523
+        // Cols: 130+120+72+85+76+40 = 523
         const dealCols = [
           { key: 'name',    label: 'Deal Name',  width: 130 },
           { key: 'company', label: 'Company',    width: 120 },
@@ -480,7 +510,7 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
           { key: 'close',   label: 'Close Date', width: 76  },
           { key: 'status',  label: 'Status',     width: 40  },
         ];
-        const dStatusC = s => s === 'won' ? C.green : s === 'lost' ? C.red : C.accent;
+        const dStatusC = st => st === 'won' ? C.green : st === 'lost' ? C.red : C.accent;
         const dealRows = deals.map(d => ({
           name:    d.name || '—',
           company: d.companyName || '—',
@@ -495,10 +525,10 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
       // ── Follow-ups ───────────────────────────────────────────────────────
       const followUps = s.todayFollowUps || [];
       if (followUps.length > 0) {
-        if (y > PH - 120) { y = newPage(empLabel); } else { y += 10; }
+        if (y > PH - 120) { y = newPage(empLabel); } else { y += 12; }
         y = sectionTitle(`Pending Follow-ups (${followUps.length})`, y);
         y += 6;
-        // Cols sum: 150+128+100+84+61 = 523
+        // Cols: 150+128+100+84+61 = 523
         const fuCols = [
           { key: 'company', label: 'Company',  width: 150 },
           { key: 'contact', label: 'Contact',  width: 128 },
@@ -519,10 +549,10 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
       // ── Overdue Activities ───────────────────────────────────────────────
       const overdue = s.overdueActivities || [];
       if (overdue.length > 0) {
-        if (y > PH - 120) { y = newPage(empLabel); } else { y += 10; }
+        if (y > PH - 120) { y = newPage(empLabel); } else { y += 12; }
         y = sectionTitle(`Overdue Activities (${overdue.length})`, y);
         y += 6;
-        // Cols sum: 105+135+115+90+78 = 523
+        // Cols: 105+135+115+90+78 = 523
         const overCols = [
           { key: 'type',    label: 'Type',      width: 105 },
           { key: 'company', label: 'Company',   width: 135 },
