@@ -969,32 +969,23 @@ export default function Targets() {
     staleTime:       15000,
   });
 
-  // ── Activity log helper ───────────────────────────────────────────────────────
-  const logTargetEvent = (title) => {
-    supabase.from("activities").insert({
-      type: "general", title, created_by: profile?.id, status: "done",
-    }).then(() => {}).catch(() => {});
-  };
-
   // ── Mutations (backend-enforced RBAC) ─────────────────────────────────────────
   const createMutation = useMutation({
     mutationFn: (payload) => targetsApi("POST", "/api/targets", payload),
-    onSuccess: (data) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["targets"] });
       setShowCreate(false);
       toast.success("Target created successfully");
-      logTargetEvent(`Target Created: ${data?.title || "New Target"}`);
     },
     onError: (e) => toast.error(e.message),
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }) => targetsApi("PUT", `/api/targets/${id}`, payload),
-    onSuccess: (data) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["targets"] });
       setEditTarget(null);
       toast.success("Target updated");
-      logTargetEvent(`Target Updated: ${data?.title || "Target"}`);
     },
     onError: (e) => toast.error(e.message),
   });

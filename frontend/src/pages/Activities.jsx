@@ -2605,8 +2605,11 @@ export default function Activities() {
     refetchOnWindowFocus: true,
     refetchOnMount: "always",
   });
-  // Exclude email_contact entries from the tasks/activities view
-  const activities = _allActivities.filter(a => a.type !== "email_contact");
+  // Exclude system-generated entries (email sync, target events) from the activity timeline
+  const activities = _allActivities.filter(a =>
+    a.type !== "email_contact" &&
+    !/^Target (Created|Updated):/.test(a.title || "")
+  );
   const { data: teamRaw  } = useQuery({ queryKey: ["team-all"],    queryFn: () => teamService.getAll() });
   const { data: leadsRaw } = useQuery({ queryKey: ["leads-light"], queryFn: () => leadsService.getAll({ limit: 300 }) });
   const { data: dealsRaw } = useQuery({ queryKey: ["deals-light"], queryFn: () => dealsService.getAll({ limit: 300 }) });
