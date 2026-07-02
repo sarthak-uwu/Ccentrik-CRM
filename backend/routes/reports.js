@@ -88,30 +88,39 @@ router.post("/send-dsr", authenticate, authorize("owner", "sales_head", "sales_m
       ? allProfiles.filter(p => selectedEmployeeIds.includes(p.id))
       : allProfiles;
 
-    const generatedAt = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
-    const pdfBuffer   = await generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, statsMap, meetings, profileMap });
-    const pdfName     = `DSR_${customStart}${customStart !== customEnd ? "_to_" + customEnd : ""}.pdf`;
+    const generatedAt  = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
+    const pdfBuffer    = await generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, statsMap, meetings, profileMap });
+    const pdfName      = `DSR_${customStart}${customStart !== customEnd ? "_to_" + customEnd : ""}.pdf`;
+    const scopeTotals  = calcScopeTotals(scopeProfiles, statsMap);
 
-    // Build simple HTML email
-    const empDesc = scopeProfiles.length === 1
-      ? scopeProfiles[0].full_name || scopeProfiles[0].email
-      : `${scopeProfiles.length} employees`;
-    const html = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">
-      <div style="background:#0F2044;padding:24px;border-radius:12px 12px 0 0;text-align:center">
-        <h1 style="color:#fff;margin:0;font-size:22px">Ccentrik CRM</h1>
-        <p style="color:#94A3B8;margin:8px 0 0">Daily Sales Report</p>
-      </div>
-      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;padding:24px;border-radius:0 0 12px 12px">
-        <p style="color:#1e293b;font-size:15px">Please find the DSR PDF attached for <strong>${empDesc}</strong> covering <strong>${dateLabel}</strong>.</p>
-        <p style="color:#64748b;font-size:13px;margin-top:16px">Generated: ${generatedAt}</p>
-      </div>
-    </div>`;
+    // Use the same rich email builder as the cron (includes Management Summary, Team Performance, Meetings)
+    const firstRecipient = selectedEmails[0] || "";
+    const recipProfile   = (raw.allProfiles || []).find(p => p.email === firstRecipient);
+    const html = buildDsrEmailHtml({
+      recipientName: recipProfile?.full_name || firstRecipient,
+      recipientRole: recipProfile?.role || "owner",
+      dateLabel,
+      generatedAt,
+      scopeProfiles,
+      scopeTotals,
+      statsMap,
+      meetings,
+      profileMap,
+    });
+    const text = buildDsrEmailText({
+      recipientName: recipProfile?.full_name || firstRecipient,
+      recipientRole: recipProfile?.role || "owner",
+      dateLabel,
+      scopeTotals,
+      scopeProfiles,
+      statsMap,
+    });
 
     await sendMail({
       to:      selectedEmails,
       subject: `Daily Sales Report — ${dateLabel}`,
       html,
-      text:    `Daily Sales Report — ${dateLabel}\nEmployees: ${empDesc}\nGenerated: ${generatedAt}\n\nSee attached PDF.`,
+      text,
       attachments: [{ filename: pdfName, content: pdfBuffer.toString("base64"), content_type: "application/pdf" }],
     });
 
