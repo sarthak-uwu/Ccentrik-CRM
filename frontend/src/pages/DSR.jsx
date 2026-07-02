@@ -2935,35 +2935,17 @@ export default function DSRPage() {
             <>
               <button
                 onClick={() => setDsrModalOpen(true)}
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 9, border: "1.5px solid #000", background: "#fff", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-2)", fontSize: 12, fontWeight: 500, cursor: "pointer" }}
               >
                 <Send size={13} /> Send DSR
               </button>
               <button
                 onClick={() => setDsrDownloadOpen(true)}
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 9, border: "1.5px solid #000", background: "#fff", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-2)", fontSize: 12, fontWeight: 500, cursor: "pointer" }}
               >
                 <Download size={13} /> Download DSR
               </button>
             </>
-          )}
-          {(isOwnerOrHead || normRole === "inside_sales") && (
-            <button
-              onClick={() => setSchedulerOpen(true)}
-              title="Auto Email Scheduler"
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 9, border: "1.5px solid #000", background: "#fff", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
-            >
-              <Bell size={13} /> Auto Schedule
-            </button>
-          )}
-          {isOwnerOrHead && (
-            <button
-              onClick={() => setInactivityAlertOpen(true)}
-              title="Employee Inactivity Alert"
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 9, border: "1.5px solid #000", background: "#fff", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
-            >
-              <AlertCircle size={13} /> Inactivity Alert
-            </button>
           )}
 
           <div style={{ display: "flex", background: "var(--surface-2)", borderRadius: 10, padding: 3, border: "1px solid var(--border)", gap: 1 }}>
@@ -3809,9 +3791,6 @@ export default function DSRPage() {
           )}
         </>
       )}
-
-      {/* ── Email Logs Panel (owner + sales_head) ── */}
-      {isOwnerOrHead && <DSREmailLogsPanel />}
 
       {/* ── Send DSR Modal ── */}
       <AnimatePresence>

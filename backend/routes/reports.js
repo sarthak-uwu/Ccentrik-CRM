@@ -7,8 +7,120 @@ const { collectDsrData, getScopeProfiles, calcScopeTotals } = require("../utils/
 const { buildDsrEmailHtml, buildDsrEmailText } = require("../utils/dsrEmail");
 const { generateNewDsrPdf } = require("../utils/dsrPdfNew");
 const { fetchDailyPlanningData, generateDailyPlanningPdf, buildDailyPlanningEmailHtml } = require("../utils/dailyPlanningReport");
+const { generateFrontendDsrPdf } = require("../utils/dsrPdfFrontend");
 
-// Note: /api/reports/recipients removed (old DSR system). Use /role-dsr-cron.
+// ─── Helpers shared by manual DSR routes ─────────────────────────────────────
+function parseDateRange(customStart, customEnd) {
+  // IST offset = +5:30 → subtract to get UTC boundaries
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const start = new Date(customStart + "T00:00:00.000+05:30");
+  const end   = new Date(customEnd   + "T23:59:59.999+05:30");
+  return {
+    dayStart: start.toISOString(),
+    dayEnd:   end.toISOString(),
+    todayStr: customStart === customEnd ? customStart : `${customStart} to ${customEnd}`,
+    dateLabel: customStart === customEnd
+      ? new Date(customStart).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })
+      : `${new Date(customStart).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} – ${new Date(customEnd).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`,
+  };
+}
+
+// ─── GET /api/reports/recipients ─────────────────────────────────────────────
+// Returns owner + sales_head profiles for the Send DSR recipient picker.
+router.get("/recipients", authenticate, authorize("owner", "sales_head", "sales_manager", "inside_sales"), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, full_name, email, role")
+      .in("role", ["owner", "sales_head"])
+      .not("status", "in", '("deleted","inactive")')
+      .order("full_name");
+    if (error) throw error;
+    const list = (data || []).map(p => ({ name: p.full_name || p.email, email: p.email, role: p.role }));
+    return res.json(list);
+  } catch (err) {
+    console.error("[recipients]", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/reports/download-pdf ──────────────────────────────────────────
+// Generates a DSR PDF for the selected employees and date range, returns base64.
+router.post("/download-pdf", authenticate, authorize("owner", "sales_head", "sales_manager", "inside_sales"), async (req, res) => {
+  const { selectedEmployeeIds = [], customStart, customEnd } = req.body;
+  if (!customStart || !customEnd) return res.status(400).json({ error: "customStart and customEnd required" });
+
+  try {
+    const { dayStart, dayEnd, todayStr, dateLabel } = parseDateRange(customStart, customEnd);
+    const raw = await collectDsrData(dayStart, dayEnd, todayStr);
+    const { allProfiles, statsMap, meetings } = raw;
+
+    // Filter to selected employees (empty = all)
+    const scopeProfiles = selectedEmployeeIds.length > 0
+      ? allProfiles.filter(p => selectedEmployeeIds.includes(p.id))
+      : allProfiles;
+
+    const generatedAt = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
+
+    const pdfBuffer = await generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, statsMap, meetings, profileMap: raw.profileMap });
+    const filename  = `DSR_${customStart}${customStart !== customEnd ? "_to_" + customEnd : ""}.pdf`;
+
+    return res.json({ data: pdfBuffer.toString("base64"), filename });
+  } catch (err) {
+    console.error("[download-pdf]", err.message, err.stack);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/reports/send-dsr ──────────────────────────────────────────────
+// Sends DSR email with PDF to selectedEmails for the selected employees / date range.
+router.post("/send-dsr", authenticate, authorize("owner", "sales_head", "sales_manager", "inside_sales"), async (req, res) => {
+  const { selectedEmails = [], selectedEmployeeIds = [], customStart, customEnd } = req.body;
+  if (!customStart || !customEnd)    return res.status(400).json({ error: "customStart and customEnd required" });
+  if (!selectedEmails.length)        return res.status(400).json({ error: "At least one recipient required" });
+
+  try {
+    const { dayStart, dayEnd, todayStr, dateLabel } = parseDateRange(customStart, customEnd);
+    const raw = await collectDsrData(dayStart, dayEnd, todayStr);
+    const { allProfiles, statsMap, meetings, profileMap } = raw;
+
+    const scopeProfiles = selectedEmployeeIds.length > 0
+      ? allProfiles.filter(p => selectedEmployeeIds.includes(p.id))
+      : allProfiles;
+
+    const generatedAt = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
+    const pdfBuffer   = await generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, statsMap, meetings, profileMap });
+    const pdfName     = `DSR_${customStart}${customStart !== customEnd ? "_to_" + customEnd : ""}.pdf`;
+
+    // Build simple HTML email
+    const empDesc = scopeProfiles.length === 1
+      ? scopeProfiles[0].full_name || scopeProfiles[0].email
+      : `${scopeProfiles.length} employees`;
+    const html = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">
+      <div style="background:#0F2044;padding:24px;border-radius:12px 12px 0 0;text-align:center">
+        <h1 style="color:#fff;margin:0;font-size:22px">Ccentrik CRM</h1>
+        <p style="color:#94A3B8;margin:8px 0 0">Daily Sales Report</p>
+      </div>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;padding:24px;border-radius:0 0 12px 12px">
+        <p style="color:#1e293b;font-size:15px">Please find the DSR PDF attached for <strong>${empDesc}</strong> covering <strong>${dateLabel}</strong>.</p>
+        <p style="color:#64748b;font-size:13px;margin-top:16px">Generated: ${generatedAt}</p>
+      </div>
+    </div>`;
+
+    await sendMail({
+      to:      selectedEmails,
+      subject: `Daily Sales Report — ${dateLabel}`,
+      html,
+      text:    `Daily Sales Report — ${dateLabel}\nEmployees: ${empDesc}\nGenerated: ${generatedAt}\n\nSee attached PDF.`,
+      attachments: [{ filename: pdfName, content: pdfBuffer.toString("base64"), content_type: "application/pdf" }],
+    });
+
+    return res.json({ success: true, sent_to: selectedEmails.length });
+  } catch (err) {
+    console.error("[send-dsr]", err.message, err.stack);
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 // ─── GET /api/reports/inactivity-test-recipients ─────────────────────────────
 // Returns ALL active users for the test-email dropdown (not filtered by role).
