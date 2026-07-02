@@ -3586,22 +3586,37 @@ export default function DSRPage() {
                 <ScoreRing score={score} size={96} strokeWidth={7} />
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {[
-                  { label: "Activities", earned: scoreData.a, max: 40, color: "#6366F1" },
-                  { label: "Tasks",      earned: scoreData.t, max: 20, color: "#10B981" },
-                  { label: "Deals",      earned: scoreData.d, max: 20, color: "#8B5CF6" },
-                  { label: "Leads",      earned: scoreData.l, max: 20, color: "#06B6D4" },
-                ].map((s) => (
-                  <div key={s.label}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, marginBottom: 4 }}>
-                      <span style={{ color: "var(--text-2)" }}>{s.label}</span>
-                      <span style={{ fontWeight: 700, color: s.color }}>{s.earned} / {s.max}</span>
-                    </div>
-                    <div style={{ height: 4, borderRadius: 99, background: "var(--border)", overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${Math.round((s.earned / s.max) * 100)}%`, background: s.color, borderRadius: 99 }} />
-                    </div>
-                  </div>
-                ))}
+                {(() => {
+                  const PALETTE = ["#6366F1", "#10B981", "#8B5CF6", "#06B6D4", "#F59E0B", "#EC4899", "#EF4444", "#3B82F6"];
+                  const getEarned = (name) => {
+                    const n = (name || "").toLowerCase();
+                    if (n.includes("call"))    return (typeCounts.call||0) + (typeCounts.follow_up_call||0) + (typeCounts.cold_call||0);
+                    if (n.includes("follow"))  return (typeCounts.follow_up_call||0) + (typeCounts.follow_up_email||0);
+                    if (n.includes("email"))   return (typeCounts.email||0) + (typeCounts.follow_up_email||0);
+                    if (n.includes("meeting")) return (typeCounts.meeting_virtual||0) + (typeCounts.meeting_person||0) + (typeCounts.meeting||0);
+                    if (n.includes("note"))    return typeCounts.note || 0;
+                    if (n.includes("task"))    return tasksCompleted;
+                    if (n.includes("lead"))    return newLeads.length;
+                    if (n.includes("deal"))    return dealsUpdated;
+                    return totalActs;
+                  };
+                  return (scoreMetrics || []).filter(m => m.enabled !== false).map((m, i) => {
+                    const maxPts = m.points || 0;
+                    const earned = Math.min(getEarned(m.name), maxPts);
+                    const clr    = PALETTE[i % PALETTE.length];
+                    return (
+                      <div key={m.id || m.name}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, marginBottom: 4 }}>
+                          <span style={{ color: "var(--text-2)" }}>{m.name}</span>
+                          <span style={{ fontWeight: 700, color: clr }}>{earned} / {maxPts}</span>
+                        </div>
+                        <div style={{ height: 4, borderRadius: 99, background: "var(--border)", overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${maxPts > 0 ? Math.round((earned / maxPts) * 100) : 0}%`, background: clr, borderRadius: 99 }} />
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </div>
             )}
