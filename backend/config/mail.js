@@ -596,73 +596,66 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Meeting Invitation &#8211; ${title || "Meeting"}</title>
 </head>
-<body style="margin:0;padding:0;background:#EEF2F7;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,sans-serif;-webkit-text-size-adjust:100%;mso-line-height-rule:exactly;">
+<body style="margin:0;padding:0;background:#E8EDF4;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,sans-serif;-webkit-text-size-adjust:100%;mso-line-height-rule:exactly;">
 
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#EEF2F7;padding:40px 16px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#E8EDF4;padding:40px 16px;">
 <tr><td align="center">
 
-<!-- ╔══ EMAIL CARD ══════════════════════════════════════════════════════════╗ -->
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="max-width:680px;width:100%;background:#FFFFFF;border-radius:24px;overflow:hidden;box-shadow:0 24px 64px rgba(15,23,42,0.14);">
 
-<!-- ── HEADER: White bar with logo + badge ────────────────────────────────── -->
+<!-- ── HEADER ────────────────────────────────────────────────────────────── -->
 <tr>
-  <td style="background:#FFFFFF;padding:24px 40px 22px;border-bottom:1px solid #F1F5F9;">
+  <td style="background:#FFFFFF;padding:26px 40px;border-bottom:1px solid #F1F5F9;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr valign="middle">
-        <td><img src="${LOGO}" alt="Ccentrik" height="44" style="display:block;border:0;height:44px;" /></td>
+        <td><img src="${LOGO}" alt="Ccentrik" height="44" style="display:block;border:0;height:44px;"/></td>
         <td align="right">
-          <span style="display:inline-block;padding:7px 20px;background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:999px;font-size:12px;font-weight:700;color:#2563EB;letter-spacing:0.08em;text-transform:uppercase;font-family:'Inter',Arial,sans-serif;">Meeting Invitation</span>
+          <span style="display:inline-block;padding:8px 20px;background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:999px;font-size:13px;font-weight:700;color:#2563EB;letter-spacing:0.06em;text-transform:uppercase;font-family:'Inter',Arial,sans-serif;">Meeting Invitation</span>
         </td>
       </tr>
     </table>
   </td>
 </tr>
 
-<!-- ── HERO: Dark navy, heading + floating calendar card ─────────────────── -->
+<!-- ── HERO: Light bg with dark heading ──────────────────────────────────── -->
 <tr>
-  <td style="background:#0F172A;padding:48px 40px 56px;">
+  <td style="background:#F8FAFC;padding:52px 40px 56px;border-bottom:1px solid #E2E8F0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr valign="top">
 
-        <!-- Left: heading + subtitle + purpose badge -->
-        <td style="padding-right:32px;background:#0F172A;vertical-align:top;">
-          <div style="font-size:13px;font-weight:600;color:#60A5FA;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;font-family:'Inter',Arial,sans-serif;">You have been invited</div>
-          <div style="font-size:48px;font-weight:800;color:#F8FAFC;line-height:1.08;letter-spacing:-1.5px;font-family:'Inter',Arial,sans-serif;">Meeting</div>
-          <div style="font-size:48px;font-weight:800;color:#60A5FA;line-height:1.08;letter-spacing:-1.5px;margin-bottom:24px;font-family:'Inter',Arial,sans-serif;">Invitation</div>
-          <p style="margin:0 0 28px;font-size:17px;font-weight:400;color:#94A3B8;line-height:1.7;font-family:'Inter',Arial,sans-serif;">
-            <span style="font-weight:600;color:#E2E8F0;">${hostName || "Ccentrik Team"}</span> has scheduled a meeting with you about <span style="font-weight:600;color:#E2E8F0;">${title}</span>.
+        <!-- Left: heading + intro + badge -->
+        <td style="padding-right:32px;vertical-align:top;">
+          <div style="font-size:52px;font-weight:800;color:#0F172A;line-height:1.1;letter-spacing:-1.5px;font-family:'Inter',Arial,sans-serif;">You're Invited</div>
+          <div style="font-size:52px;font-weight:800;color:#2563EB;line-height:1.1;letter-spacing:-1.5px;margin-bottom:28px;font-family:'Inter',Arial,sans-serif;">to a Meeting</div>
+          <p style="margin:0 0 28px;font-size:20px;font-weight:500;color:#334155;line-height:1.6;font-family:'Inter',Arial,sans-serif;">
+            <span style="font-weight:700;color:#111827;">${hostName || "Ccentrik Team"}</span>${companyName ? ` from <span style="font-weight:700;color:#111827;">${companyName}</span>` : ""} has invited you to discuss <span style="font-weight:700;color:#111827;">${title}</span>.
           </p>
-          ${purposeLabel ? `<span style="display:inline-block;background:rgba(37,99,235,0.2);border:1px solid rgba(96,165,250,0.35);border-radius:999px;font-size:13px;font-weight:600;color:#93C5FD;padding:9px 20px;font-family:'Inter',Arial,sans-serif;">${purposeLabel}</span>` : ""}
+          ${purposeLabel ? `<span style="display:inline-block;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:999px;font-size:15px;font-weight:600;color:#2563EB;padding:10px 20px;font-family:'Inter',Arial,sans-serif;">${purposeLabel}</span>` : ""}
         </td>
 
-        <!-- Right: floating calendar card -->
-        <td width="200" style="min-width:180px;vertical-align:top;background:#0F172A;">
-          <table role="presentation" width="200" cellpadding="0" cellspacing="0" border="0" style="border-radius:20px;overflow:hidden;box-shadow:0 20px 40px rgba(37,99,235,0.25);">
-            <!-- Month header -->
+        <!-- Right: calendar card -->
+        <td width="208" style="min-width:188px;vertical-align:top;">
+          <table role="presentation" width="208" cellpadding="0" cellspacing="0" border="0" style="border-radius:20px;overflow:hidden;box-shadow:0 20px 40px rgba(37,99,235,0.18);background:#FFFFFF;">
             <tr>
               <td align="center" style="background:#2563EB;padding:14px 20px;">
-                <div style="font-size:13px;font-weight:700;color:#FFFFFF;letter-spacing:0.14em;text-transform:uppercase;font-family:'Inter',Arial,sans-serif;">${monthYearLabel}</div>
+                <div style="font-size:15px;font-weight:700;color:#FFFFFF;letter-spacing:0.12em;text-transform:uppercase;font-family:'Inter',Arial,sans-serif;">${monthYearLabel}</div>
               </td>
             </tr>
-            <!-- Day number -->
             <tr>
               <td align="center" style="background:#FFFFFF;padding:22px 20px 4px;">
-                <div style="font-size:68px;font-weight:800;color:#0F172A;line-height:1;letter-spacing:-3px;font-family:'Inter',Arial,sans-serif;">${dayNum}</div>
+                <div style="font-size:72px;font-weight:800;color:#0F172A;line-height:1;letter-spacing:-3px;font-family:'Inter',Arial,sans-serif;">${dayNum}</div>
               </td>
             </tr>
-            <!-- Weekday -->
             <tr>
-              <td align="center" style="background:#FFFFFF;padding:0 20px 14px;">
-                <div style="font-size:20px;font-weight:500;color:#475569;font-family:'Inter',Arial,sans-serif;">${dayNameStr}</div>
+              <td align="center" style="background:#FFFFFF;padding:2px 20px 14px;">
+                <div style="font-size:22px;font-weight:600;color:#334155;font-family:'Inter',Arial,sans-serif;">${dayNameStr}</div>
               </td>
             </tr>
-            <!-- Divider -->
             <tr><td style="background:#FFFFFF;padding:0 20px;"><div style="height:1px;background:#E2E8F0;"></div></td></tr>
-            <!-- Time -->
             <tr>
               <td align="center" style="background:#FFFFFF;padding:14px 20px 22px;">
-                <div style="font-size:18px;font-weight:600;color:#2563EB;font-family:'Inter',Arial,sans-serif;">${timeStr}${endTimeStr ? " &#8211; " + endTimeStr : ""}</div>
-                <div style="font-size:12px;font-weight:500;color:#94A3B8;margin-top:5px;font-family:'Inter',Arial,sans-serif;">India Standard Time${durationStr ? " &middot; " + durationStr : ""}</div>
+                <div style="font-size:20px;font-weight:600;color:#2563EB;font-family:'Inter',Arial,sans-serif;">${timeStr}${endTimeStr ? " &#8211; " + endTimeStr : ""}</div>
+                <div style="font-size:14px;font-weight:500;color:#94A3B8;margin-top:6px;font-family:'Inter',Arial,sans-serif;">India Standard Time${durationStr ? " &middot; " + durationStr : ""}</div>
               </td>
             </tr>
           </table>
@@ -673,49 +666,44 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
   </td>
 </tr>
 
-<!-- ── MEETING INFORMATION GRID ───────────────────────────────────────────── -->
+<!-- ── MEETING INFORMATION ────────────────────────────────────────────────── -->
 <tr>
   <td style="padding:40px 40px 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:20px;overflow:hidden;box-shadow:0 12px 40px rgba(15,23,42,0.08);">
 
-      <!-- Row: Title + Organizer -->
       <tr valign="top">
-        <td width="50%" style="padding:24px 24px 22px;border-right:1px solid #F1F5F9;vertical-align:top;">
-          <div style="font-size:12px;font-weight:600;color:#94A3B8;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;font-family:'Inter',Arial,sans-serif;">Meeting Title</div>
-          <div style="font-size:17px;font-weight:600;color:#0F172A;line-height:1.4;font-family:'Inter',Arial,sans-serif;">${title}</div>
+        <td width="50%" style="padding:26px 26px 24px;border-right:1px solid #F1F5F9;vertical-align:top;">
+          <div style="font-size:13px;font-weight:600;color:#64748B;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;font-family:'Inter',Arial,sans-serif;">Meeting Title</div>
+          <div style="font-size:18px;font-weight:600;color:#0F172A;line-height:1.5;font-family:'Inter',Arial,sans-serif;">${title}</div>
         </td>
-        <td width="50%" style="padding:24px 24px 22px;vertical-align:top;">
-          <div style="font-size:12px;font-weight:600;color:#94A3B8;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;font-family:'Inter',Arial,sans-serif;">Organized By</div>
-          <div style="font-size:17px;font-weight:600;color:#0F172A;font-family:'Inter',Arial,sans-serif;">${hostName || "Ccentrik Team"}</div>
-          ${companyName ? `<div style="font-size:14px;font-weight:400;color:#64748B;margin-top:4px;font-family:'Inter',Arial,sans-serif;">${companyName}</div>` : ""}
+        <td width="50%" style="padding:26px 26px 24px;vertical-align:top;">
+          <div style="font-size:13px;font-weight:600;color:#64748B;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;font-family:'Inter',Arial,sans-serif;">Organized By</div>
+          <div style="font-size:18px;font-weight:600;color:#0F172A;line-height:1.5;font-family:'Inter',Arial,sans-serif;">${hostName || "Ccentrik Team"}</div>
+          ${companyName ? `<div style="font-size:15px;font-weight:400;color:#475569;margin-top:4px;font-family:'Inter',Arial,sans-serif;">${companyName}</div>` : ""}
         </td>
       </tr>
 
-      <!-- Divider -->
-      <tr><td colspan="2" style="padding:0;font-size:0;line-height:0;background:#F8FAFC;height:1px;border-top:1px solid #F1F5F9;"></td></tr>
+      <tr><td colspan="2" style="padding:0;height:1px;background:#F1F5F9;font-size:0;line-height:0;"></td></tr>
 
-      <!-- Row: Date + Contact -->
       <tr valign="top">
-        <td width="50%" style="padding:22px 24px;border-right:1px solid #F1F5F9;vertical-align:top;">
-          <div style="font-size:12px;font-weight:600;color:#94A3B8;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;font-family:'Inter',Arial,sans-serif;">Date &amp; Time</div>
-          <div style="font-size:17px;font-weight:600;color:#0F172A;margin-bottom:4px;font-family:'Inter',Arial,sans-serif;">${dayMonthStr}</div>
-          <div style="font-size:14px;font-weight:500;color:#64748B;font-family:'Inter',Arial,sans-serif;">${timeStr}${endTimeStr ? " &#8211; " + endTimeStr : ""} IST${durationStr ? " &middot; " + durationStr : ""}</div>
+        <td width="50%" style="padding:24px 26px;border-right:1px solid #F1F5F9;vertical-align:top;">
+          <div style="font-size:13px;font-weight:600;color:#64748B;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;font-family:'Inter',Arial,sans-serif;">Date &amp; Time</div>
+          <div style="font-size:18px;font-weight:600;color:#0F172A;line-height:1.5;margin-bottom:5px;font-family:'Inter',Arial,sans-serif;">${dayMonthStr}</div>
+          <div style="font-size:15px;font-weight:500;color:#475569;font-family:'Inter',Arial,sans-serif;">${timeStr}${endTimeStr ? " &#8211; " + endTimeStr : ""} IST${durationStr ? " &middot; " + durationStr : ""}</div>
         </td>
-        <td width="50%" style="padding:22px 24px;vertical-align:top;">
-          <div style="font-size:12px;font-weight:600;color:#94A3B8;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;font-family:'Inter',Arial,sans-serif;">${hostEmail ? "Contact" : "Meeting Type"}</div>
-          ${hostEmail ? `<div style="font-size:17px;font-weight:600;color:#2563EB;word-break:break-all;font-family:'Inter',Arial,sans-serif;">${hostEmail}</div>` : `<div style="font-size:17px;font-weight:600;color:#0F172A;font-family:'Inter',Arial,sans-serif;">${typeLabel}</div>`}
-          ${hostEmail && companyName ? `<div style="font-size:14px;font-weight:400;color:#64748B;margin-top:4px;font-family:'Inter',Arial,sans-serif;">${typeLabel}</div>` : ""}
+        <td width="50%" style="padding:24px 26px;vertical-align:top;">
+          <div style="font-size:13px;font-weight:600;color:#64748B;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;font-family:'Inter',Arial,sans-serif;">${hostEmail ? "Organizer Email" : "Meeting Type"}</div>
+          ${hostEmail ? `<div style="font-size:16px;font-weight:500;color:#2563EB;word-break:break-all;line-height:1.5;font-family:'Inter',Arial,sans-serif;">${hostEmail}</div>` : `<div style="font-size:18px;font-weight:600;color:#0F172A;line-height:1.5;font-family:'Inter',Arial,sans-serif;">${typeLabel}</div>`}
+          ${hostEmail && companyName ? `<div style="font-size:15px;font-weight:400;color:#475569;margin-top:4px;font-family:'Inter',Arial,sans-serif;">${typeLabel}</div>` : ""}
         </td>
       </tr>
 
-      ${(isInPerson && location) || (!isInPerson && meetingLink) ? `<!-- Divider -->
-      <tr><td colspan="2" style="padding:0;font-size:0;line-height:0;background:#F8FAFC;height:1px;border-top:1px solid #F1F5F9;"></td></tr>
-      <!-- Row: Location / Link -->
+      ${(isInPerson && location) || (!isInPerson && meetingLink) ? `<tr><td colspan="2" style="padding:0;height:1px;background:#F1F5F9;font-size:0;line-height:0;"></td></tr>
       <tr>
-        <td colspan="2" style="padding:22px 24px;vertical-align:top;">
-          <div style="font-size:12px;font-weight:600;color:#94A3B8;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;font-family:'Inter',Arial,sans-serif;">${isInPerson ? "Location" : "Meeting Link"}</div>
-          ${isInPerson && location ? `<div style="font-size:17px;font-weight:600;color:#0F172A;font-family:'Inter',Arial,sans-serif;">${location}</div>` : ""}
-          ${!isInPerson && meetingLink ? `<a href="${meetingLink}" target="_blank" style="font-size:15px;font-weight:500;color:#2563EB;text-decoration:none;word-break:break-all;font-family:'Inter',Arial,sans-serif;">${meetingLink}</a>` : ""}
+        <td colspan="2" style="padding:24px 26px;vertical-align:top;">
+          <div style="font-size:13px;font-weight:600;color:#64748B;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;font-family:'Inter',Arial,sans-serif;">${isInPerson ? "Location" : "Meeting Link"}</div>
+          ${isInPerson && location ? `<div style="font-size:18px;font-weight:600;color:#0F172A;line-height:1.5;font-family:'Inter',Arial,sans-serif;">${location}</div>` : ""}
+          ${!isInPerson && meetingLink ? `<a href="${meetingLink}" target="_blank" style="font-size:16px;font-weight:500;color:#2563EB;text-decoration:none;word-break:break-all;line-height:1.5;font-family:'Inter',Arial,sans-serif;">${meetingLink}</a>` : ""}
         </td>
       </tr>` : ""}
 
@@ -723,37 +711,37 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
   </td>
 </tr>
 
-<!-- ── MEETING MODE + JOIN BUTTON ─────────────────────────────────────────── -->
+<!-- ── MEETING MODE + JOIN ────────────────────────────────────────────────── -->
 <tr>
   <td style="padding:24px 40px 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:20px;overflow:hidden;box-shadow:0 12px 40px rgba(15,23,42,0.08);">
       <tr>
-        <td style="padding:24px;">
-          <div style="font-size:12px;font-weight:600;color:#94A3B8;letter-spacing:1px;text-transform:uppercase;margin-bottom:14px;font-family:'Inter',Arial,sans-serif;">Meeting Mode</div>
+        <td style="padding:26px;">
+          <div style="font-size:13px;font-weight:600;color:#64748B;letter-spacing:1px;text-transform:uppercase;margin-bottom:14px;font-family:'Inter',Arial,sans-serif;">Meeting Mode</div>
           <div style="margin-bottom:${meetingLink ? "20px" : "0"};">
-            ${isGoogleMeet ? `<span style="display:inline-block;background:#DCFCE7;color:#15803D;font-size:14px;font-weight:600;padding:9px 20px;border-radius:999px;font-family:'Inter',Arial,sans-serif;">Google Meet</span>` :
-              isTeams ? `<span style="display:inline-block;background:#EDE9FE;color:#5B21B6;font-size:14px;font-weight:600;padding:9px 20px;border-radius:999px;font-family:'Inter',Arial,sans-serif;">Microsoft Teams</span>` :
-              isZoom ? `<span style="display:inline-block;background:#DBEAFE;color:#1E40AF;font-size:14px;font-weight:600;padding:9px 20px;border-radius:999px;font-family:'Inter',Arial,sans-serif;">Zoom Meeting</span>` :
-              isInPerson ? `<span style="display:inline-block;background:#F1F5F9;color:#334155;font-size:14px;font-weight:600;padding:9px 20px;border-radius:999px;font-family:'Inter',Arial,sans-serif;">In-Person Meeting</span>` :
-              `<span style="display:inline-block;background:#F1F5F9;color:#334155;font-size:14px;font-weight:600;padding:9px 20px;border-radius:999px;font-family:'Inter',Arial,sans-serif;">${typeLabel}</span>`}
+            ${isGoogleMeet ? `<span style="display:inline-block;background:#DCFCE7;color:#15803D;font-size:15px;font-weight:600;padding:9px 20px;border-radius:999px;font-family:'Inter',Arial,sans-serif;">Google Meet</span>` :
+              isTeams ? `<span style="display:inline-block;background:#EDE9FE;color:#5B21B6;font-size:15px;font-weight:600;padding:9px 20px;border-radius:999px;font-family:'Inter',Arial,sans-serif;">Microsoft Teams</span>` :
+              isZoom ? `<span style="display:inline-block;background:#DBEAFE;color:#1E40AF;font-size:15px;font-weight:600;padding:9px 20px;border-radius:999px;font-family:'Inter',Arial,sans-serif;">Zoom Meeting</span>` :
+              isInPerson ? `<span style="display:inline-block;background:#F1F5F9;color:#1E293B;font-size:15px;font-weight:600;padding:9px 20px;border-radius:999px;font-family:'Inter',Arial,sans-serif;">In-Person Meeting</span>` :
+              `<span style="display:inline-block;background:#F1F5F9;color:#1E293B;font-size:15px;font-weight:600;padding:9px 20px;border-radius:999px;font-family:'Inter',Arial,sans-serif;">${typeLabel}</span>`}
           </div>
-          ${meetingLink ? `<a href="${meetingLink}" target="_blank" style="display:block;text-align:center;background:#2563EB;color:#FFFFFF;font-size:16px;font-weight:600;padding:18px 32px;border-radius:14px;text-decoration:none;font-family:'Inter',Arial,sans-serif;letter-spacing:0.01em;">${isGoogleMeet ? "Join Google Meet" : isTeams ? "Join Microsoft Teams" : isZoom ? "Join Zoom Meeting" : "Join Meeting"}</a>` : ""}
+          ${meetingLink ? `<a href="${meetingLink}" target="_blank" style="display:block;text-align:center;background:#2563EB;color:#FFFFFF;font-size:16px;font-weight:600;padding:17px 32px;border-radius:12px;text-decoration:none;font-family:'Inter',Arial,sans-serif;letter-spacing:0.2px;">${isGoogleMeet ? "Join Google Meet" : isTeams ? "Join Microsoft Teams" : isZoom ? "Join Zoom Meeting" : "Join Meeting"}</a>` : ""}
         </td>
       </tr>
     </table>
   </td>
 </tr>
 
-<!-- ── ADD TO CALENDAR BUTTONS ────────────────────────────────────────────── -->
+<!-- ── CALENDAR BUTTONS ───────────────────────────────────────────────────── -->
 <tr>
   <td style="padding:16px 40px 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr>
         <td width="50%" style="padding-right:8px;">
-          <a href="${gcalUrl}" target="_blank" style="display:block;text-align:center;background:#FFFFFF;border:1.5px solid #E2E8F0;color:#0F172A;font-size:14px;font-weight:600;padding:17px 16px;border-radius:14px;text-decoration:none;font-family:'Inter',Arial,sans-serif;box-shadow:0 2px 8px rgba(15,23,42,0.05);">Add to Google Calendar</a>
+          <a href="${gcalUrl}" target="_blank" style="display:block;text-align:center;background:#FFFFFF;border:1.5px solid #E2E8F0;color:#1E293B;font-size:15px;font-weight:600;padding:16px 16px;border-radius:12px;text-decoration:none;font-family:'Inter',Arial,sans-serif;letter-spacing:0.2px;box-shadow:0 2px 8px rgba(15,23,42,0.05);">Add to Google Calendar</a>
         </td>
         <td width="50%" style="padding-left:8px;">
-          <a href="${outlookCalUrl}" target="_blank" style="display:block;text-align:center;background:#FFFFFF;border:1.5px solid #E2E8F0;color:#0F172A;font-size:14px;font-weight:600;padding:17px 16px;border-radius:14px;text-decoration:none;font-family:'Inter',Arial,sans-serif;box-shadow:0 2px 8px rgba(15,23,42,0.05);">Add to Outlook</a>
+          <a href="${outlookCalUrl}" target="_blank" style="display:block;text-align:center;background:#FFFFFF;border:1.5px solid #E2E8F0;color:#1E293B;font-size:15px;font-weight:600;padding:16px 16px;border-radius:12px;text-decoration:none;font-family:'Inter',Arial,sans-serif;letter-spacing:0.2px;box-shadow:0 2px 8px rgba(15,23,42,0.05);">Add to Outlook</a>
         </td>
       </tr>
     </table>
@@ -765,32 +753,32 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
   <td style="padding:24px 40px 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:20px;overflow:hidden;box-shadow:0 12px 40px rgba(15,23,42,0.08);">
       <tr>
-        <td style="padding:24px 24px 22px;">
-          <div style="font-size:12px;font-weight:600;color:#94A3B8;letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;font-family:'Inter',Arial,sans-serif;">Agenda &amp; Notes</div>
-          <div style="font-size:15px;font-weight:400;color:#475569;line-height:1.8;font-family:'Inter',Arial,sans-serif;">${description ? description.replace(/\n/g, "<br/>") : "<span style=\"color:#CBD5E1;font-style:italic;\">No agenda has been provided for this meeting.</span>"}</div>
+        <td style="padding:26px;">
+          <div style="font-size:13px;font-weight:600;color:#64748B;letter-spacing:1px;text-transform:uppercase;margin-bottom:14px;font-family:'Inter',Arial,sans-serif;">Agenda &amp; Notes</div>
+          <div style="font-size:16px;font-weight:400;color:#334155;line-height:1.75;font-family:'Inter',Arial,sans-serif;">${description ? description.replace(/\n/g, "<br/>") : "<span style=\"color:#CBD5E1;font-style:italic;font-size:15px;\">No agenda has been provided for this meeting.</span>"}</div>
         </td>
       </tr>
     </table>
   </td>
 </tr>
 
-<!-- ── ORGANIZER CARD ─────────────────────────────────────────────────────── -->
+<!-- ── ORGANIZER ──────────────────────────────────────────────────────────── -->
 <tr>
   <td style="padding:24px 40px 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:20px;overflow:hidden;">
       <tr valign="middle">
-        <td style="padding:22px 24px;">
+        <td style="padding:24px 26px;">
           <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
             <tr valign="middle">
               <td width="60" style="padding-right:16px;vertical-align:middle;">
                 <div style="width:52px;height:52px;background:#2563EB;border-radius:14px;text-align:center;line-height:52px;font-size:18px;font-weight:700;color:#FFFFFF;font-family:'Inter',Arial,sans-serif;">${hostInitials}</div>
               </td>
               <td style="vertical-align:middle;">
-                <div style="font-size:17px;font-weight:600;color:#0F172A;font-family:'Inter',Arial,sans-serif;">${hostName || "Ccentrik Team"}</div>
-                <div style="font-size:14px;font-weight:400;color:#64748B;margin-top:3px;font-family:'Inter',Arial,sans-serif;">${hostEmail || "Organizer"}</div>
+                <div style="font-size:18px;font-weight:600;color:#0F172A;font-family:'Inter',Arial,sans-serif;">${hostName || "Ccentrik Team"}</div>
+                <div style="font-size:15px;font-weight:400;color:#475569;margin-top:4px;font-family:'Inter',Arial,sans-serif;">Organizer</div>
               </td>
               <td align="right" style="vertical-align:middle;">
-                <a href="mailto:${hostEmail || "support@ccentrik.com"}" style="display:inline-block;padding:11px 22px;background:#FFFFFF;border:1.5px solid #E2E8F0;border-radius:12px;font-size:13px;font-weight:600;color:#2563EB;text-decoration:none;font-family:'Inter',Arial,sans-serif;white-space:nowrap;">Contact</a>
+                <a href="mailto:${hostEmail || "support@ccentrik.com"}" style="display:inline-block;padding:12px 22px;background:#FFFFFF;border:1.5px solid #E2E8F0;border-radius:12px;font-size:14px;font-weight:600;color:#2563EB;text-decoration:none;font-family:'Inter',Arial,sans-serif;letter-spacing:0.2px;white-space:nowrap;">Contact</a>
               </td>
             </tr>
           </table>
@@ -800,51 +788,50 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
   </td>
 </tr>
 
-<!-- ── CONFIRMATION BANNER ────────────────────────────────────────────────── -->
+<!-- ── CONFIRMATION ───────────────────────────────────────────────────────── -->
 <tr>
   <td style="padding:24px 40px 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:20px;overflow:hidden;">
       <tr valign="middle">
-        <td width="64" style="padding:22px 0 22px 24px;vertical-align:middle;">
-          <div style="width:36px;height:36px;background:#22C55E;border-radius:10px;text-align:center;line-height:36px;font-size:18px;color:#FFFFFF;font-family:Arial,sans-serif;">&#10003;</div>
+        <td width="64" style="padding:24px 0 24px 24px;vertical-align:middle;">
+          <div style="width:36px;height:36px;background:#16A34A;border-radius:10px;text-align:center;line-height:36px;font-size:18px;color:#FFFFFF;font-family:Arial,sans-serif;">&#10003;</div>
         </td>
-        <td style="padding:22px 24px 22px 16px;vertical-align:middle;">
-          <div style="font-size:15px;font-weight:600;color:#14532D;margin-bottom:4px;font-family:'Inter',Arial,sans-serif;">Meeting confirmed &mdash; you're on the calendar.</div>
-          <div style="font-size:13px;font-weight:400;color:#15803D;font-family:'Inter',Arial,sans-serif;">A reminder will be sent before the meeting starts. Please respond to the calendar invite.</div>
+        <td style="padding:24px 24px 24px 14px;vertical-align:middle;">
+          <div style="font-size:16px;font-weight:600;color:#14532D;margin-bottom:5px;font-family:'Inter',Arial,sans-serif;">Meeting confirmed — you're on the calendar.</div>
+          <div style="font-size:14px;font-weight:400;color:#15803D;line-height:1.65;font-family:'Inter',Arial,sans-serif;">A reminder will be sent before the meeting starts. Please respond to the calendar invite to confirm your attendance.</div>
         </td>
       </tr>
     </table>
   </td>
 </tr>
 
-<!-- ── FOOTER: Dark navy matching hero ───────────────────────────────────── -->
+<!-- spacer before dark footer -->
+<tr><td style="height:40px;background:#FFFFFF;font-size:0;line-height:0;">&nbsp;</td></tr>
+
+<!-- ── FOOTER ─────────────────────────────────────────────────────────────── -->
 <tr>
-  <td style="background:#0F172A;padding:32px 40px 32px;margin-top:40px;">
-    <!-- spacer above footer within dark bg -->
-    <div style="height:0;"></div>
+  <td style="background:#0F172A;padding:36px 40px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr valign="middle">
         <td>
           <div style="font-size:22px;font-weight:800;color:#F8FAFC;letter-spacing:-0.5px;font-family:'Inter',Arial,sans-serif;">CCENTRIK</div>
-          <div style="font-size:13px;font-weight:400;color:#475569;margin-top:5px;font-family:'Inter',Arial,sans-serif;">Driving Connections. Building Success.</div>
+          <div style="font-size:14px;font-weight:400;color:#64748B;margin-top:6px;font-family:'Inter',Arial,sans-serif;">Driving Connections. Building Success.</div>
         </td>
         <td align="right">
-          <div style="font-size:13px;font-weight:500;color:#475569;margin-bottom:5px;font-family:'Inter',Arial,sans-serif;">support@ccentrik.com</div>
-          <div style="font-size:13px;font-weight:500;color:#475569;font-family:'Inter',Arial,sans-serif;">www.ccentrik.com</div>
+          <div style="font-size:14px;font-weight:500;color:#64748B;margin-bottom:6px;font-family:'Inter',Arial,sans-serif;">support@ccentrik.com</div>
+          <div style="font-size:14px;font-weight:500;color:#64748B;font-family:'Inter',Arial,sans-serif;">www.ccentrik.com</div>
         </td>
       </tr>
     </table>
-    <div style="margin-top:24px;padding-top:22px;border-top:1px solid #1E293B;text-align:center;font-size:12px;font-weight:400;color:#334155;font-family:'Inter',Arial,sans-serif;">
+    <div style="margin-top:24px;padding-top:22px;border-top:1px solid #1E293B;text-align:center;font-size:13px;font-weight:400;color:#334155;font-family:'Inter',Arial,sans-serif;">
       &copy; ${new Date().getFullYear()} CCENTRIK CRM &nbsp;&middot;&nbsp; Automated Meeting Invitation &nbsp;&middot;&nbsp; Do not reply directly
     </div>
   </td>
 </tr>
 
-<!-- spacer row so dark footer background doesn't bleed outside rounded card -->
 <tr><td style="height:0;font-size:0;line-height:0;background:#0F172A;border-radius:0 0 24px 24px;">&nbsp;</td></tr>
 
 </table>
-<!-- ╚══ END EMAIL CARD ═════════════════════════════════════════════════════╝ -->
 
 </td></tr>
 </table>
