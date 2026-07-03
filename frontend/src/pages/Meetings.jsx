@@ -650,58 +650,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
       .slice(0, 12);
   }, [allMeetings, reuseSearch, codeMap]);
 
-  // ── OAuth connect helpers ─────────────────────────────────────────────────
-  const handleConnectGoogle = async () => {
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) { toast.error("Please log in first"); return; }
-      const r = await fetch(`${API}/api/oauth/google/authorize`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await r.json();
-      if (data.url) { window.location.href = data.url; }
-      else toast.error(data.error || "Failed to start Google authorization");
-    } catch { toast.error("Could not connect to Google"); }
-  };
-
-  const handleDisconnectGoogle = async () => {
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) return;
-      await fetch(`${API}/api/oauth/google/revoke`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setOauthStatus((s) => ({ ...s, google_meet: null }));
-      toast.success("Google account disconnected");
-    } catch { toast.error("Failed to disconnect Google account"); }
-  };
-
-  const handleConnectMicrosoft = async () => {
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) { toast.error("Please log in first"); return; }
-      const r = await fetch(`${API}/api/oauth/microsoft/authorize`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await r.json();
-      if (data.url) { window.location.href = data.url; }
-      else toast.error(data.error || "Failed to start Microsoft authorization");
-    } catch { toast.error("Could not connect to Microsoft"); }
-  };
-
-  const handleDisconnectMicrosoft = async () => {
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) return;
-      await fetch(`${API}/api/oauth/microsoft/revoke`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setOauthStatus((s) => ({ ...s, microsoft_teams: null }));
-      toast.success("Microsoft account disconnected");
-    } catch { toast.error("Failed to disconnect Microsoft account"); }
-  };
+  // OAuth connect/disconnect is now managed in Settings → Email & Calendar Integrations
 
   const handleGenerateJitsi = () => {
     setValue("meeting_link", generateJitsiRoom(meeting?.id || Date.now().toString(36)));
@@ -1139,55 +1088,41 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                     </span>
                   </label>
 
-                  {/* Google Meet: OAuth connect / status banner */}
+                  {/* Google Meet: connection status display */}
                   {platform === "google_meet" && (
                     <div style={{ marginBottom: 8 }}>
                       {oauthStatus.google_meet?.connected ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.25)" }}>
                           <CheckCircle2 size={14} style={{ color: "#10B981", flexShrink: 0 }} />
-                          <span style={{ fontSize: 12, fontWeight: 600, color: "#10B981", flex: 1 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: "#10B981" }}>
                             Google connected{oauthStatus.google_meet.email ? ` · ${oauthStatus.google_meet.email}` : ""} — Meet link auto-generates on save
                           </span>
-                          <button type="button" onClick={handleDisconnectGoogle}
-                            style={{ fontSize: 11, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", padding: "2px 6px", borderRadius: 4 }}>
-                            Disconnect
-                          </button>
                         </div>
                       ) : (
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-                          <Video size={14} style={{ color: "#EA4335", flexShrink: 0 }} />
-                          <span style={{ fontSize: 12, color: "var(--text-muted)", flex: 1 }}>Connect your Google account to auto-generate Meet links</span>
-                          <button type="button" onClick={handleConnectGoogle}
-                            style={{ fontSize: 12, fontWeight: 600, color: "#EA4335", background: "rgba(234,67,53,0.08)", border: "1px solid rgba(234,67,53,0.2)", borderRadius: 6, padding: "5px 12px", cursor: "pointer", whiteSpace: "nowrap" }}>
-                            Connect Google
-                          </button>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: "#FFF7ED", border: "1px solid #FED7AA" }}>
+                          <AlertCircle size={14} style={{ color: "#F59E0B", flexShrink: 0 }} />
+                          <span style={{ fontSize: 12, color: "#92400E", flex: 1 }}>No Google account connected. Connect from </span>
+                          <a href="/settings" style={{ fontSize: 12, fontWeight: 600, color: "#2563EB", textDecoration: "none", whiteSpace: "nowrap" }}>Settings → Email &amp; Calendar</a>
                         </div>
                       )}
                     </div>
                   )}
 
-                  {/* MS Teams: OAuth connect / status banner */}
+                  {/* MS Teams: connection status display */}
                   {platform === "teams" && (
                     <div style={{ marginBottom: 8 }}>
                       {oauthStatus.microsoft_teams?.connected ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.25)" }}>
                           <CheckCircle2 size={14} style={{ color: "#10B981", flexShrink: 0 }} />
-                          <span style={{ fontSize: 12, fontWeight: 600, color: "#10B981", flex: 1 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: "#10B981" }}>
                             Microsoft connected{oauthStatus.microsoft_teams.email ? ` · ${oauthStatus.microsoft_teams.email}` : ""} — Teams link auto-generates on save
                           </span>
-                          <button type="button" onClick={handleDisconnectMicrosoft}
-                            style={{ fontSize: 11, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", padding: "2px 6px", borderRadius: 4 }}>
-                            Disconnect
-                          </button>
                         </div>
                       ) : (
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-                          <MessageCircle size={14} style={{ color: "#6264A7", flexShrink: 0 }} />
-                          <span style={{ fontSize: 12, color: "var(--text-muted)", flex: 1 }}>Connect your Microsoft 365 account to auto-generate Teams links</span>
-                          <button type="button" onClick={handleConnectMicrosoft}
-                            style={{ fontSize: 12, fontWeight: 600, color: "#6264A7", background: "rgba(98,100,167,0.08)", border: "1px solid rgba(98,100,167,0.2)", borderRadius: 6, padding: "5px 12px", cursor: "pointer", whiteSpace: "nowrap" }}>
-                            Connect Microsoft
-                          </button>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: "#FFF7ED", border: "1px solid #FED7AA" }}>
+                          <AlertCircle size={14} style={{ color: "#F59E0B", flexShrink: 0 }} />
+                          <span style={{ fontSize: 12, color: "#92400E", flex: 1 }}>No Microsoft account connected. Connect from </span>
+                          <a href="/settings" style={{ fontSize: 12, fontWeight: 600, color: "#2563EB", textDecoration: "none", whiteSpace: "nowrap" }}>Settings → Email &amp; Calendar</a>
                         </div>
                       )}
                     </div>
@@ -2069,9 +2004,10 @@ export default function Meetings() {
         startTime:      data.start_time,
         endTime:        data.end_time,
         meetingType:    data.meeting_type,
-        meetingLink:    data.meeting_link  || null,
-        location:       data.location      || null,
-        description:    data.agenda        || null,
+        meetingLink:    data.meeting_link    || null,
+        location:       data.location        || null,
+        locationMapsUrl: data.location_maps_url || null,
+        description:    data.agenda          || null,
         hostName:       profile?.full_name || "Ccentrik Team",
         meetingPurpose: data.meeting_purpose || null,
         companyName:    data.company_name   || null,

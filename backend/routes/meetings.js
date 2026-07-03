@@ -62,7 +62,7 @@ async function resolveGmailToken(profileId, profileEmail) {
 router.post("/invite", authenticate, async (req, res) => {
   const {
     customerName, customerEmail, title, startTime, endTime,
-    meetingType, meetingLink, location, description, hostName,
+    meetingType, meetingLink, location, locationMapsUrl, description, hostName,
     meetingPurpose, companyName, meetingId, sequence = 0, allAttendees = [],
   } = req.body;
 
@@ -88,6 +88,7 @@ router.post("/invite", authenticate, async (req, res) => {
       meetingType,
       meetingLink,
       location,
+      mapsUrl:       locationMapsUrl || null,
       description,
       hostName:      resolvedName,
       hostEmail:     senderEmail,

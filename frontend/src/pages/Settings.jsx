@@ -7,7 +7,7 @@ import { supabase } from "../supabaseClient";
 import { auth } from "../firebase";
 import { updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "firebase/auth";
 import toast from "react-hot-toast";
-import { User, Lock, Bell, Camera, DollarSign, Palette, Sun, Moon, Monitor, Eye, EyeOff, Check, XCircle, Smile, Mail, Link2, Loader2, Trash2, RefreshCw } from "lucide-react";
+import { User, Lock, Bell, Camera, DollarSign, Palette, Sun, Moon, Monitor, Eye, EyeOff, Check, XCircle, Smile, Mail, Link2, Loader2, Trash2, RefreshCw, Video, Calendar, Shield, ExternalLink, AlertCircle } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
 
@@ -24,7 +24,7 @@ import { useCurrency, CURRENCIES } from "../context/CurrencyContext";
 const TABS = [
   { key: "profile",         label: "Profile",         icon: User        },
   { key: "password",        label: "Password",        icon: Lock        },
-  { key: "email",           label: "Email",           icon: Mail        },
+  { key: "email",           label: "Email & Calendar", icon: Mail        },
   { key: "personalization", label: "Personalization", icon: Smile       },
   { key: "notifications",   label: "Notifications",   icon: Bell        },
   { key: "currency",        label: "Currency",        icon: DollarSign  },
@@ -667,13 +667,18 @@ function AppearanceTab() {
   );
 }
 
-// ─── Email Tab ────────────────────────────────────────────────────────────────
+// ─── Email & Calendar Integrations Tab ───────────────────────────────────────
 function EmailTab({ profile }) {
   // ── Gmail Sync state ───────────────────────────────────────────────────────
   const [accounts,        setAccounts]        = useState([]);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [connecting,      setConnecting]      = useState(false);
   const [disconnecting,   setDisconnecting]   = useState(null);
+
+  // ── OAuth integration status (Google Meet / Microsoft Teams) ──────────────
+  const [oauthStatus,       setOauthStatus]       = useState({ google_meet: null, microsoft_teams: null });
+  const [oauthConnecting,   setOauthConnecting]   = useState({ google: false, microsoft: false });
+  const [oauthDisconnecting,setOauthDisconnecting]= useState({ google: false, microsoft: false });
 
   const apiFetch = useCallback(async (path, opts = {}) => {
     const token = await auth.currentUser?.getIdToken();
@@ -694,6 +699,57 @@ function EmailTab({ profile }) {
   }, [apiFetch]);
 
   useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
+
+  const fetchOauthStatus = useCallback(async () => {
+    try {
+      const r = await apiFetch("/api/oauth/status");
+      if (r.ok) setOauthStatus(await r.json());
+    } catch { /* non-fatal */ }
+  }, [apiFetch]);
+
+  useEffect(() => { fetchOauthStatus(); }, [fetchOauthStatus]);
+
+  const handleConnectGoogle = async () => {
+    setOauthConnecting((s) => ({ ...s, google: true }));
+    try {
+      const r = await apiFetch("/api/oauth/google/authorize");
+      const data = await r.json();
+      if (data.url) window.location.href = data.url;
+      else toast.error(data.error || "Failed to start Google authorization");
+    } catch { toast.error("Could not connect to Google"); }
+    finally { setOauthConnecting((s) => ({ ...s, google: false })); }
+  };
+
+  const handleDisconnectGoogle = async () => {
+    setOauthDisconnecting((s) => ({ ...s, google: true }));
+    try {
+      await apiFetch("/api/oauth/google/revoke", { method: "POST" });
+      setOauthStatus((s) => ({ ...s, google_meet: null }));
+      toast.success("Google account disconnected");
+    } catch { toast.error("Failed to disconnect Google account"); }
+    finally { setOauthDisconnecting((s) => ({ ...s, google: false })); }
+  };
+
+  const handleConnectMicrosoft = async () => {
+    setOauthConnecting((s) => ({ ...s, microsoft: true }));
+    try {
+      const r = await apiFetch("/api/oauth/microsoft/authorize");
+      const data = await r.json();
+      if (data.url) window.location.href = data.url;
+      else toast.error(data.error || "Failed to start Microsoft authorization");
+    } catch { toast.error("Could not connect to Microsoft"); }
+    finally { setOauthConnecting((s) => ({ ...s, microsoft: false })); }
+  };
+
+  const handleDisconnectMicrosoft = async () => {
+    setOauthDisconnecting((s) => ({ ...s, microsoft: true }));
+    try {
+      await apiFetch("/api/oauth/microsoft/revoke", { method: "POST" });
+      setOauthStatus((s) => ({ ...s, microsoft_teams: null }));
+      toast.success("Microsoft account disconnected");
+    } catch { toast.error("Failed to disconnect Microsoft account"); }
+    finally { setOauthDisconnecting((s) => ({ ...s, microsoft: false })); }
+  };
 
   const handleConnectGmail = async () => {
     setConnecting(true);
@@ -751,8 +807,155 @@ function EmailTab({ profile }) {
   const PROVIDER_LABELS = { gmail: "Gmail" };
   const PROVIDER_COLORS = { gmail: "#EA4335" };
 
+  const googleConnected    = !!oauthStatus.google_meet?.connected;
+  const microsoftConnected = !!oauthStatus.microsoft_teams?.connected;
+
   return (
-    <div style={{ maxWidth: 520 }}>
+    <div style={{ maxWidth: 560 }}>
+
+      {/* ── Section 0: Calendar & Video Integrations ───────────────────── */}
+      <h2 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.3px" }}>Email &amp; Calendar Integrations</h2>
+      <p style={{ margin: "0 0 24px", fontSize: 14, fontWeight: 500, color: "var(--text-muted)", lineHeight: 1.6 }}>
+        Connect your business accounts once to enable email sync, meeting scheduling, calendar integration, and automatic meeting link generation.
+      </p>
+
+      {/* Google Workspace card */}
+      <div style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 16, padding: 28, marginBottom: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
+          {/* Google Logo */}
+          <div style={{ width: 44, height: 44, borderRadius: 12, border: "1px solid #E5E7EB", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: "#FAFAFA" }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+            </svg>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 17, fontWeight: 700, color: "var(--text)" }}>Google Workspace</span>
+              {googleConnected
+                ? <span style={{ fontSize: 12, fontWeight: 600, color: "#16A34A", background: "#DCFCE7", padding: "3px 10px", borderRadius: 100, border: "1px solid #BBF7D0" }}>Connected</span>
+                : <span style={{ fontSize: 12, fontWeight: 600, color: "#64748B", background: "#F1F5F9", padding: "3px 10px", borderRadius: 100, border: "1px solid #E2E8F0" }}>Not Connected</span>}
+            </div>
+            <p style={{ margin: "0 0 10px", fontSize: 14, color: "var(--text-muted)", lineHeight: 1.65 }}>
+              Connect your Google account to enable:
+            </p>
+            <ul style={{ margin: "0 0 14px", padding: "0 0 0 18px", fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8 }}>
+              <li>Gmail Sync — auto-track sent emails</li>
+              <li>Google Calendar Sync</li>
+              <li>Automatic Google Meet link generation</li>
+            </ul>
+            {googleConnected && oauthStatus.google_meet?.email && (
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                <Mail size={12} />
+                <span>{oauthStatus.google_meet.email}</span>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {googleConnected ? (
+                <>
+                  <button
+                    onClick={handleConnectGoogle}
+                    disabled={oauthConnecting.google}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 9, background: "#EFF6FF", border: "1px solid #BFDBFE", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#2563EB", fontFamily: "inherit" }}
+                  >
+                    {oauthConnecting.google ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={13} />}
+                    Reconnect
+                  </button>
+                  <button
+                    onClick={handleDisconnectGoogle}
+                    disabled={oauthDisconnecting.google}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 9, background: "var(--surface-2)", border: "1px solid var(--border)", cursor: "pointer", fontSize: 13, fontWeight: 500, color: "var(--text-muted)", fontFamily: "inherit" }}
+                  >
+                    {oauthDisconnecting.google ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />}
+                    Disconnect
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={handleConnectGoogle}
+                  disabled={oauthConnecting.google}
+                  style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 20px", borderRadius: 9, background: "#2563EB", border: "none", cursor: oauthConnecting.google ? "wait" : "pointer", fontSize: 13, fontWeight: 600, color: "#FFFFFF", fontFamily: "inherit" }}
+                >
+                  {oauthConnecting.google ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Link2 size={13} />}
+                  {oauthConnecting.google ? "Redirecting…" : "Connect Google"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Microsoft 365 card */}
+      <div style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 16, padding: 28, marginBottom: 28, boxShadow: "0 2px 12px rgba(0,0,0,0.05)" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
+          {/* Microsoft Logo */}
+          <div style={{ width: 44, height: 44, borderRadius: 12, border: "1px solid #E5E7EB", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: "#FAFAFA" }}>
+            <svg width="22" height="22" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg">
+              <rect x="1" y="1" width="10" height="10" fill="#F25022"/>
+              <rect x="12" y="1" width="10" height="10" fill="#7FBA00"/>
+              <rect x="1" y="12" width="10" height="10" fill="#00A4EF"/>
+              <rect x="12" y="12" width="10" height="10" fill="#FFB900"/>
+            </svg>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 17, fontWeight: 700, color: "var(--text)" }}>Microsoft 365</span>
+              {microsoftConnected
+                ? <span style={{ fontSize: 12, fontWeight: 600, color: "#16A34A", background: "#DCFCE7", padding: "3px 10px", borderRadius: 100, border: "1px solid #BBF7D0" }}>Connected</span>
+                : <span style={{ fontSize: 12, fontWeight: 600, color: "#64748B", background: "#F1F5F9", padding: "3px 10px", borderRadius: 100, border: "1px solid #E2E8F0" }}>Not Connected</span>}
+            </div>
+            <p style={{ margin: "0 0 10px", fontSize: 14, color: "var(--text-muted)", lineHeight: 1.65 }}>
+              Connect your Microsoft account to enable:
+            </p>
+            <ul style={{ margin: "0 0 14px", padding: "0 0 0 18px", fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8 }}>
+              <li>Outlook Email Sync</li>
+              <li>Outlook Calendar Sync</li>
+              <li>Automatic Microsoft Teams meeting link generation</li>
+            </ul>
+            {microsoftConnected && oauthStatus.microsoft_teams?.email && (
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                <Mail size={12} />
+                <span>{oauthStatus.microsoft_teams.email}</span>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {microsoftConnected ? (
+                <>
+                  <button
+                    onClick={handleConnectMicrosoft}
+                    disabled={oauthConnecting.microsoft}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 9, background: "#EFF6FF", border: "1px solid #BFDBFE", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#2563EB", fontFamily: "inherit" }}
+                  >
+                    {oauthConnecting.microsoft ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={13} />}
+                    Reconnect
+                  </button>
+                  <button
+                    onClick={handleDisconnectMicrosoft}
+                    disabled={oauthDisconnecting.microsoft}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 9, background: "var(--surface-2)", border: "1px solid var(--border)", cursor: "pointer", fontSize: 13, fontWeight: 500, color: "var(--text-muted)", fontFamily: "inherit" }}
+                  >
+                    {oauthDisconnecting.microsoft ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />}
+                    Disconnect
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={handleConnectMicrosoft}
+                  disabled={oauthConnecting.microsoft}
+                  style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 20px", borderRadius: 9, background: "#5B21B6", border: "none", cursor: oauthConnecting.microsoft ? "wait" : "pointer", fontSize: 13, fontWeight: 600, color: "#FFFFFF", fontFamily: "inherit" }}
+                >
+                  {oauthConnecting.microsoft ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Link2 size={13} />}
+                  {oauthConnecting.microsoft ? "Redirecting…" : "Connect Microsoft"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ height: 1, background: "var(--border)", margin: "4px 0 28px" }} />
 
       {/* ── Section 1: Gmail Auto-Sync ─────────────────────────────────── */}
       <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700, color: "var(--text)" }}>Email Auto-Sync</h3>
@@ -884,7 +1087,7 @@ export default function Settings() {
   const { profile, refreshProfile } = useAuth();
   const [activeTab, setActiveTab] = useState("profile");
 
-  // Handle OAuth redirect from Gmail — backend redirects to /settings?email_sync_connected=gmail
+  // Handle OAuth redirects back to /settings
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.has("email_sync_connected")) {
@@ -899,6 +1102,22 @@ export default function Settings() {
       } else {
         toast.error("Failed to connect Gmail account. Please try again.");
       }
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (params.has("google_meet_connected")) {
+      setActiveTab("email");
+      toast.success("Google account connected — Meet links will auto-generate");
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (params.has("google_meet_error")) {
+      setActiveTab("email");
+      toast.error("Failed to connect Google account. Please try again.");
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (params.has("teams_connected")) {
+      setActiveTab("email");
+      toast.success("Microsoft account connected — Teams links will auto-generate");
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (params.has("teams_error")) {
+      setActiveTab("email");
+      toast.error("Failed to connect Microsoft account. Please try again.");
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
