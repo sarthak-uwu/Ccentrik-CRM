@@ -361,6 +361,7 @@ function GoogleMapsAutocomplete({ inputId, apiKey, onPlaceSelected }) {
             formattedAddress: place.formatted_address || el.value,
             lat: place.geometry.location.lat(),
             lng: place.geometry.location.lng(),
+            placeId: place.place_id || null,
           });
         }
       });
@@ -389,6 +390,9 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
   const [platform,       setPlatform]      = useState(meeting?.meeting_type || "google_meet");
   const [locationLat,    setLocationLat]   = useState(meeting?.location_lat  || null);
   const [locationLng,    setLocationLng]   = useState(meeting?.location_lng  || null);
+  const [locationPlaceId, setLocationPlaceId] = useState(meeting?.location_place_id || null);
+  const [oauthStatus,    setOauthStatus]   = useState({ google_meet: null, microsoft_teams: null });
+  const [oauthLoading,   setOauthLoading]  = useState(false);
   const [purpose,        setPurpose]       = useState(meeting?.meeting_purpose || "");
   const [purposeOther,   setPurposeOther]  = useState("");
   const [attendeeIds,    setAttendeeIds]   = useState(() =>
@@ -541,6 +545,24 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
     }
   }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Fetch which OAuth providers (Google Meet / Microsoft Teams) the current user has connected
+  useEffect(() => {
+    const fetchOauthStatus = async () => {
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        if (!token) return;
+        const r = await fetch(`${API}/api/oauth/status`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (r.ok) {
+          const data = await r.json();
+          setOauthStatus(data);
+        }
+      } catch { /* non-fatal: OAuth status is best-effort */ }
+    };
+    fetchOauthStatus();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Lead ID lookup (text input path) ──────────────────────────────────────
   const handleLeadCodeChange = (val) => {
     setLeadCodeInput(val);
@@ -628,6 +650,59 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
       .slice(0, 12);
   }, [allMeetings, reuseSearch, codeMap]);
 
+  // ── OAuth connect helpers ─────────────────────────────────────────────────
+  const handleConnectGoogle = async () => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) { toast.error("Please log in first"); return; }
+      const r = await fetch(`${API}/api/oauth/google/authorize`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await r.json();
+      if (data.url) { window.location.href = data.url; }
+      else toast.error(data.error || "Failed to start Google authorization");
+    } catch { toast.error("Could not connect to Google"); }
+  };
+
+  const handleDisconnectGoogle = async () => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) return;
+      await fetch(`${API}/api/oauth/google/revoke`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setOauthStatus((s) => ({ ...s, google_meet: null }));
+      toast.success("Google account disconnected");
+    } catch { toast.error("Failed to disconnect Google account"); }
+  };
+
+  const handleConnectMicrosoft = async () => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) { toast.error("Please log in first"); return; }
+      const r = await fetch(`${API}/api/oauth/microsoft/authorize`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await r.json();
+      if (data.url) { window.location.href = data.url; }
+      else toast.error(data.error || "Failed to start Microsoft authorization");
+    } catch { toast.error("Could not connect to Microsoft"); }
+  };
+
+  const handleDisconnectMicrosoft = async () => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) return;
+      await fetch(`${API}/api/oauth/microsoft/revoke`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setOauthStatus((s) => ({ ...s, microsoft_teams: null }));
+      toast.success("Microsoft account disconnected");
+    } catch { toast.error("Failed to disconnect Microsoft account"); }
+  };
+
   const handleGenerateJitsi = () => {
     setValue("meeting_link", generateJitsiRoom(meeting?.id || Date.now().toString(36)));
     setAutoJitsi(true);
@@ -654,6 +729,57 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
     const finalPurpose = purpose === "others" ? (purposeOther.trim() || "others") : (purpose || null);
     const isDealLink   = crmEntity?._src === "deal";
 
+    // Auto-generate meeting link via OAuth if user has connected provider
+    // and no manual link was entered.
+    let finalMeetingLink = mode === "online" ? (data.meeting_link || null) : null;
+    if (
+      mode === "online" &&
+      !finalMeetingLink &&
+      (platform === "google_meet" || platform === "teams")
+    ) {
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        if (token) {
+          setOauthLoading(true);
+          if (platform === "google_meet" && oauthStatus.google_meet?.connected) {
+            const r = await fetch(`${API}/api/oauth/google/create-event`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                title:           data.title,
+                startTime:       startISO,
+                endTime:         endISO,
+                description:     data.agenda || "",
+                attendeeEmails:  extras,
+                requestId:       `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              }),
+            });
+            const result = await r.json();
+            if (result.meetLink) {
+              finalMeetingLink = result.meetLink;
+              toast.success("Google Meet link generated automatically");
+            }
+          } else if (platform === "teams" && oauthStatus.microsoft_teams?.connected) {
+            const r = await fetch(`${API}/api/oauth/microsoft/create-meeting`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ title: data.title, startTime: startISO, endTime: endISO }),
+            });
+            const result = await r.json();
+            if (result.joinWebUrl) {
+              finalMeetingLink = result.joinWebUrl;
+              toast.success("Microsoft Teams link generated automatically");
+            }
+          }
+        }
+      } catch (linkErr) {
+        console.warn("Auto-generate meeting link failed:", linkErr);
+        // Non-fatal — continue with null link
+      } finally {
+        setOauthLoading(false);
+      }
+    }
+
     await onSave({
       title:           data.title,
       customer_name:   data.customer_name  || "",
@@ -667,10 +793,11 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
       meeting_platform: mode === "online" ? platform : null,
       mode,
       meeting_purpose:  finalPurpose,
-      meeting_link:     mode === "online" ? (data.meeting_link || null) : null,
+      meeting_link:     finalMeetingLink,
       location:         mode === "offline" ? (data.location || null) : null,
       location_lat:     mode === "offline" ? locationLat : null,
       location_lng:     mode === "offline" ? locationLng : null,
+      location_place_id: mode === "offline" ? (locationPlaceId || null) : null,
       location_maps_url: mode === "offline" && locationLat && locationLng
         ? `https://maps.google.com/?q=${locationLat},${locationLng}`
         : mode === "offline" && data.location
@@ -1004,16 +1131,81 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                 <div>
                   <label className="crm-label">
                     Meeting Link
-                    <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)", marginLeft: 6 }}>Auto-generated · you can replace with your own link</span>
+                    <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)", marginLeft: 6 }}>
+                      {(platform === "google_meet" && oauthStatus.google_meet?.connected) ||
+                       (platform === "teams" && oauthStatus.microsoft_teams?.connected)
+                        ? "Auto-generated on save · override below if needed"
+                        : "Enter manually or connect your account for auto-generation"}
+                    </span>
                   </label>
+
+                  {/* Google Meet: OAuth connect / status banner */}
+                  {platform === "google_meet" && (
+                    <div style={{ marginBottom: 8 }}>
+                      {oauthStatus.google_meet?.connected ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.25)" }}>
+                          <CheckCircle2 size={14} style={{ color: "#10B981", flexShrink: 0 }} />
+                          <span style={{ fontSize: 12, fontWeight: 600, color: "#10B981", flex: 1 }}>
+                            Google connected{oauthStatus.google_meet.email ? ` · ${oauthStatus.google_meet.email}` : ""} — Meet link auto-generates on save
+                          </span>
+                          <button type="button" onClick={handleDisconnectGoogle}
+                            style={{ fontSize: 11, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", padding: "2px 6px", borderRadius: 4 }}>
+                            Disconnect
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                          <Video size={14} style={{ color: "#EA4335", flexShrink: 0 }} />
+                          <span style={{ fontSize: 12, color: "var(--text-muted)", flex: 1 }}>Connect your Google account to auto-generate Meet links</span>
+                          <button type="button" onClick={handleConnectGoogle}
+                            style={{ fontSize: 12, fontWeight: 600, color: "#EA4335", background: "rgba(234,67,53,0.08)", border: "1px solid rgba(234,67,53,0.2)", borderRadius: 6, padding: "5px 12px", cursor: "pointer", whiteSpace: "nowrap" }}>
+                            Connect Google
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* MS Teams: OAuth connect / status banner */}
+                  {platform === "teams" && (
+                    <div style={{ marginBottom: 8 }}>
+                      {oauthStatus.microsoft_teams?.connected ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.25)" }}>
+                          <CheckCircle2 size={14} style={{ color: "#10B981", flexShrink: 0 }} />
+                          <span style={{ fontSize: 12, fontWeight: 600, color: "#10B981", flex: 1 }}>
+                            Microsoft connected{oauthStatus.microsoft_teams.email ? ` · ${oauthStatus.microsoft_teams.email}` : ""} — Teams link auto-generates on save
+                          </span>
+                          <button type="button" onClick={handleDisconnectMicrosoft}
+                            style={{ fontSize: 11, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", padding: "2px 6px", borderRadius: 4 }}>
+                            Disconnect
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                          <MessageCircle size={14} style={{ color: "#6264A7", flexShrink: 0 }} />
+                          <span style={{ fontSize: 12, color: "var(--text-muted)", flex: 1 }}>Connect your Microsoft 365 account to auto-generate Teams links</span>
+                          <button type="button" onClick={handleConnectMicrosoft}
+                            style={{ fontSize: 12, fontWeight: 600, color: "#6264A7", background: "rgba(98,100,167,0.08)", border: "1px solid rgba(98,100,167,0.2)", borderRadius: 6, padding: "5px 12px", cursor: "pointer", whiteSpace: "nowrap" }}>
+                            Connect Microsoft
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <input className="crm-input" {...register("meeting_link")}
-                    placeholder={platform === "google_meet" ? "https://meet.google.com/abc-defg-hij (auto-generated)" : platform === "teams" ? "https://teams.microsoft.com/l/meetup-join/..." : platform === "zoom" ? "https://zoom.us/j/123456789" : "https://..."}
+                    placeholder={platform === "google_meet" ? "https://meet.google.com/abc-defg-hij" : platform === "teams" ? "https://teams.microsoft.com/l/meetup-join/..." : platform === "zoom" ? "https://zoom.us/j/123456789" : "https://..."}
                   />
                   {watchedLink && (
                     <a href={watchedLink} target="_blank" rel="noopener noreferrer"
                       style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 5, fontSize: 12, color: "var(--accent)", textDecoration: "none" }}>
                       <ExternalLink size={11} /> Preview link
                     </a>
+                  )}
+                  {oauthLoading && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12, color: "var(--text-muted)" }}>
+                      <RefreshCw size={12} style={{ animation: "spin 1s linear infinite" }} /> Generating meeting link…
+                    </div>
                   )}
                 </div>
               </div>
@@ -1031,18 +1223,46 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                       setValue("location", place.formattedAddress);
                       setLocationLat(place.lat);
                       setLocationLng(place.lng);
+                      setLocationPlaceId(place.placeId || null);
                     }}
                   />
                 )}
                 <input id="meeting-location-input" className="crm-input"
                   {...register("location")}
                   placeholder="Search address or enter venue name…"
+                  onChange={(e) => {
+                    // Clear pinned coordinates when user manually edits the text
+                    if (!e.target.value) {
+                      setLocationLat(null);
+                      setLocationLng(null);
+                      setLocationPlaceId(null);
+                    }
+                  }}
                 />
                 {locationLat && locationLng && (
-                  <a href={`https://maps.google.com/?q=${locationLat},${locationLng}`} target="_blank" rel="noopener noreferrer"
-                    style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 5, fontSize: 12, color: "#10B981", textDecoration: "none" }}>
-                    <MapPin size={11} /> Location pinned on Google Maps ↗
-                  </a>
+                  <>
+                    {/* Static map preview */}
+                    {import.meta.env.VITE_GOOGLE_MAPS_API_KEY && (
+                      <div style={{ marginTop: 10, borderRadius: 10, overflow: "hidden", border: "1px solid var(--border)", position: "relative" }}>
+                        <img
+                          src={`https://maps.googleapis.com/maps/api/staticmap?center=${locationLat},${locationLng}&zoom=15&size=640x180&scale=2&markers=color:red%7C${locationLat},${locationLng}&key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}`}
+                          alt="Location preview"
+                          style={{ width: "100%", height: 140, objectFit: "cover", display: "block" }}
+                        />
+                      </div>
+                    )}
+                    <a
+                      href={`https://maps.google.com/?q=${locationLat},${locationLng}${locationPlaceId ? `&query_place_id=${locationPlaceId}` : ""}`}
+                      target="_blank" rel="noopener noreferrer"
+                      style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8, fontSize: 12, fontWeight: 600, color: "#10B981", textDecoration: "none", padding: "5px 10px", borderRadius: 6, background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.2)" }}>
+                      <MapPin size={11} /> View on Google Maps ↗
+                    </a>
+                  </>
+                )}
+                {!locationLat && !locationLng && !import.meta.env.VITE_GOOGLE_MAPS_API_KEY && (
+                  <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 4 }}>
+                    Add VITE_GOOGLE_MAPS_API_KEY to enable location autocomplete and map preview
+                  </div>
                 )}
               </div>
             )}
@@ -1710,6 +1930,25 @@ export default function Meetings() {
   const { profile } = useAuth();
   const qc = useQueryClient();
   const canDelete = ["owner", "sales_head", "sales_manager"].includes(profile?.role);
+
+  // Handle OAuth redirect callbacks (oauth_success / oauth_error query params)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const success = params.get("oauth_success");
+    const error   = params.get("oauth_error");
+    const reason  = params.get("reason");
+    if (success) {
+      const label = success === "google" ? "Google" : "Microsoft";
+      toast.success(`${label} account connected! Your meeting links will now be auto-generated.`);
+      // Remove query params without a page reload
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    if (error) {
+      const label = error === "google" ? "Google" : "Microsoft";
+      toast.error(`Failed to connect ${label} account${reason ? ` (${reason})` : ""}. Please try again.`);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [showForm, setShowForm] = useState(false);
   const [editMeeting, setEditMeeting] = useState(null);

@@ -107,6 +107,7 @@ app.use("/api/analytics",  require("./routes/analytics"));
 app.use("/api/ai",         require("./routes/ai"));
 app.use("/api/ai/documents", require("./routes/aiDocuments"));
 app.use("/api/meetings",   require("./routes/meetings"));
+app.use("/api/oauth",      require("./routes/oauth"));
 app.use("/api/targets",    require("./routes/targets"));
 app.use("/api/email",      require("./routes/email"));
 app.use("/api/reports",    require("./routes/reports"));

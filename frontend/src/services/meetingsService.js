@@ -124,8 +124,8 @@ export const meetingsService = {
         (error.message || "").includes("meeting_code") ||
         (error.details || "").includes("meeting_code")
       ) {
-        // Retry without columns that may not exist yet (meeting_code, priority)
-        const { meeting_code: _mc, priority: _p, ...basePayload } = insertPayload;
+        // Retry without columns that may not exist yet (meeting_code, priority, location_place_id)
+        const { meeting_code: _mc, priority: _p, location_place_id: _lpid, ...basePayload } = insertPayload;
         const { data: d2, error: e2 } = await supabase
           .from("meetings")
           .insert(basePayload)
