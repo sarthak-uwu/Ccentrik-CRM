@@ -95,6 +95,14 @@ const DURATIONS = [
   { value: 240, label: "4 Hours"           },
 ];
 
+const PLATFORM_LABELS = {
+  google_meet: "Google Meet",
+  teams:       "Microsoft Teams",
+  zoom:        "Zoom",
+  jitsi:       "Jitsi (Free)",
+  custom:      "Custom Link",
+};
+
 const TIMEZONES = [
   "Asia/Kolkata", "UTC", "America/New_York", "America/Los_Angeles", "America/Chicago",
   "Europe/London", "Europe/Paris", "Europe/Berlin", "Asia/Dubai", "Asia/Singapore",
@@ -411,6 +419,59 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
   const [teamSearch,     setTeamSearch]    = useState("");
   const [teamDropOpen,   setTeamDropOpen]  = useState(false);
   const teamDropRef = useRef(null);
+  const [extDropOpen,    setExtDropOpen]   = useState(false);
+  const extDropRef = useRef(null);
+
+  useEffect(() => {
+    if (!extDropOpen) return;
+    const h = (e) => { if (!extDropRef.current?.contains(e.target)) setExtDropOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [extDropOpen]);
+
+  /* ── Premium picker UI state (presentational only — values still flow into
+        the same fields/handlers as before) ──────────────────────────────── */
+  const [durationDropOpen, setDurationDropOpen] = useState(false);
+  const durationDropRef = useRef(null);
+  const [timeDropOpen,     setTimeDropOpen]     = useState(false);
+  const timeDropRef = useRef(null);
+  const [timezoneDropOpen, setTimezoneDropOpen] = useState(false);
+  const timezoneDropRef = useRef(null);
+  const [timezoneSearch,   setTimezoneSearch]   = useState("");
+  const [dateDropOpen,     setDateDropOpen]     = useState(false);
+  const dateDropRef = useRef(null);
+  const [crmActiveIndex,   setCrmActiveIndex]   = useState(-1);
+  const [recentCrmSearches, setRecentCrmSearches] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("crm_recent_meeting_search") || "[]"); } catch { return []; }
+  });
+
+  useEffect(() => {
+    if (!durationDropOpen) return;
+    const h = (e) => { if (!durationDropRef.current?.contains(e.target)) setDurationDropOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [durationDropOpen]);
+
+  useEffect(() => {
+    if (!timeDropOpen) return;
+    const h = (e) => { if (!timeDropRef.current?.contains(e.target)) setTimeDropOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [timeDropOpen]);
+
+  useEffect(() => {
+    if (!timezoneDropOpen) return;
+    const h = (e) => { if (!timezoneDropRef.current?.contains(e.target)) setTimezoneDropOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [timezoneDropOpen]);
+
+  useEffect(() => {
+    if (!dateDropOpen) return;
+    const h = (e) => { if (!dateDropRef.current?.contains(e.target)) setDateDropOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [dateDropOpen]);
 
   /* ── Reuse previous meeting state ─────────────────────────────────────── */
   const [showReuse,     setShowReuse]     = useState(!!reuseFrom);
@@ -541,6 +602,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
     if (!meeting?.start_time || !meeting?.end_time) return 60;
     return Math.round((new Date(meeting.end_time) - new Date(meeting.start_time)) / 60000) || 60;
   });
+  const [calendarCursor, setCalendarCursor] = useState(() => meetingDate ? new Date(`${meetingDate}T00:00:00`) : new Date());
 
   const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm({
     defaultValues: {
@@ -590,6 +652,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
     setLeadCodeInput(val);
     setNoPocError(false);
     setCrmEntity(null);
+    setCrmActiveIndex(-1);
     if (!val.trim()) { setLookupStatus("idle"); setDropdownOpen(false); return; }
     // Always show dropdown so partial inputs (e.g. "2") show all matching leads
     setLookupStatus("searching");
@@ -606,6 +669,12 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
     setLookupStatus("found");
     setDropdownOpen(false);
     setNoPocError(false);
+    setCrmActiveIndex(-1);
+    try {
+      const next = [entity.id, ...recentCrmSearches.filter((id) => id !== entity.id)].slice(0, 5);
+      setRecentCrmSearches(next);
+      localStorage.setItem("crm_recent_meeting_search", JSON.stringify(next));
+    } catch { /* non-fatal — recent searches are a convenience only */ }
     // Auto-fill all client detail fields from CRM record
     setValue("company_name",   entity.company_name || entity.title || "");
     setValue("customer_name",  entity.contact_name || "");
@@ -622,6 +691,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
     setLookupStatus("idle");
     setNoPocError(false);
     setDropdownOpen(false);
+    setCrmActiveIndex(-1);
   };
 
   const toggleAttendee = (id) => setAttendeeIds((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
@@ -825,6 +895,59 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
     </div>
   );
 
+  // Premium calendar-grid date picker (writes the same "yyyy-MM-dd" string meetingDate always expected)
+  const MiniCalendar = ({ value, onSelect }) => {
+    const monthStart = startOfMonth(calendarCursor);
+    const gridStart  = startOfWeek(monthStart);
+    const gridEnd    = endOfWeek(endOfMonth(calendarCursor));
+    const days       = eachDayOfInterval({ start: gridStart, end: gridEnd });
+    const selectedDate = value ? new Date(`${value}T00:00:00`) : null;
+    return (
+      <div style={{ padding: 16, width: 300 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <button type="button" onClick={() => setCalendarCursor((c) => subMonths(c, 1))}
+            style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
+            <ChevronLeft size={14} />
+          </button>
+          <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text)" }}>{format(calendarCursor, "MMMM yyyy")}</span>
+          <button type="button" onClick={() => setCalendarCursor((c) => addMonths(c, 1))}
+            style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
+            <ChevronDown size={14} style={{ transform: "rotate(-90deg)" }} />
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2, marginBottom: 4 }}>
+          {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+            <div key={d} style={{ textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", padding: "4px 0" }}>{d}</div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2 }}>
+          {days.map((day) => {
+            const dayStr    = format(day, "yyyy-MM-dd");
+            const inMonth   = isSameMonth(day, calendarCursor);
+            const isSel     = selectedDate && dayStr === format(selectedDate, "yyyy-MM-dd");
+            const isTodayD  = isToday(day);
+            const isPastDay = day < startOfDay(new Date());
+            return (
+              <button key={dayStr} type="button" disabled={isPastDay}
+                onClick={() => { if (isPastDay) return; onSelect(dayStr); setCalendarCursor(day); }}
+                style={{
+                  height: 32, borderRadius: 8, border: "none", cursor: isPastDay ? "not-allowed" : "pointer",
+                  fontFamily: "inherit", fontSize: 12.5, fontWeight: isSel ? 800 : 600,
+                  color: isSel ? "#fff" : isPastDay ? "var(--text-muted)" : !inMonth ? "var(--text-muted)" : "var(--text)",
+                  background: isSel ? "#2563EB" : isTodayD ? "rgba(37,99,235,0.1)" : "transparent",
+                  opacity: isPastDay ? 0.35 : inMonth ? 1 : 0.4,
+                  outline: isTodayD && !isSel ? "1.5px solid rgba(37,99,235,0.4)" : "none",
+                  outlineOffset: -1.5,
+                }}>
+                {format(day, "d")}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   const canSubmit = true; // all fields editable — no gate
 
   // UI-only computed values
@@ -869,26 +992,33 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
   const watchedEmail    = watch("customer_email");
   const watchedLocation = watch("location");
   const watchedLink     = watch("meeting_link");
+  const watchedAgenda   = watch("agenda");
 
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <style>{`
+        .mtg-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .mtg-grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 16px; }
+        @media (max-width: 1024px) { .mtg-grid-4 { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 640px)  { .mtg-grid-2, .mtg-grid-4 { grid-template-columns: 1fr; } }
+      `}</style>
       <motion.div
         className="modal-box"
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        initial={{ opacity: 0, scale: 0.97, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        transition={{ type: "spring", damping: 24, stiffness: 300 }}
-        style={{ maxWidth: 1200, width: "96vw", maxHeight: "96vh", display: "flex", flexDirection: "column", overflow: "hidden", position: "relative", borderRadius: 20 }}
+        exit={{ opacity: 0, scale: 0.97, y: 16 }}
+        transition={{ type: "spring", damping: 26, stiffness: 320 }}
+        style={{ maxWidth: 1200, width: "96vw", maxHeight: "94vh", display: "flex", flexDirection: "column", overflow: "hidden", position: "relative", borderRadius: 18 }}
       >
         {/* ── STICKY HEADER ── */}
-        <div style={{ flexShrink: 0, background: "var(--surface)", padding: "18px 28px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ width: 44, height: 44, borderRadius: 13, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.16)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <CalendarCheck size={20} style={{ color: "#2563EB" }} />
+        <div style={{ flexShrink: 0, background: "var(--surface)", padding: "22px 32px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <div style={{ width: 48, height: 48, borderRadius: 14, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.16)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <CalendarCheck size={22} style={{ color: "#2563EB" }} />
             </div>
             <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.03em" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <h2 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.03em" }}>
                   {reuseFrom ? "Schedule Follow-up" : meeting ? "Edit Meeting" : "Schedule Meeting"}
                 </h2>
                 {selectedParent && (
@@ -897,20 +1027,24 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                   </span>
                 )}
               </div>
-              <p style={{ margin: "3px 0 0", fontSize: 12.5, color: "var(--text-muted)" }}>
-                {reuseFrom ? `Pre-filled from ${codeMap[reuseFrom.id] || "previous meeting"}` : meeting ? "Update details — a revised iCal invite will be sent" : "Fill details to schedule and send a calendar invite"}
+              <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-muted)" }}>
+                {reuseFrom ? `Pre-filled from ${codeMap[reuseFrom.id] || "previous meeting"}` : meeting ? "Update details — a revised iCal invite will be sent" : "Create and schedule a meeting with CRM contacts"}
               </p>
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {!meeting && !reuseFrom && allMeetings.length > 0 && (
               <button type="button" onClick={() => setShowReuse((v) => !v)}
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 9, border: `1px solid ${showReuse ? "#6366F1" : "var(--border)"}`, background: showReuse ? "rgba(99,102,241,0.08)" : "var(--surface-2)", cursor: "pointer", fontSize: 13, fontWeight: 600, color: showReuse ? "#6366F1" : "var(--text-muted)", fontFamily: "inherit" }}>
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 15px", borderRadius: 10, border: `1px solid ${showReuse ? "#6366F1" : "var(--border)"}`, background: showReuse ? "rgba(99,102,241,0.08)" : "var(--surface-2)", cursor: "pointer", fontSize: 13, fontWeight: 600, color: showReuse ? "#6366F1" : "var(--text-muted)", fontFamily: "inherit", transition: "all 0.15s" }}>
                 <RotateCcw size={13} /> Reuse Previous
               </button>
             )}
-            <button onClick={onClose} style={{ width: 36, height: 36, borderRadius: 9, background: "var(--surface-2)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <X size={16} />
+            <button type="button" onClick={onClose}
+              style={{ height: 40, padding: "0 18px", borderRadius: 10, border: "1.5px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: 14, fontWeight: 600, color: "var(--text-muted)", fontFamily: "inherit", transition: "all 0.15s" }}>
+              Cancel
+            </button>
+            <button onClick={onClose} style={{ width: 40, height: 40, borderRadius: 10, background: "var(--surface-2)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <X size={17} />
             </button>
           </div>
         </div>
@@ -983,9 +1117,17 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                   <input
                     value={leadCodeInput}
                     onChange={(e) => handleLeadCodeChange(e.target.value)}
-                    onFocus={() => { if (leadCodeInput.trim()) setDropdownOpen(true); }}
-                    placeholder="Type company name, lead code, or contact…"
-                    style={{ width: "100%", boxSizing: "border-box", height: 50, paddingLeft: 44, paddingRight: crmEntity ? 110 : 14, borderRadius: 12, border: `1.5px solid ${lookupStatus === "found" ? "rgba(37,99,235,0.35)" : lookupStatus === "not_found" ? "rgba(239,68,68,0.35)" : "var(--border)"}`, background: lookupStatus === "found" ? "rgba(37,99,235,0.025)" : "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", transition: "border-color 0.2s" }}
+                    onFocus={() => setDropdownOpen(true)}
+                    onKeyDown={(e) => {
+                      if (!dropdownOpen) return;
+                      const list = filteredSources.slice(0, 20);
+                      if (e.key === "ArrowDown") { e.preventDefault(); setCrmActiveIndex((i) => Math.min(i + 1, list.length - 1)); }
+                      else if (e.key === "ArrowUp") { e.preventDefault(); setCrmActiveIndex((i) => Math.max(i - 1, 0)); }
+                      else if (e.key === "Enter") { if (crmActiveIndex >= 0 && list[crmActiveIndex]) { e.preventDefault(); selectEntity(list[crmActiveIndex]); } }
+                      else if (e.key === "Escape") { setDropdownOpen(false); }
+                    }}
+                    placeholder="Search Lead ID, Company Name, Contact Person, Email, Phone, Pipeline or Deal…"
+                    style={{ width: "100%", boxSizing: "border-box", height: 52, paddingLeft: 44, paddingRight: crmEntity ? 110 : 14, borderRadius: 12, border: `1.5px solid ${lookupStatus === "found" ? "rgba(37,99,235,0.35)" : lookupStatus === "not_found" ? "rgba(239,68,68,0.35)" : "var(--border)"}`, background: lookupStatus === "found" ? "rgba(37,99,235,0.025)" : "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", transition: "border-color 0.2s, box-shadow 0.2s", boxShadow: dropdownOpen ? "0 0 0 3px rgba(37,99,235,0.08)" : "none" }}
                   />
                   {crmEntity && (
                     <div style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 6 }}>
@@ -999,45 +1141,73 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                   )}
                 </div>
 
-                {dropdownOpen && filteredSources.length > 0 && (
-                  <div style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 14, boxShadow: "0 20px 50px rgba(0,0,0,0.14)", zIndex: 9999, maxHeight: 320, overflowY: "auto" }}>
-                    {filteredSources.slice(0, 20).map((item) => {
-                      const q = leadCodeInput.trim().toUpperCase();
-                      const highlight = (str) => {
-                        if (!q || !str) return str || "";
-                        const idx = str.toUpperCase().indexOf(q);
-                        if (idx === -1) return str;
-                        return <>{str.slice(0, idx)}<strong style={{ color: "#2563EB" }}>{str.slice(idx, idx + q.length)}</strong>{str.slice(idx + q.length)}</>;
-                      };
-                      return (
-                        <button key={item.id} type="button"
-                          onMouseDown={(e) => { e.preventDefault(); selectEntity(item); }}
-                          style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 16px", background: "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
-                          onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(37,99,235,0.04)")}
-                          onMouseLeave={(e) => (e.currentTarget.style.background = "none")}>
-                          <span style={{ flexShrink: 0, fontFamily: "monospace", fontSize: 11, fontWeight: 800, color: item._src === "deal" ? "#EA580C" : "#2563EB", background: item._src === "deal" ? "rgba(234,88,12,0.08)" : "rgba(37,99,235,0.08)", padding: "2px 7px", borderRadius: 5, marginTop: 2 }}>
-                            {item._src === "deal" ? "DEAL" : item._src === "pipeline" ? "PIPE" : (item.lead_code || "—")}
-                          </span>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {highlight(item.company_name || item.title || "")}
-                            </div>
-                            {(item.contact_name || item.email) && (
-                              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
-                                {item.contact_name && <span>{highlight(item.contact_name)}</span>}
-                                {item.contact_name && item.email && <span style={{ margin: "0 4px" }}>·</span>}
-                                {item.email && <span>{item.email}</span>}
-                              </div>
-                            )}
+                {dropdownOpen && (() => {
+                  const q = leadCodeInput.trim().toUpperCase();
+                  const list = filteredSources.slice(0, 20);
+                  const recentEntities = !q ? recentCrmSearches.map((id) => allCrmSources.find((x) => x.id === id)).filter(Boolean) : [];
+                  const recentIds = new Set(recentEntities.map((x) => x.id));
+                  const mainList = list.filter((x) => !recentIds.has(x.id));
+                  const highlight = (str) => {
+                    if (!q || !str) return str || "";
+                    const idx = str.toUpperCase().indexOf(q);
+                    if (idx === -1) return str;
+                    return <>{str.slice(0, idx)}<strong style={{ color: "#2563EB" }}>{str.slice(idx, idx + q.length)}</strong>{str.slice(idx + q.length)}</>;
+                  };
+                  const Row = ({ item, idx }) => (
+                    <button key={item.id} type="button"
+                      onMouseDown={(e) => { e.preventDefault(); selectEntity(item); }}
+                      onMouseEnter={() => setCrmActiveIndex(idx)}
+                      style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 16px", background: idx === crmActiveIndex ? "rgba(37,99,235,0.06)" : "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                      <span style={{ flexShrink: 0, fontFamily: "monospace", fontSize: 11, fontWeight: 800, color: item._src === "deal" ? "#EA580C" : "#2563EB", background: item._src === "deal" ? "rgba(234,88,12,0.08)" : "rgba(37,99,235,0.08)", padding: "2px 7px", borderRadius: 5, marginTop: 2 }}>
+                        {item._src === "deal" ? "DEAL" : item._src === "pipeline" ? "PIPE" : (item.lead_code || "—")}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {highlight(item.company_name || item.title || "")}
+                        </div>
+                        {(item.contact_name || item.email || item.phone) && (
+                          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {item.contact_name && <span>{highlight(item.contact_name)}</span>}
+                            {item.contact_name && (item.email || item.phone) && <span>·</span>}
+                            {item.email && <span>{item.email}</span>}
+                            {item.email && item.phone && <span>·</span>}
+                            {item.phone && <span>{item.phone}</span>}
                           </div>
-                          <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 700, padding: "2px 7px", borderRadius: 5, background: item._src === "deal" ? "rgba(251,146,60,0.1)" : "rgba(37,99,235,0.08)", color: item._src === "deal" ? "#EA580C" : "#2563EB", textTransform: "uppercase", marginTop: 2 }}>
-                            {item._src}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                        )}
+                      </div>
+                      <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 700, padding: "2px 7px", borderRadius: 5, background: item._src === "deal" ? "rgba(251,146,60,0.1)" : "rgba(37,99,235,0.08)", color: item._src === "deal" ? "#EA580C" : "#2563EB", textTransform: "uppercase", marginTop: 2 }}>
+                        {item._src}
+                      </span>
+                    </button>
+                  );
+                  return (
+                    <div style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 14, boxShadow: "0 20px 50px rgba(0,0,0,0.14)", zIndex: 9999, maxHeight: 340, overflowY: "auto" }}>
+                      {recentEntities.length > 0 && (
+                        <>
+                          <div style={{ padding: "8px 16px 4px", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 5 }}>
+                            <RotateCcw size={10} /> Recent Searches
+                          </div>
+                          {recentEntities.map((item, i) => <Row key={item.id} item={item} idx={i} />)}
+                        </>
+                      )}
+                      {mainList.length > 0 ? (
+                        mainList.map((item, i) => <Row key={item.id} item={item} idx={recentEntities.length + i} />)
+                      ) : recentEntities.length === 0 && (
+                        q ? (
+                          <div style={{ padding: "28px 16px", textAlign: "center" }}>
+                            <Search size={22} style={{ color: "var(--text-muted)", marginBottom: 8 }} />
+                            <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text)" }}>No results found</div>
+                            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 3 }}>No lead, pipeline, or deal matches "{leadCodeInput.trim()}"</div>
+                          </div>
+                        ) : (
+                          <div style={{ padding: "28px 16px", textAlign: "center" }}>
+                            <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No CRM records available yet</div>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {noPocError && (
                   <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 9, background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.2)", fontSize: 12.5, color: "#EF4444", fontWeight: 600 }}>
@@ -1083,27 +1253,31 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                       </div>
                       <ChevronDown size={16} style={{ color: "var(--text-muted)", flexShrink: 0, transform: meetingTypeDropOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
                     </button>
-                    {meetingTypeDropOpen && (
-                      <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 12, boxShadow: "0 16px 40px rgba(0,0,0,0.14)", zIndex: 9999, overflow: "hidden" }}>
-                        {MTG_TYPES.map((t) => (
-                          <button key={t.value} type="button"
-                            onMouseDown={(e) => { e.preventDefault(); setMode(t.value); setMeetingTypeDropOpen(false); }}
-                            style={{ width: "100%", display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", background: mode === t.value ? `${t.color}08` : "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
-                            onMouseEnter={(e) => { if (mode !== t.value) e.currentTarget.style.background = "var(--surface-2)"; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.background = mode === t.value ? `${t.color}08` : "none"; }}
-                          >
-                            <div style={{ width: 34, height: 34, borderRadius: 9, background: `${t.color}14`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                              <t.Icon size={17} style={{ color: t.color }} />
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>{t.label}</div>
-                              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{t.desc}</div>
-                            </div>
-                            {mode === t.value && <CheckCircle2 size={16} style={{ color: t.color, flexShrink: 0 }} />}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    <AnimatePresence>
+                      {meetingTypeDropOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.14 }}
+                          style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 12, boxShadow: "0 16px 40px rgba(0,0,0,0.14)", zIndex: 9999, overflow: "hidden" }}>
+                          {MTG_TYPES.map((t) => (
+                            <button key={t.value} type="button"
+                              onMouseDown={(e) => { e.preventDefault(); setMode(t.value); setMeetingTypeDropOpen(false); }}
+                              style={{ width: "100%", display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", background: mode === t.value ? `${t.color}08` : "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
+                              onMouseEnter={(e) => { if (mode !== t.value) e.currentTarget.style.background = "var(--surface-2)"; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = mode === t.value ? `${t.color}08` : "none"; }}
+                            >
+                              <div style={{ width: 34, height: 34, borderRadius: 9, background: `${t.color}14`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                                <t.Icon size={17} style={{ color: t.color }} />
+                              </div>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>{t.label}</div>
+                                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{t.desc}</div>
+                              </div>
+                              {mode === t.value && <CheckCircle2 size={16} style={{ color: t.color, flexShrink: 0 }} />}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 );
               })()}
@@ -1113,11 +1287,11 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                 <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
                   {(() => {
                     const PLATFORMS = [
-                      { value: "google_meet", label: "Google Meet",     desc: "Google Workspace video calls",    icon: "🟢", color: "#4285F4" },
-                      { value: "teams",       label: "Microsoft Teams", desc: "Microsoft 365 collaboration",     icon: "🔵", color: "#5558AF" },
-                      { value: "zoom",        label: "Zoom",            desc: "Zoom video conferencing",         icon: "🔵", color: "#2D8CFF" },
-                      { value: "jitsi",       label: "Jitsi (Free)",    desc: "Open-source, no account needed",  icon: "🟡", color: "#F5A623" },
-                      { value: "custom",      label: "Custom Link",     desc: "Any other meeting platform",      icon: "🔗", color: "#6366F1" },
+                      { value: "google_meet", label: "Google Meet",     desc: "Google Workspace video calls",    Icon: Video,   color: "#1A73E8" },
+                      { value: "teams",       label: "Microsoft Teams", desc: "Microsoft 365 collaboration",     Icon: Users,   color: "#5558AF" },
+                      { value: "zoom",        label: "Zoom",            desc: "Zoom video conferencing",         Icon: Video,   color: "#2D8CFF" },
+                      { value: "jitsi",       label: "Jitsi (Free)",    desc: "Open-source, no account needed",  Icon: Globe2,  color: "#F5A623" },
+                      { value: "custom",      label: "Custom Link",     desc: "Any other meeting platform",      Icon: Link2,   color: "#6366F1" },
                     ];
                     const selPlatform = PLATFORMS.find((p) => p.value === platform) || PLATFORMS[0];
                     return (
@@ -1128,32 +1302,40 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                           onClick={() => setPlatformDropOpen((v) => !v)}
                           style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, height: 50, padding: "0 14px 0 16px", borderRadius: 12, border: `1.5px solid ${platformDropOpen ? "rgba(37,99,235,0.4)" : "var(--border)"}`, background: "var(--surface)", cursor: "pointer", fontFamily: "inherit", boxShadow: platformDropOpen ? "0 0 0 3px rgba(37,99,235,0.08)" : "none", transition: "all 0.15s" }}
                         >
-                          <span style={{ fontSize: 20, lineHeight: 1 }}>{selPlatform.icon}</span>
+                          <div style={{ width: 32, height: 32, borderRadius: 8, background: `${selPlatform.color}14`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            <selPlatform.Icon size={16} style={{ color: selPlatform.color }} />
+                          </div>
                           <div style={{ flex: 1, textAlign: "left" }}>
                             <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>{selPlatform.label}</div>
                             <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{selPlatform.desc}</div>
                           </div>
                           <ChevronDown size={16} style={{ color: "var(--text-muted)", flexShrink: 0, transform: platformDropOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
                         </button>
-                        {platformDropOpen && (
-                          <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 12, boxShadow: "0 16px 40px rgba(0,0,0,0.14)", zIndex: 9999, overflow: "hidden" }}>
-                            {PLATFORMS.map((p) => (
-                              <button key={p.value} type="button"
-                                onMouseDown={(e) => { e.preventDefault(); setPlatform(p.value); setPlatformDropOpen(false); if (p.value === "jitsi" && !watchLink) handleGenerateJitsi(); }}
-                                style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: platform === p.value ? `${p.color}08` : "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
-                                onMouseEnter={(e) => { if (platform !== p.value) e.currentTarget.style.background = "var(--surface-2)"; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.background = platform === p.value ? `${p.color}08` : "none"; }}
-                              >
-                                <span style={{ fontSize: 18, lineHeight: 1 }}>{p.icon}</span>
-                                <div style={{ flex: 1 }}>
-                                  <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text)" }}>{p.label}</div>
-                                  <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{p.desc}</div>
-                                </div>
-                                {platform === p.value && <CheckCircle2 size={15} style={{ color: p.color, flexShrink: 0 }} />}
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                        <AnimatePresence>
+                          {platformDropOpen && (
+                            <motion.div
+                              initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.14 }}
+                              style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 12, boxShadow: "0 16px 40px rgba(0,0,0,0.14)", zIndex: 9999, overflow: "hidden" }}>
+                              {PLATFORMS.map((p) => (
+                                <button key={p.value} type="button"
+                                  onMouseDown={(e) => { e.preventDefault(); setPlatform(p.value); setPlatformDropOpen(false); if (p.value === "jitsi" && !watchLink) handleGenerateJitsi(); }}
+                                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: platform === p.value ? `${p.color}08` : "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
+                                  onMouseEnter={(e) => { if (platform !== p.value) e.currentTarget.style.background = "var(--surface-2)"; }}
+                                  onMouseLeave={(e) => { e.currentTarget.style.background = platform === p.value ? `${p.color}08` : "none"; }}
+                                >
+                                  <div style={{ width: 30, height: 30, borderRadius: 8, background: `${p.color}14`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                                    <p.Icon size={15} style={{ color: p.color }} />
+                                  </div>
+                                  <div style={{ flex: 1 }}>
+                                    <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text)" }}>{p.label}</div>
+                                    <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{p.desc}</div>
+                                  </div>
+                                  {platform === p.value && <CheckCircle2 size={15} style={{ color: p.color, flexShrink: 0 }} />}
+                                </button>
+                              ))}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
                       </div>
                     );
                   })()}
@@ -1184,13 +1366,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                     </label>
                     <input
                       {...register("meeting_link")}
-                      placeholder={
-                        platform === "google_meet" ? "Auto-generated if Google account connected"
-                        : platform === "teams" ? "Auto-generated if Microsoft account connected"
-                        : platform === "zoom" ? "https://zoom.us/j/your-meeting-id"
-                        : platform === "jitsi" ? "Generated automatically"
-                        : "https://meet.example.com/your-meeting"
-                      }
+                      placeholder="Meeting link will appear here or enter a custom URL"
                       style={{ width: "100%", boxSizing: "border-box", height: 50, padding: "0 14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none" }}
                     />
                   </div>
@@ -1253,24 +1429,30 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                   <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Auto-filled from CRM when linked · Editable</div>
                 </div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div className="mtg-grid-2">
                 <div style={{ gridColumn: "1 / -1" }}>
-                  <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Company Name *</label>
+                  <label style={{ display: "flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>
+                    Company Name <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: 99, background: "#EF4444", marginLeft: 5 }} />
+                  </label>
                   <input {...register("company_name", { required: "Company name is required" })} placeholder="e.g. Acme Corporation" style={{ width: "100%", boxSizing: "border-box", height: 50, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${errors.company_name ? "rgba(239,68,68,0.5)" : "var(--border)"}`, background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none" }} />
-                  {errors.company_name && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600 }}>{errors.company_name.message}</div>}
+                  {errors.company_name && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><AlertCircle size={11} />{errors.company_name.message}</div>}
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Contact Person *</label>
+                  <label style={{ display: "flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>
+                    Contact Person <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: 99, background: "#EF4444", marginLeft: 5 }} />
+                  </label>
                   <input {...register("customer_name", { required: "Contact name is required" })} placeholder="Full name" style={{ width: "100%", boxSizing: "border-box", height: 50, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${errors.customer_name ? "rgba(239,68,68,0.5)" : "var(--border)"}`, background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none" }} />
-                  {errors.customer_name && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600 }}>{errors.customer_name.message}</div>}
+                  {errors.customer_name && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><AlertCircle size={11} />{errors.customer_name.message}</div>}
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Contact Email *</label>
+                  <label style={{ display: "flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>
+                    Contact Person Email <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: 99, background: "#EF4444", marginLeft: 5 }} />
+                  </label>
                   <input {...register("customer_email", { required: "Email is required" })} type="email" placeholder="contact@company.com" style={{ width: "100%", boxSizing: "border-box", height: 50, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${errors.customer_email ? "rgba(239,68,68,0.5)" : "var(--border)"}`, background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none" }} />
-                  {errors.customer_email && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600 }}>{errors.customer_email.message}</div>}
+                  {errors.customer_email && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><AlertCircle size={11} />{errors.customer_email.message}</div>}
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Contact Phone</label>
+                  <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Contact Number</label>
                   <input {...register("customer_phone")} placeholder="+91 98765 43210" style={{ width: "100%", boxSizing: "border-box", height: 50, padding: "0 14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none" }} />
                 </div>
               </div>
@@ -1293,9 +1475,11 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                   <textarea {...register("agenda")} placeholder="What will be discussed? Key topics, goals, expected outcomes…" rows={4} style={{ width: "100%", boxSizing: "border-box", padding: "14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", resize: "vertical", lineHeight: 1.55 }} />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Meeting Title *</label>
+                  <label style={{ display: "flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>
+                    Meeting Title <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: 99, background: "#EF4444", marginLeft: 5 }} />
+                  </label>
                   <input {...register("title", { required: "Title is required" })} placeholder="e.g. Q3 Strategy Review — Acme Corp" style={{ width: "100%", boxSizing: "border-box", height: 50, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${errors.title ? "rgba(239,68,68,0.5)" : "var(--border)"}`, background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none" }} />
-                  {errors.title && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600 }}>{errors.title.message}</div>}
+                  {errors.title && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><AlertCircle size={11} />{errors.title.message}</div>}
                 </div>
                 <div>
                   <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Meeting Purpose</label>
@@ -1315,26 +1499,88 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                   <span style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text)" }}>All-day meeting</span>
                   <span style={{ fontSize: 12, color: "var(--text-muted)" }}>— no specific time slot</span>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                  <div>
-                    <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Meeting Date *</label>
-                    <input type="date" value={meetingDate} min={todayStr} onChange={(e) => setMeetingDate(e.target.value)} style={{ width: "100%", boxSizing: "border-box", height: 50, padding: "0 14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", cursor: "pointer" }} />
+                <div className="mtg-grid-2">
+                  {/* Meeting Date — premium calendar popover */}
+                  <div ref={dateDropRef} style={{ position: "relative" }}>
+                    <label style={{ display: "flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>
+                      Meeting Date <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: 99, background: "#EF4444", marginLeft: 5 }} />
+                    </label>
+                    <button type="button" onClick={() => setDateDropOpen((v) => !v)}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, height: 50, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${dateDropOpen ? "rgba(37,99,235,0.4)" : "var(--border)"}`, background: "var(--surface)", cursor: "pointer", fontFamily: "inherit", boxShadow: dateDropOpen ? "0 0 0 3px rgba(37,99,235,0.08)" : "none", transition: "all 0.15s" }}>
+                      <Calendar size={16} style={{ color: "#2563EB", flexShrink: 0 }} />
+                      <span style={{ flex: 1, textAlign: "left", fontSize: 15, fontWeight: meetingDate ? 600 : 400, color: meetingDate ? "var(--text)" : "var(--text-muted)" }}>
+                        {meetingDate ? new Date(`${meetingDate}T12:00:00`).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" }) : "Select date…"}
+                      </span>
+                      <ChevronDown size={15} style={{ color: "var(--text-muted)", flexShrink: 0, transform: dateDropOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                    </button>
+                    <AnimatePresence>
+                      {dateDropOpen && (
+                        <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.14 }}
+                          style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 14, boxShadow: "0 20px 50px rgba(0,0,0,0.16)", zIndex: 9999 }}>
+                          <MiniCalendar value={meetingDate} onSelect={(d) => { setMeetingDate(d); setDateDropOpen(false); }} />
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
-                  <div>
+
+                  {/* Duration — premium dropdown */}
+                  <div ref={durationDropRef} style={{ position: "relative" }}>
                     <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Duration</label>
-                    <select value={duration} onChange={(e) => setDuration(Number(e.target.value))} style={{ width: "100%", height: 50, padding: "0 14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
-                      {DURATIONS.map((d) => (<option key={d.value} value={d.value}>{d.label}</option>))}
-                    </select>
+                    <button type="button" onClick={() => setDurationDropOpen((v) => !v)}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, height: 50, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${durationDropOpen ? "rgba(37,99,235,0.4)" : "var(--border)"}`, background: "var(--surface)", cursor: "pointer", fontFamily: "inherit", boxShadow: durationDropOpen ? "0 0 0 3px rgba(37,99,235,0.08)" : "none", transition: "all 0.15s" }}>
+                      <Clock size={16} style={{ color: "#2563EB", flexShrink: 0 }} />
+                      <span style={{ flex: 1, textAlign: "left", fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{DURATIONS.find((d) => d.value === duration)?.label}</span>
+                      <ChevronDown size={15} style={{ color: "var(--text-muted)", flexShrink: 0, transform: durationDropOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                    </button>
+                    <AnimatePresence>
+                      {durationDropOpen && (
+                        <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.14 }}
+                          style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 12, boxShadow: "0 16px 40px rgba(0,0,0,0.14)", zIndex: 9999, maxHeight: 260, overflowY: "auto" }}>
+                          {DURATIONS.map((d) => (
+                            <button key={d.value} type="button" onMouseDown={(e) => { e.preventDefault(); setDuration(d.value); setDurationDropOpen(false); }}
+                              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", background: duration === d.value ? "rgba(37,99,235,0.06)" : "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontFamily: "inherit", fontSize: 14, fontWeight: 600, color: "var(--text)" }}
+                              onMouseEnter={(e) => { if (duration !== d.value) e.currentTarget.style.background = "var(--surface-2)"; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = duration === d.value ? "rgba(37,99,235,0.06)" : "none"; }}>
+                              {d.label}
+                              {duration === d.value && <CheckCircle2 size={15} style={{ color: "#2563EB" }} />}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 </div>
                 {!allDay && (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                    <div>
-                      <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Start Time *</label>
-                      <select value={meetingSlot} onChange={(e) => setMeetingSlot(e.target.value)} style={{ width: "100%", height: 50, padding: "0 14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
-                        <option value="">Select time…</option>
-                        {TIME_SLOTS.map((s) => (<option key={s.value} value={s.value}>{s.label}</option>))}
-                      </select>
+                  <div className="mtg-grid-2">
+                    {/* Start Time — premium dropdown */}
+                    <div ref={timeDropRef} style={{ position: "relative" }}>
+                      <label style={{ display: "flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>
+                        Start Time <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: 99, background: "#EF4444", marginLeft: 5 }} />
+                      </label>
+                      <button type="button" onClick={() => setTimeDropOpen((v) => !v)}
+                        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, height: 50, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${timeDropOpen ? "rgba(37,99,235,0.4)" : "var(--border)"}`, background: "var(--surface)", cursor: "pointer", fontFamily: "inherit", boxShadow: timeDropOpen ? "0 0 0 3px rgba(37,99,235,0.08)" : "none", transition: "all 0.15s" }}>
+                        <Clock size={16} style={{ color: "#2563EB", flexShrink: 0 }} />
+                        <span style={{ flex: 1, textAlign: "left", fontSize: 15, fontWeight: meetingSlot ? 600 : 400, color: meetingSlot ? "var(--text)" : "var(--text-muted)" }}>
+                          {TIME_SLOTS.find((s) => s.value === meetingSlot)?.label || "Select time…"}
+                        </span>
+                        <ChevronDown size={15} style={{ color: "var(--text-muted)", flexShrink: 0, transform: timeDropOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                      </button>
+                      <AnimatePresence>
+                        {timeDropOpen && (
+                          <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.14 }}
+                            style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 12, boxShadow: "0 16px 40px rgba(0,0,0,0.14)", zIndex: 9999, maxHeight: 280, overflowY: "auto" }}>
+                            {TIME_SLOTS.map((s) => (
+                              <button key={s.value} type="button" onMouseDown={(e) => { e.preventDefault(); setMeetingSlot(s.value); setTimeDropOpen(false); }}
+                                style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: meetingSlot === s.value ? "rgba(37,99,235,0.06)" : "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontFamily: "inherit", fontSize: 14, fontWeight: 600, color: "var(--text)" }}
+                                onMouseEnter={(e) => { if (meetingSlot !== s.value) e.currentTarget.style.background = "var(--surface-2)"; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = meetingSlot === s.value ? "rgba(37,99,235,0.06)" : "none"; }}>
+                                {s.label}
+                                {meetingSlot === s.value && <CheckCircle2 size={15} style={{ color: "#2563EB" }} />}
+                              </button>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </div>
                     <div>
                       <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>End Time (auto)</label>
@@ -1344,12 +1590,38 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                     </div>
                   </div>
                 )}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                  <div>
-                    <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Timezone</label>
-                    <select {...register("timezone")} style={{ width: "100%", height: 50, padding: "0 14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
-                      {TIMEZONES.map((tz) => (<option key={tz} value={tz}>{tz}</option>))}
-                    </select>
+                <div className="mtg-grid-2">
+                  {/* Timezone — searchable premium dropdown */}
+                  <div ref={timezoneDropRef} style={{ position: "relative" }}>
+                    <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Time Zone</label>
+                    <button type="button" onClick={() => setTimezoneDropOpen((v) => !v)}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, height: 50, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${timezoneDropOpen ? "rgba(37,99,235,0.4)" : "var(--border)"}`, background: "var(--surface)", cursor: "pointer", fontFamily: "inherit", boxShadow: timezoneDropOpen ? "0 0 0 3px rgba(37,99,235,0.08)" : "none", transition: "all 0.15s" }}>
+                      <Globe size={16} style={{ color: "#2563EB", flexShrink: 0 }} />
+                      <span style={{ flex: 1, textAlign: "left", fontSize: 15, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{watch("timezone")}</span>
+                      <ChevronDown size={15} style={{ color: "var(--text-muted)", flexShrink: 0, transform: timezoneDropOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                    </button>
+                    <AnimatePresence>
+                      {timezoneDropOpen && (
+                        <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.14 }}
+                          style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 12, boxShadow: "0 16px 40px rgba(0,0,0,0.14)", zIndex: 9999, overflow: "hidden" }}>
+                          <div style={{ padding: 10, borderBottom: "1px solid var(--border)" }}>
+                            <input autoFocus value={timezoneSearch} onChange={(e) => setTimezoneSearch(e.target.value)} placeholder="Search timezone…"
+                              style={{ width: "100%", boxSizing: "border-box", height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", fontSize: 13, color: "var(--text)", fontFamily: "inherit", outline: "none" }} />
+                          </div>
+                          <div style={{ maxHeight: 220, overflowY: "auto" }}>
+                            {TIMEZONES.filter((tz) => tz.toLowerCase().includes(timezoneSearch.trim().toLowerCase())).map((tz) => (
+                              <button key={tz} type="button" onMouseDown={(e) => { e.preventDefault(); setValue("timezone", tz); setTimezoneDropOpen(false); setTimezoneSearch(""); }}
+                                style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: watch("timezone") === tz ? "rgba(37,99,235,0.06)" : "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontFamily: "inherit", fontSize: 13.5, fontWeight: 600, color: "var(--text)" }}
+                                onMouseEnter={(e) => { if (watch("timezone") !== tz) e.currentTarget.style.background = "var(--surface-2)"; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = watch("timezone") === tz ? "rgba(37,99,235,0.06)" : "none"; }}>
+                                {tz}
+                                {watch("timezone") === tz && <CheckCircle2 size={14} style={{ color: "#2563EB" }} />}
+                              </button>
+                            ))}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                   <div>
                     <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Status</label>
@@ -1406,7 +1678,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                   <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Add team members and external contacts</div>
                 </div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div className="mtg-grid-2">
                 {/* Internal Team */}
                 <div style={{ background: "var(--surface-2)", borderRadius: 12, padding: 16, border: "1.5px solid var(--border)" }}>
                   <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text)", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
@@ -1475,7 +1747,45 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                     </div>
                   )}
                   <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>Add emails (comma-separated)</label>
-                  <textarea value={externalEmails} onChange={(e) => setExternalEmails(e.target.value)} placeholder="john@example.com, jane@company.com" rows={3} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface)", fontSize: 13, color: "var(--text)", fontFamily: "inherit", outline: "none", resize: "none" }} />
+                  <div ref={extDropRef} style={{ position: "relative" }}>
+                    <textarea
+                      value={externalEmails}
+                      onChange={(e) => { setExternalEmails(e.target.value); setExtDropOpen(true); }}
+                      onFocus={() => setExtDropOpen(true)}
+                      placeholder="john@example.com, jane@company.com"
+                      rows={3}
+                      style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface)", fontSize: 13, color: "var(--text)", fontFamily: "inherit", outline: "none", resize: "none" }}
+                    />
+                    {extDropOpen && (() => {
+                      const lastToken = externalEmails.split(",").pop().trim().toLowerCase();
+                      if (!lastToken) return null;
+                      const crmEmails = allCrmSources.map((x) => x.email).filter(Boolean);
+                      const teamEmailsList = teamMembers.map((x) => x.email).filter(Boolean);
+                      const suggestions = [...new Set([...crmEmails, ...teamEmailsList])]
+                        .filter((e) => e.toLowerCase().includes(lastToken) && !externalEmailsList.includes(e))
+                        .slice(0, 6);
+                      if (suggestions.length === 0) return null;
+                      return (
+                        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 10, boxShadow: "0 12px 32px rgba(0,0,0,0.12)", zIndex: 9999, overflow: "hidden" }}>
+                          {suggestions.map((email) => (
+                            <button key={email} type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                const parts = externalEmails.split(",").map((x) => x.trim()).filter(Boolean);
+                                parts.pop();
+                                setExternalEmails([...parts, email].join(", ") + ", ");
+                              }}
+                              style={{ width: "100%", display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", background: "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, color: "var(--text)" }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = "none")}>
+                              <Mail size={11} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                              {email}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1485,20 +1795,20 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
         </div>
 
         {/* ── STICKY FOOTER ── */}
-        <div style={{ flexShrink: 0, background: "var(--surface)", padding: "16px 28px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 10 }}>
+        <div style={{ flexShrink: 0, background: "var(--surface)", padding: "18px 32px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 10 }}>
           <button type="button" onClick={onClose}
-            style={{ height: 46, padding: "0 22px", borderRadius: 12, border: "1.5px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: 14, fontWeight: 600, color: "var(--text-muted)", fontFamily: "inherit" }}>
+            style={{ height: 48, padding: "0 24px", borderRadius: 12, border: "1.5px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: 15, fontWeight: 600, color: "var(--text-muted)", fontFamily: "inherit", transition: "all 0.15s" }}>
             Cancel
           </button>
           <button type="button" disabled={isSubmitting || oauthLoading}
             onClick={() => { handleSubmit((data) => { if (!meetingDate) { toast.error("Select a meeting date"); return; } if (!allDay && !meetingSlot) { toast.error("Select a meeting time slot"); return; } setShowReview(true); })(); }}
-            style={{ height: 46, padding: "0 28px", borderRadius: 12, border: "none", background: isSubmitting || oauthLoading ? "var(--border)" : "linear-gradient(135deg, #2563EB, #1D4ED8)", cursor: isSubmitting || oauthLoading ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 700, color: "#fff", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 4px 14px rgba(37,99,235,0.3)", transition: "all 0.15s" }}>
+            style={{ height: 48, padding: "0 32px", borderRadius: 12, border: "none", background: isSubmitting || oauthLoading ? "var(--border)" : "linear-gradient(135deg, #2563EB, #1D4ED8)", cursor: isSubmitting || oauthLoading ? "not-allowed" : "pointer", fontSize: 15, fontWeight: 700, color: "#fff", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 4px 14px rgba(37,99,235,0.3)", transition: "all 0.15s" }}>
             {isSubmitting || oauthLoading ? (
               <><div style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: 8, animation: "spin 0.8s linear infinite" }} /> Processing…</>
             ) : meeting ? (
               <><CheckCircle2 size={16} /> Save Changes</>
             ) : (
-              <><CalendarCheck size={16} /> Review &amp; Schedule</>
+              <>Review <ArrowRight size={16} /></>
             )}
           </button>
         </div>
@@ -1534,20 +1844,27 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                 )}
                 <div style={{ background: "var(--surface)", borderRadius: 12, padding: 18, border: "1px solid var(--border)" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 14 }}>Meeting Details</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                  <div className="mtg-grid-2">
                     {[
                       { label: "Title",    value: watchedTitle   },
                       { label: "Company",  value: watchedCompany },
+                      { label: "Platform", value: mode === "online" ? PLATFORM_LABELS[platform] : "In-Person" },
+                      { label: "Duration", value: DURATIONS.find((d) => d.value === duration)?.label || `${duration} min` },
                       { label: "Date",     value: meetingDate ? new Date(`${meetingDate}T12:00:00`).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" }) : "—" },
                       { label: "Time",     value: meetingSlot ? TIME_SLOTS.find((s) => s.value === meetingSlot)?.label || meetingSlot : allDay ? "All Day" : "—" },
-                      { label: "Duration", value: DURATIONS.find((d) => d.value === duration)?.label || `${duration} min` },
-                      { label: "Mode",     value: mode === "online" ? `Virtual — ${platform}` : "In-Person" },
+                      { label: "Timezone", value: watch("timezone") },
                     ].map(({ label, value }) => (
                       <div key={label}>
                         <div style={{ fontSize: 11.5, color: "var(--text-muted)", fontWeight: 600, marginBottom: 2 }}>{label}</div>
                         <div style={{ fontSize: 13.5, color: "var(--text)", fontWeight: 700 }}>{value || "—"}</div>
                       </div>
                     ))}
+                    {watchedAgenda && (
+                      <div style={{ gridColumn: "1 / -1" }}>
+                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", fontWeight: 600, marginBottom: 2 }}>Agenda</div>
+                        <div style={{ fontSize: 13.5, color: "var(--text)", fontWeight: 600, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{watchedAgenda}</div>
+                      </div>
+                    )}
                     {mode === "online" && watchedLink && (
                       <div style={{ gridColumn: "1 / -1" }}>
                         <div style={{ fontSize: 11.5, color: "var(--text-muted)", fontWeight: 600, marginBottom: 2 }}>Meeting Link</div>
@@ -1574,7 +1891,12 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                           {attendeeIds.map((id) => {
                             const tm = teamMembers.find((x) => x.id === id);
                             if (!tm) return null;
-                            return (<div key={id} style={{ padding: "3px 10px", borderRadius: 99, background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)", fontSize: 12.5, fontWeight: 600, color: "#8B5CF6" }}>{tm.name || tm.email}</div>);
+                            return (
+                              <div key={id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 10px 3px 4px", borderRadius: 99, background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)" }}>
+                                <div style={{ width: 18, height: 18, borderRadius: 9, background: "#8B5CF6", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: "#fff", flexShrink: 0 }}>{(tm.name || tm.email || "?")[0].toUpperCase()}</div>
+                                <span style={{ fontSize: 12.5, fontWeight: 600, color: "#8B5CF6" }}>{tm.name || tm.email}</span>
+                              </div>
+                            );
                           })}
                         </div>
                       )}
@@ -1583,21 +1905,26 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                       <div>
                         <div style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600, marginBottom: 6 }}>External Invitees ({externalEmailsList.length})</div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                          {externalEmailsList.map((email) => (<div key={email} style={{ padding: "3px 10px", borderRadius: 99, background: "rgba(37,99,235,0.1)", border: "1px solid rgba(37,99,235,0.2)", fontSize: 12.5, fontWeight: 600, color: "#2563EB" }}>{email}</div>))}
+                          {externalEmailsList.map((email) => (
+                            <div key={email} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 10px 3px 4px", borderRadius: 99, background: "rgba(37,99,235,0.1)", border: "1px solid rgba(37,99,235,0.2)" }}>
+                              <div style={{ width: 18, height: 18, borderRadius: 9, background: "#2563EB", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: "#fff", flexShrink: 0 }}>{email[0].toUpperCase()}</div>
+                              <span style={{ fontSize: 12.5, fontWeight: 600, color: "#2563EB" }}>{email}</span>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
                   </div>
                 </div>
               </div>
-              <div style={{ flexShrink: 0, background: "var(--surface)", padding: "16px 28px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ flexShrink: 0, background: "var(--surface)", padding: "18px 32px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <button type="button" onClick={() => setShowReview(false)}
-                  style={{ height: 46, padding: "0 22px", borderRadius: 12, border: "1.5px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: 14, fontWeight: 600, color: "var(--text-muted)", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7 }}>
-                  <ChevronLeft size={16} /> Back &amp; Edit
+                  style={{ height: 48, padding: "0 24px", borderRadius: 12, border: "1.5px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: 15, fontWeight: 600, color: "var(--text-muted)", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7 }}>
+                  <ChevronLeft size={16} /> Back
                 </button>
                 <button type="button" disabled={isSubmitting || oauthLoading}
                   onClick={() => handleSubmit(handleFormSubmit)()}
-                  style={{ height: 46, padding: "0 28px", borderRadius: 12, border: "none", background: isSubmitting || oauthLoading ? "var(--border)" : "linear-gradient(135deg, #2563EB, #1D4ED8)", cursor: isSubmitting || oauthLoading ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 700, color: "#fff", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 4px 14px rgba(37,99,235,0.3)" }}>
+                  style={{ height: 48, padding: "0 32px", borderRadius: 12, border: "none", background: isSubmitting || oauthLoading ? "var(--border)" : "linear-gradient(135deg, #2563EB, #1D4ED8)", cursor: isSubmitting || oauthLoading ? "not-allowed" : "pointer", fontSize: 15, fontWeight: 700, color: "#fff", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 4px 14px rgba(37,99,235,0.3)" }}>
                   {isSubmitting || oauthLoading ? (
                     <><div style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: 8, animation: "spin 0.8s linear infinite" }} /> Processing…</>
                   ) : (
