@@ -209,17 +209,18 @@ router.delete("/:id", authenticate, async (req, res) => {
 
   // Non-blocking audit log — fails silently if table doesn't exist yet
   supabase.from("activity_deletion_logs").insert({
-    activity_id:   existing.id,
-    activity_type: existing.type || null,
-    activity_title: existing.title || null,
-    related_type:  existing.related_type || null,
-    related_id:    existing.related_id   || null,
-    lead_id:       existing.lead_id      || null,
-    deal_id:       existing.deal_id      || null,
-    deleted_by:    deleterId,
-    deleter_name:  deleterName || null,
-    deleter_role:  role,
-    deleted_at:    new Date().toISOString(),
+    activity_id:      existing.id,
+    activity_type:    existing.type || null,
+    activity_title:   existing.title || null,
+    related_type:     existing.related_type || null,
+    related_id:       existing.related_id   || null,
+    lead_id:          existing.lead_id      || null,
+    deal_id:          existing.deal_id      || null,
+    original_creator: existing.created_by   || null,
+    deleted_by:       deleterId,
+    deleter_name:     deleterName || null,
+    deleter_role:     role,
+    deleted_at:       new Date().toISOString(),
   }).then(() => {});
 
   res.json({ success: true });

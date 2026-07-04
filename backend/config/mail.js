@@ -609,15 +609,14 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
      MAIN EMAIL CARD  (max 680px, white, 20px radius)
 ═══════════════════════════════════════════════════════════════════════ -->
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="max-width:680px;width:100%;background:#FFFFFF;border-radius:20px;border:1px solid #E5E7EB;box-shadow:0 12px 40px rgba(15,23,42,0.08);">
-<tr><td style="padding:40px;">
+<tr><td style="padding:40px 40px 28px;">
 
   <!-- ── HEADER ROW ──────────────────────────────────────────────────────── -->
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;">
   <tr valign="middle">
-    <td><img src="${LOGO}" alt="Ccentrik" height="44" style="display:block;border:0;max-width:170px;height:44px;" /></td>
+    <td><img src="${LOGO}" alt="Ccentrik" height="54" style="display:block;border:0;max-width:210px;height:54px;" /></td>
     <td align="right">
       <div style="font-size:18px;font-weight:600;color:#0F172A;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;line-height:1.2;">Meeting Invitation</div>
-      <div style="font-size:13px;font-weight:500;color:#64748B;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;margin-top:4px;">Invitation</div>
     </td>
   </tr>
   </table>
@@ -629,10 +628,10 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
 
     <!-- Left: Greeting block -->
     <td style="vertical-align:top;">
-      <h1 style="margin:0 0 12px;font-size:30px;font-weight:700;color:#111827;line-height:1.2;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Hi ${customerName || "there"},</h1>
+      <h1 style="margin:0 0 12px;font-size:30px;font-weight:700;color:#111827;line-height:1.2;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${customerName ? `Hi ${customerName.replace(/\w\S*/g, t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase())},` : "Hi,"}</h1>
       <p style="margin:0 0 20px;font-size:20px;font-weight:500;color:#475569;line-height:1.6;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">You are invited to a meeting.</p>
       <p style="margin:0;font-size:17px;font-weight:500;color:#334155;line-height:1.65;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">
-        <strong style="font-weight:700;color:#0F172A;">${hostName || "Ccentrik Team"}</strong>${companyName ? ` from <strong style="font-weight:700;color:#2563EB;">${companyName}</strong>` : ""} has invited you to a meeting.
+        <strong style="font-weight:700;color:#0F172A;">${hostName || "Ccentrik Team"}</strong> from <strong style="font-weight:700;color:#2563EB;">Ccentrik</strong> has invited you to a meeting.
       </p>
       ${purposeLabel ? `<p style="margin:18px 0 0;"><span style="display:inline-block;background:#EEF6FF;border:1px solid #BFDBFE;border-radius:100px;font-size:13px;font-weight:600;color:#2563EB;padding:6px 16px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${purposeLabel}</span></p>` : ""}
     </td>
@@ -651,8 +650,8 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
         </td></tr>
         <tr><td style="padding:0 18px;"><div style="height:1px;background:#E5E7EB;font-size:0;line-height:0;">&zwnj;</div></td></tr>
         <tr><td align="center" style="padding:12px 12px 16px;">
-          <div style="font-size:15px;font-weight:700;color:#111827;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${timeStr}</div>
-          <div style="font-size:12px;font-weight:500;color:#94A3B8;margin-top:4px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">IST</div>
+          <div style="font-size:12px;font-weight:700;color:#111827;line-height:1.4;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${timeStr}${endTimeStr ? " – " + endTimeStr : ""}</div>
+          <div style="font-size:11px;font-weight:500;color:#94A3B8;margin-top:4px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">IST</div>
         </td></tr>
       </table>
     </td>
@@ -667,17 +666,32 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F8FAFC;border-radius:18px;border:1px solid #E2E8F0;margin-bottom:36px;">
   <tr><td style="padding:28px;">
 
-    <!-- Row 1: Meeting Title | Organized By -->
+    <!-- Row 1: Agenda (always shown, centered) -->
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 24px;"><tr valign="middle">
+      <td style="padding-right:10px;line-height:0;vertical-align:middle;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M8 4H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-2"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="16" y2="15"/></svg></td>
+      <td style="font-size:15px;font-weight:700;color:#111827;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Agenda</td>
+    </tr></table>
+    <div style="font-size:16px;font-weight:500;color:#334155;line-height:1.7;margin-bottom:24px;text-align:center;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${description ? description.replace(/\n/g, "<br/>") : `<span style="color:#94A3B8;font-style:italic;">Not Provided</span>`}</div>
+
+    <!-- Row divider -->
+    <div style="height:1px;background:#E5E7EB;margin-bottom:24px;font-size:0;line-height:0;">&zwnj;</div>
+
+    <!-- Row 2: Meeting Title | Organized By -->
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
     <tr valign="top">
       <td width="50%" style="padding-right:20px;padding-bottom:24px;vertical-align:top;">
-        <div style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Meeting Title</div>
-        <div style="font-size:18px;font-weight:700;color:#111827;line-height:1.35;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${title}</div>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:10px;"><tr valign="middle">
+          <td style="padding-right:10px;line-height:0;vertical-align:middle;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><circle cx="12" cy="15.5" r="1.6" fill="#2563EB" stroke="none"/></svg></td>
+          <td style="font-size:15px;font-weight:700;color:#111827;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Meeting Title</td>
+        </tr></table>
+        <div style="font-size:16px;font-weight:600;color:#111827;line-height:1.4;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${title}</div>
       </td>
-      <td width="50%" style="padding-bottom:24px;vertical-align:top;">
-        <div style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Organized By</div>
-        <div style="font-size:18px;font-weight:700;color:#111827;line-height:1.35;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${hostName || "Ccentrik Team"}</div>
-        ${hostEmail ? `<div style="font-size:13px;font-weight:400;color:#64748B;margin-top:5px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${hostEmail}</div>` : ""}
+      <td width="50%" style="padding-bottom:24px;vertical-align:top;text-align:right;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 10px auto;"><tr valign="middle">
+          <td style="padding-right:10px;line-height:0;vertical-align:middle;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></td>
+          <td style="font-size:15px;font-weight:700;color:#111827;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Organizer</td>
+        </tr></table>
+        <div style="font-size:16px;font-weight:600;color:#111827;line-height:1.4;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${hostName || "Ccentrik Team"}${hostEmail ? ` <span style="font-size:14px;font-weight:400;color:#64748B;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">(${hostEmail})</span>` : ""}</div>
       </td>
     </tr>
     </table>
@@ -685,53 +699,49 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
     <!-- Row divider -->
     <div style="height:1px;background:#E5E7EB;margin-bottom:24px;font-size:0;line-height:0;">&zwnj;</div>
 
-    <!-- Row 2: Date & Time | Meeting Mode -->
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-    <tr valign="top">
-      <td width="50%" style="padding-right:20px;padding-bottom:24px;vertical-align:top;">
-        <div style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Date &amp; Time</div>
-        <div style="font-size:18px;font-weight:700;color:#111827;line-height:1.35;margin-bottom:5px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${dayMonthStr}</div>
-        <div style="font-size:14px;font-weight:500;color:#475569;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${timeStr}${endTimeStr ? " &ndash; " + endTimeStr : ""} IST${durationStr ? " &middot; " + durationStr : ""}</div>
-      </td>
-      <td width="50%" style="padding-bottom:24px;vertical-align:top;">
-        <div style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Meeting Mode</div>
+    <!-- Row 3: Meeting Mode — full width, centered -->
+    <div style="text-align:center;margin-bottom:24px;">
+      <div style="font-size:15px;font-weight:700;color:#111827;margin-bottom:10px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Meeting Mode</div>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto;">
+      <tr valign="middle">
         ${isGoogleMeet
-          ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr valign="middle"><td style="padding-right:8px;line-height:0;vertical-align:middle;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3.5 7A1.5 1.5 0 015 5.5h10A1.5 1.5 0 0116.5 7v6.25l5-3.5v8.5l-5-3.5V17A1.5 1.5 0 0115 18.5H5A1.5 1.5 0 013.5 17V7z" fill="#00897B"/></svg></td><td><span style="display:inline-block;background:#E0F7FA;border-radius:999px;padding:7px 16px;font-size:13px;font-weight:600;color:#00695C;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Google Meet</span></td></tr></table>`
+          ? `<td style="padding-right:8px;line-height:0;vertical-align:middle;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3.5 7A1.5 1.5 0 015 5.5h10A1.5 1.5 0 0116.5 7v6.25l5-3.5v8.5l-5-3.5V17A1.5 1.5 0 0115 18.5H5A1.5 1.5 0 013.5 17V7z" fill="#00897B"/></svg></td><td><span style="display:inline-block;background:#E0F7FA;border-radius:999px;padding:7px 16px;font-size:13px;font-weight:600;color:#00695C;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Google Meet</span></td>`
           : isTeams
-          ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr valign="middle"><td style="padding-right:8px;line-height:0;vertical-align:middle;"><svg width="22" height="22" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect width="24" height="24" rx="5" fill="#6264A7"/><text x="12" y="17.5" font-family="Segoe UI,Arial,sans-serif" font-size="14" font-weight="700" fill="#FFFFFF" text-anchor="middle">T</text></svg></td><td><span style="display:inline-block;background:#EDE9FE;border-radius:999px;padding:7px 16px;font-size:13px;font-weight:600;color:#5B21B6;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Microsoft Teams</span></td></tr></table>`
+          ? `<td style="padding-right:8px;line-height:0;vertical-align:middle;"><svg width="22" height="22" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect width="24" height="24" rx="5" fill="#6264A7"/><text x="12" y="17.5" font-family="Segoe UI,Arial,sans-serif" font-size="14" font-weight="700" fill="#FFFFFF" text-anchor="middle">T</text></svg></td><td><span style="display:inline-block;background:#EDE9FE;border-radius:999px;padding:7px 16px;font-size:13px;font-weight:600;color:#5B21B6;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Microsoft Teams</span></td>`
           : isInPerson
-          ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr valign="middle"><td style="padding-right:8px;line-height:0;vertical-align:middle;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg></td><td><span style="display:inline-block;background:#F0FDF4;border-radius:999px;padding:7px 16px;font-size:13px;font-weight:600;color:#15803D;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">In-Person Meeting</span></td></tr></table>`
-          : `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr valign="middle"><td style="padding-right:8px;line-height:0;vertical-align:middle;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg></td><td><span style="display:inline-block;background:#EEF6FF;border-radius:999px;padding:7px 16px;font-size:13px;font-weight:600;color:#2563EB;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Virtual Meeting</span></td></tr></table>`}
-      </td>
-    </tr>
-    </table>
+          ? `<td style="padding-right:8px;line-height:0;vertical-align:middle;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg></td><td><span style="display:inline-block;background:#F0FDF4;border-radius:999px;padding:7px 16px;font-size:13px;font-weight:600;color:#15803D;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">In-Person Meeting</span></td>`
+          : `<td style="padding-right:8px;line-height:0;vertical-align:middle;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg></td><td><span style="display:inline-block;background:#EEF6FF;border-radius:999px;padding:7px 16px;font-size:13px;font-weight:600;color:#2563EB;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Virtual Meeting</span></td>`}
+      </tr>
+      </table>
+    </div>
 
     <!-- Row divider -->
     <div style="height:1px;background:#E5E7EB;margin-bottom:24px;font-size:0;line-height:0;">&zwnj;</div>
 
-    <!-- Row 3: Meeting Link / Location — full width -->
-    <div style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${isInPerson && location ? "Location" : "Meeting Link"}</div>
+    <!-- Row 4: Duration — full width, centered -->
+    ${durationStr ? `<div style="text-align:center;margin-bottom:24px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 10px;"><tr valign="middle">
+        <td style="padding-right:10px;line-height:0;vertical-align:middle;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg></td>
+        <td style="font-size:15px;font-weight:700;color:#111827;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Duration</td>
+      </tr></table>
+      <div style="font-size:16px;font-weight:600;color:#111827;line-height:1.4;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${durationStr}</div>
+    </div>
+    <div style="height:1px;background:#E5E7EB;margin-bottom:24px;font-size:0;line-height:0;">&zwnj;</div>` : ""}
+
+    <!-- Row 5: Meeting Link / Location — full width, centered -->
+    <div style="text-align:center;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 10px;"><tr valign="middle">
+      <td style="padding-right:10px;line-height:0;vertical-align:middle;">${isInPerson && location
+        ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>`
+        : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M10 13a5 5 0 007.07 0l1.93-1.93a5 5 0 00-7.07-7.07L10.5 5.5"/><path d="M14 11a5 5 0 00-7.07 0L5 12.93a5 5 0 007.07 7.07L13.5 18.5"/></svg>`}</td>
+      <td style="font-size:15px;font-weight:700;color:#111827;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${isInPerson && location ? "Location" : "Meeting Link"}</td>
+    </tr></table>
     ${isInPerson && location
-      ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr valign="middle"><td width="28" style="padding-right:10px;line-height:0;vertical-align:middle;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg></td><td><span style="font-size:16px;font-weight:600;color:#111827;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${location}</span>&nbsp;&nbsp;<a href="${mapsUrl}" target="_blank" style="font-size:13px;font-weight:600;color:#2563EB;text-decoration:none;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">View on Maps &rarr;</a></td></tr></table>`
+      ? `<div><span style="font-size:16px;font-weight:600;color:#111827;line-height:1.4;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${location}</span>&nbsp;&nbsp;<a href="${mapsUrl}" target="_blank" style="font-size:13px;font-weight:600;color:#2563EB;text-decoration:none;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">View on Maps &rarr;</a></div>`
       : meetingLink
-      ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr valign="middle"><td width="28" style="padding-right:10px;line-height:0;vertical-align:middle;">${isGoogleMeet ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3.5 7A1.5 1.5 0 015 5.5h10A1.5 1.5 0 0116.5 7v6.25l5-3.5v8.5l-5-3.5V17A1.5 1.5 0 0115 18.5H5A1.5 1.5 0 013.5 17V7z" fill="#00897B"/></svg>` : isTeams ? `<svg width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect width="24" height="24" rx="5" fill="#6264A7"/><text x="12" y="17.5" font-family="Arial" font-size="14" font-weight="700" fill="white" text-anchor="middle">T</text></svg>` : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>`}</td><td><a href="${meetingLink}" target="_blank" style="font-size:15px;font-weight:600;color:#2563EB;text-decoration:none;word-break:break-all;line-height:1.5;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${meetingLink}</a></td></tr></table>`
+      ? `<a href="${meetingLink}" target="_blank" style="font-size:15px;font-weight:600;color:#2563EB;text-decoration:none;word-break:break-all;line-height:1.5;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${meetingLink}</a>`
       : `<div style="font-size:15px;color:#94A3B8;font-style:italic;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">To be confirmed</div>`}
-
-    ${description ? `<div style="height:1px;background:#E5E7EB;margin:24px 0;font-size:0;line-height:0;">&zwnj;</div>
-    <div style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Agenda</div>
-    <div style="font-size:15px;font-weight:400;color:#334155;line-height:1.75;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${description.replace(/\n/g, "<br/>")}</div>` : ""}
-
-    ${companyName || durationStr ? `<div style="height:1px;background:#E5E7EB;margin:24px 0;font-size:0;line-height:0;">&zwnj;</div>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr valign="top">
-      ${companyName ? `<td width="50%" style="padding-right:20px;vertical-align:top;">
-        <div style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Company</div>
-        <div style="font-size:16px;font-weight:600;color:#111827;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${companyName}</div>
-      </td>` : "<td></td>"}
-      ${durationStr ? `<td width="50%" style="vertical-align:top;">
-        <div style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Duration</div>
-        <div style="font-size:16px;font-weight:600;color:#111827;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${durationStr}</div>
-      </td>` : "<td></td>"}
-    </tr></table>` : ""}
+    </div>
 
   </td></tr>
   </table>
@@ -740,7 +750,7 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
   ${meetingLink ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:16px;">
   <tr><td align="center">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="border-radius:14px;background:linear-gradient(135deg,#2563EB 0%,#1D4ED8 100%);box-shadow:0 12px 30px rgba(37,99,235,0.35);">
-      <a href="${meetingLink}" target="_blank" style="display:block;width:220px;height:52px;line-height:52px;text-align:center;color:#FFFFFF;font-size:17px;font-weight:700;text-decoration:none;border-radius:14px;letter-spacing:0.2px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">Join Meeting</a>
+      <a href="${meetingLink}" target="_blank" style="display:block;width:240px;height:52px;line-height:52px;text-align:center;color:#FFFFFF;font-size:17px;font-weight:700;text-decoration:none;border-radius:14px;letter-spacing:0.2px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:8px;margin-top:-2px;" xmlns="http://www.w3.org/2000/svg"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>Join Meeting</a>
     </td></tr></table>
   </td></tr>
   </table>
@@ -757,73 +767,72 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
   <!-- ── ADD TO CALENDAR ───────────────────────────────────────────────── -->
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr valign="top">
-    <td style="padding:0 5px 0 0;">
-      <a href="${gcalUrl}" target="_blank" style="display:block;text-align:center;background:#FFFFFF;border:1.5px solid #E5E7EB;color:#374151;font-size:13px;font-weight:600;padding:12px 8px;border-radius:10px;text-decoration:none;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#374151" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:5px;" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Google Calendar
+    <td width="33%" style="padding:0 5px 0 0;">
+      <a href="${gcalUrl}" target="_blank" style="display:block;text-align:center;background:#FFFFFF;border:1.5px solid #E5E7EB;color:#374151;font-size:13px;font-weight:600;padding:12px 8px;border-radius:10px;text-decoration:none;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;white-space:nowrap;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1A73E8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:5px;" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="15" x2="10" y2="15"/><line x1="14" y1="15" x2="16" y2="15"/></svg>Google Calendar
       </a>
     </td>
-    <td style="padding:0 2.5px;">
-      <a href="${outlookCalUrl}" target="_blank" style="display:block;text-align:center;background:#FFFFFF;border:1.5px solid #E5E7EB;color:#374151;font-size:13px;font-weight:600;padding:12px 8px;border-radius:10px;text-decoration:none;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#374151" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:5px;" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Outlook
+    <td width="33%" style="padding:0 2.5px;">
+      <a href="${outlookCalUrl}" target="_blank" style="display:block;text-align:center;background:#FFFFFF;border:1.5px solid #E5E7EB;color:#374151;font-size:13px;font-weight:600;padding:12px 8px;border-radius:10px;text-decoration:none;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;white-space:nowrap;">
+        <svg width="14" height="14" viewBox="0 0 24 24" style="vertical-align:middle;margin-right:5px;" xmlns="http://www.w3.org/2000/svg"><rect width="24" height="24" rx="5" fill="#0078D4"/><text x="12" y="17.5" font-family="Segoe UI,Arial,sans-serif" font-size="14" font-weight="700" fill="#FFFFFF" text-anchor="middle">O</text></svg>Outlook
       </a>
     </td>
-    <td style="padding:0 0 0 5px;">
-      <a href="${appleCalUrl || yahooCalUrl}" target="_blank" style="display:block;text-align:center;background:#FFFFFF;border:1.5px solid #E5E7EB;color:#374151;font-size:13px;font-weight:600;padding:12px 8px;border-radius:10px;text-decoration:none;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#374151" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:5px;" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>${appleCalUrl ? "Apple Calendar" : "Yahoo Calendar"}
+    <td width="34%" style="padding:0 0 0 5px;">
+      <a href="${appleCalUrl || yahooCalUrl}" target="_blank" style="display:block;text-align:center;background:#FFFFFF;border:1.5px solid #E5E7EB;color:#374151;font-size:13px;font-weight:600;padding:12px 8px;border-radius:10px;text-decoration:none;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;white-space:nowrap;">
+        ${appleCalUrl
+          ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="#1D1D1F" style="vertical-align:middle;margin-right:5px;" xmlns="http://www.w3.org/2000/svg"><path d="M16.365 1.43c0 1.14-.393 2.077-1.176 2.816-.943.878-2.006 1.416-3.147 1.34-.056-1.156.4-2.253 1.19-3.037.826-.812 2.086-1.406 3.133-1.51.03.13.045.26.045.393zm4.396 15.65c-.363.845-.79 1.628-1.29 2.343-.678.98-1.235 1.658-1.658 2.03-.68.635-1.406.96-2.185.976-.556.017-1.226-.153-2.006-.508-.782-.36-1.5-.535-2.155-.535-.686 0-1.428.176-2.234.535-.807.355-1.454.542-1.947.56-.75.033-1.484-.302-2.207-.996-.463-.416-1.05-1.12-1.766-2.115-.77-1.06-1.404-2.293-1.9-3.7-.532-1.512-.798-2.98-.798-4.406 0-1.633.36-3.037 1.078-4.207.563-.94 1.31-1.68 2.244-2.22.933-.54 1.94-.816 3.02-.83.68-.017 1.485.238 2.415.762.93.526 1.53.79 1.795.79.198 0 .87-.31 2.01-.926 1.075-.573 1.982-.81 2.72-.71 2.01.16 3.523.955 4.535 2.386-1.798 1.09-2.687 2.615-2.674 4.568.014 1.523.556 2.792 1.628 3.796.485.462 1.026.82 1.626 1.075-.13.376-.267.735-.412 1.076z"/></svg>Apple Calendar`
+          : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6001D2" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:5px;" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Yahoo Calendar`}
       </a>
     </td>
   </tr>
   </table>
 
+  <!-- ── DIVIDER BEFORE FOOTER ──────────────────────────────────────────── -->
+  <div style="height:1px;background:#E5E7EB;margin-top:8px;font-size:0;line-height:0;">&zwnj;</div>
+
 </td></tr>
-</table>
-<!-- END MAIN EMAIL CARD -->
 
-<!-- ═══════════════════════════════════════════════════════════════════════
-     DARK FOOTER CARD
-═══════════════════════════════════════════════════════════════════════ -->
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="max-width:680px;width:100%;background:#0F172A;border-radius:18px;margin-top:40px;">
-<tr><td style="padding:28px 36px;">
+<!-- ── INTEGRATED FOOTER (same card, light-blue continuation) ──────────── -->
+<tr><td style="background:#F8FBFF;padding:24px 40px 28px;border-radius:0 0 20px 20px;">
 
-  <!-- Footer top row -->
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:22px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr valign="top">
     <td style="vertical-align:top;">
-      <div style="font-size:20px;font-weight:800;color:#F8FAFC;letter-spacing:-0.5px;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;margin-bottom:8px;">CCENTRIK</div>
-      <div style="font-size:13px;color:#CBD5E1;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;line-height:1.6;">Empowering Modern Sales Teams</div>
+      <img src="${LOGO}" alt="Ccentrik" height="22" style="display:block;border:0;max-width:150px;height:22px;margin-bottom:8px;" />
+      <div style="font-size:12.5px;color:#64748B;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;line-height:1.6;">Empowering Modern Sales Teams</div>
     </td>
     <td align="right" style="vertical-align:top;">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:8px;margin-left:auto;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 8px auto;">
       <tr valign="middle">
         <td style="padding-right:7px;line-height:0;">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
         </td>
-        <td><a href="mailto:support@ccentrik.com" style="font-size:13px;color:#94A3B8;text-decoration:none;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">support@ccentrik.com</a></td>
+        <td><a href="mailto:support@ccentrik.com" style="font-size:12.5px;color:#64748B;text-decoration:none;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">support@ccentrik.com</a></td>
       </tr>
       </table>
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-left:auto;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 8px auto;">
       <tr valign="middle">
         <td style="padding-right:7px;line-height:0;">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg>
         </td>
-        <td><a href="https://www.ccentrik.com" target="_blank" style="font-size:13px;color:#94A3B8;text-decoration:none;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">www.ccentrik.com</a></td>
+        <td><a href="https://www.ccentrik.com" target="_blank" style="font-size:12.5px;color:#64748B;text-decoration:none;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">www.ccentrik.com</a></td>
+      </tr>
+      </table>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 0 auto;">
+      <tr valign="middle">
+        <td style="padding-right:7px;line-height:0;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10"/><path d="M14.83 9a3.5 3.5 0 100 6"/></svg>
+        </td>
+        <td><span style="font-size:12.5px;color:#94A3B8;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">${new Date().getFullYear()} C-Centrik Technologies. All Rights Reserved.</span></td>
       </tr>
       </table>
     </td>
   </tr>
   </table>
 
-  <!-- Footer divider -->
-  <div style="height:1px;background:#334155;margin-bottom:20px;font-size:0;line-height:0;">&zwnj;</div>
-
-  <!-- Copyright -->
-  <div style="text-align:center;font-size:13px;color:#94A3B8;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;">
-    &copy; ${new Date().getFullYear()} C-Centric Technologies. All Rights Reserved.
-  </div>
-
 </td></tr>
 </table>
-<!-- END FOOTER -->
+<!-- END UNIFIED CARD -->
 
 </td></tr>
 </table>

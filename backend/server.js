@@ -109,8 +109,9 @@ app.use("/api/ai/documents", require("./routes/aiDocuments"));
 app.use("/api/meetings",   require("./routes/meetings"));
 app.use("/api/oauth",      require("./routes/oauth"));
 app.use("/api/targets",    require("./routes/targets"));
-app.use("/api/email",      require("./routes/email"));
-app.use("/api/reports",    require("./routes/reports"));
+app.use("/api/email",          require("./routes/email"));
+app.use("/api/reports",        require("./routes/reports"));
+app.use("/api/calendar-sync",  require("./routes/calendarSync"));
 
 // Diagnostic: test SMTP delivery — tries MAIL_USER/MAIL_PASS then GMAIL_USER/GMAIL_PASS
 app.post("/api/test-email", async (req, res) => {
