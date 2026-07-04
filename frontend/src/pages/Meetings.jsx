@@ -74,8 +74,8 @@ const STATUS_META = {
   rescheduled: { color: "#F59E0B", bg: "rgba(245,158,11,0.1)",  label: "Rescheduled"  },
 };
 
-const TIME_SLOTS = Array.from({ length: 68 }, (_, i) => {
-  const total = 7 * 60 + i * 15; // 7:00 AM to 11:45 PM in 15-min steps
+const TIME_SLOTS = Array.from({ length: 34 }, (_, i) => {
+  const total = 7 * 60 + i * 30; // 7:00 AM to 11:30 PM in 30-min steps
   const h = Math.floor(total / 60), m = total % 60;
   if (h >= 24) return null;
   const hh = String(h).padStart(2, "0"), mm = String(m).padStart(2, "0");
@@ -85,14 +85,9 @@ const TIME_SLOTS = Array.from({ length: 68 }, (_, i) => {
 }).filter(Boolean);
 
 const DURATIONS = [
-  { value: 15,  label: "15 Minutes"        },
-  { value: 30,  label: "30 Minutes"        },
-  { value: 45,  label: "45 Minutes"        },
   { value: 60,  label: "1 Hour"            },
   { value: 90,  label: "1 Hour 30 Minutes" },
   { value: 120, label: "2 Hours"           },
-  { value: 180, label: "3 Hours"           },
-  { value: 240, label: "4 Hours"           },
 ];
 
 const PLATFORM_LABELS = {
@@ -405,6 +400,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
   const [oauthLoading,   setOauthLoading]  = useState(false);
   const [purpose,        setPurpose]       = useState(meeting?.meeting_purpose || "");
   const [purposeOther,   setPurposeOther]  = useState("");
+  const [purposeError,   setPurposeError]  = useState(false);
   const [attendeeIds,    setAttendeeIds]   = useState(() =>
     meeting?.attendees ? meeting.attendees.map((a) => (a.user || a).id).filter(Boolean) : []
   );
@@ -602,6 +598,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
     if (!meeting?.start_time || !meeting?.end_time) return 60;
     return Math.round((new Date(meeting.end_time) - new Date(meeting.start_time)) / 60000) || 60;
   });
+  const [isCustomDuration, setIsCustomDuration] = useState(() => ![60, 90, 120].includes(duration));
   const [calendarCursor, setCalendarCursor] = useState(() => meetingDate ? new Date(`${meetingDate}T00:00:00`) : new Date());
 
   const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm({
@@ -675,14 +672,12 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
       setRecentCrmSearches(next);
       localStorage.setItem("crm_recent_meeting_search", JSON.stringify(next));
     } catch { /* non-fatal — recent searches are a convenience only */ }
-    // Auto-fill all client detail fields from CRM record
+    // Auto-fill only contact detail fields from CRM record — Meeting Information
+    // (title, purpose, agenda) is always entered manually by the user.
     setValue("company_name",   entity.company_name || entity.title || "");
     setValue("customer_name",  entity.contact_name || "");
     setValue("customer_email", entity.email        || "");
     setValue("customer_phone", entity.phone        || "");
-    if (!watch("title") && (entity.company_name || entity.title)) {
-      setValue("title", `Meeting — ${entity.company_name || entity.title}`);
-    }
   };
 
   const clearSelection = () => {
@@ -753,6 +748,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
   const handleFormSubmit = async (data) => {
     if (!meetingDate) { toast.error("Select a meeting date"); return; }
     if (!allDay && !meetingSlot) { toast.error("Select a meeting time slot"); return; }
+    if (!purpose) { setPurposeError(true); toast.error("Select a meeting purpose"); return; }
 
     const startISO = allDay
       ? new Date(`${meetingDate}T09:00:00`).toISOString()
@@ -1471,8 +1467,11 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
                 <div>
-                  <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Agenda</label>
-                  <textarea {...register("agenda")} placeholder="What will be discussed? Key topics, goals, expected outcomes…" rows={4} style={{ width: "100%", boxSizing: "border-box", padding: "14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", resize: "vertical", lineHeight: 1.55 }} />
+                  <label style={{ display: "flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>
+                    Agenda <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: 99, background: "#EF4444", marginLeft: 5 }} />
+                  </label>
+                  <textarea {...register("agenda", { required: "Agenda is required" })} placeholder="What will be discussed? Key topics, goals, expected outcomes…" rows={4} style={{ width: "100%", boxSizing: "border-box", padding: "14px", borderRadius: 12, border: `1.5px solid ${errors.agenda ? "rgba(239,68,68,0.5)" : "var(--border)"}`, background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", resize: "vertical", lineHeight: 1.55 }} />
+                  {errors.agenda && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><AlertCircle size={11} />{errors.agenda.message}</div>}
                 </div>
                 <div>
                   <label style={{ display: "flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>
@@ -1482,14 +1481,17 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                   {errors.title && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><AlertCircle size={11} />{errors.title.message}</div>}
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Meeting Purpose</label>
-                  <select value={purpose} onChange={(e) => setPurpose(e.target.value)} style={{ width: "100%", height: 50, padding: "0 14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
+                  <label style={{ display: "flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>
+                    Meeting Purpose <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: 99, background: "#EF4444", marginLeft: 5 }} />
+                  </label>
+                  <select value={purpose} onChange={(e) => { setPurpose(e.target.value); setPurposeError(false); }} style={{ width: "100%", height: 50, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${purposeError ? "rgba(239,68,68,0.5)" : "var(--border)"}`, background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
                     <option value="">Select purpose…</option>
                     {MEETING_PURPOSES.map((p) => (<option key={p.key} value={p.key}>{p.label}</option>))}
                   </select>
                   {purpose === "others" && (
                     <input value={purposeOther} onChange={(e) => setPurposeOther(e.target.value)} placeholder="Specify purpose…" style={{ width: "100%", boxSizing: "border-box", height: 50, padding: "0 14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", marginTop: 10 }} />
                   )}
+                  {purposeError && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><AlertCircle size={11} />Meeting purpose is required</div>}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <button type="button" onClick={() => setAllDay((v) => !v)}
@@ -1529,7 +1531,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                     <button type="button" onClick={() => setDurationDropOpen((v) => !v)}
                       style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, height: 50, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${durationDropOpen ? "rgba(37,99,235,0.4)" : "var(--border)"}`, background: "var(--surface)", cursor: "pointer", fontFamily: "inherit", boxShadow: durationDropOpen ? "0 0 0 3px rgba(37,99,235,0.08)" : "none", transition: "all 0.15s" }}>
                       <Clock size={16} style={{ color: "#2563EB", flexShrink: 0 }} />
-                      <span style={{ flex: 1, textAlign: "left", fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{DURATIONS.find((d) => d.value === duration)?.label}</span>
+                      <span style={{ flex: 1, textAlign: "left", fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{isCustomDuration ? "Custom" : DURATIONS.find((d) => d.value === duration)?.label}</span>
                       <ChevronDown size={15} style={{ color: "var(--text-muted)", flexShrink: 0, transform: durationDropOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
                     </button>
                     <AnimatePresence>
@@ -1537,17 +1539,32 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                         <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.14 }}
                           style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 12, boxShadow: "0 16px 40px rgba(0,0,0,0.14)", zIndex: 9999, maxHeight: 260, overflowY: "auto" }}>
                           {DURATIONS.map((d) => (
-                            <button key={d.value} type="button" onMouseDown={(e) => { e.preventDefault(); setDuration(d.value); setDurationDropOpen(false); }}
-                              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", background: duration === d.value ? "rgba(37,99,235,0.06)" : "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontFamily: "inherit", fontSize: 14, fontWeight: 600, color: "var(--text)" }}
-                              onMouseEnter={(e) => { if (duration !== d.value) e.currentTarget.style.background = "var(--surface-2)"; }}
-                              onMouseLeave={(e) => { e.currentTarget.style.background = duration === d.value ? "rgba(37,99,235,0.06)" : "none"; }}>
+                            <button key={d.value} type="button" onMouseDown={(e) => { e.preventDefault(); setDuration(d.value); setIsCustomDuration(false); setDurationDropOpen(false); }}
+                              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", background: !isCustomDuration && duration === d.value ? "rgba(37,99,235,0.06)" : "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", fontFamily: "inherit", fontSize: 14, fontWeight: 600, color: "var(--text)" }}
+                              onMouseEnter={(e) => { if (isCustomDuration || duration !== d.value) e.currentTarget.style.background = "var(--surface-2)"; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = !isCustomDuration && duration === d.value ? "rgba(37,99,235,0.06)" : "none"; }}>
                               {d.label}
-                              {duration === d.value && <CheckCircle2 size={15} style={{ color: "#2563EB" }} />}
+                              {!isCustomDuration && duration === d.value && <CheckCircle2 size={15} style={{ color: "#2563EB" }} />}
                             </button>
                           ))}
+                          <button type="button" onMouseDown={(e) => { e.preventDefault(); setIsCustomDuration(true); setDurationDropOpen(false); }}
+                            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", background: isCustomDuration ? "rgba(37,99,235,0.06)" : "none", border: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit", fontSize: 14, fontWeight: 600, color: "var(--text)" }}
+                            onMouseEnter={(e) => { if (!isCustomDuration) e.currentTarget.style.background = "var(--surface-2)"; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = isCustomDuration ? "rgba(37,99,235,0.06)" : "none"; }}>
+                            Custom
+                            {isCustomDuration && <CheckCircle2 size={15} style={{ color: "#2563EB" }} />}
+                          </button>
                         </motion.div>
                       )}
                     </AnimatePresence>
+                    {isCustomDuration && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                        <input type="number" min={5} step={5} value={duration}
+                          onChange={(e) => setDuration(Math.max(5, Number(e.target.value) || 0))}
+                          style={{ width: "100%", boxSizing: "border-box", height: 42, padding: "0 14px", borderRadius: 10, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 14, color: "var(--text)", fontFamily: "inherit", outline: "none" }} />
+                        <span style={{ fontSize: 13, color: "var(--text-muted)", fontWeight: 600, flexShrink: 0 }}>minutes</span>
+                      </div>
+                    )}
                   </div>
                 </div>
                 {!allDay && (
@@ -1628,17 +1645,6 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                     <select {...register("status")} style={{ width: "100%", height: 50, padding: "0 14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
                       {Object.entries(STATUS_META).map(([k, v]) => (<option key={k} value={k}>{v.label}</option>))}
                     </select>
-                  </div>
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 8, letterSpacing: "0.02em" }}>Priority</label>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {["low", "medium", "high"].map((p) => (
-                      <button key={p} type="button" onClick={() => setPriority(p)}
-                        style={{ flex: 1, height: 40, borderRadius: 10, fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${priority === p ? (p === "high" ? "#EF4444" : p === "medium" ? "#F59E0B" : "#10B981") : "var(--border)"}`, background: priority === p ? (p === "high" ? "rgba(239,68,68,0.08)" : p === "medium" ? "rgba(245,158,11,0.08)" : "rgba(16,185,129,0.08)") : "transparent", color: priority === p ? (p === "high" ? "#EF4444" : p === "medium" ? "#F59E0B" : "#10B981") : "var(--text-muted)", transition: "all 0.15s" }}>
-                        {p.charAt(0).toUpperCase() + p.slice(1)}
-                      </button>
-                    ))}
                   </div>
                 </div>
                 {meetingDate && meetingSlot && (
@@ -1801,7 +1807,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
             Cancel
           </button>
           <button type="button" disabled={isSubmitting || oauthLoading}
-            onClick={() => { handleSubmit((data) => { if (!meetingDate) { toast.error("Select a meeting date"); return; } if (!allDay && !meetingSlot) { toast.error("Select a meeting time slot"); return; } setShowReview(true); })(); }}
+            onClick={() => { handleSubmit((data) => { if (!meetingDate) { toast.error("Select a meeting date"); return; } if (!allDay && !meetingSlot) { toast.error("Select a meeting time slot"); return; } if (!purpose) { setPurposeError(true); toast.error("Select a meeting purpose"); return; } setShowReview(true); })(); }}
             style={{ height: 48, padding: "0 32px", borderRadius: 12, border: "none", background: isSubmitting || oauthLoading ? "var(--border)" : "linear-gradient(135deg, #2563EB, #1D4ED8)", cursor: isSubmitting || oauthLoading ? "not-allowed" : "pointer", fontSize: 15, fontWeight: 700, color: "#fff", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 4px 14px rgba(37,99,235,0.3)", transition: "all 0.15s" }}>
             {isSubmitting || oauthLoading ? (
               <><div style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: 8, animation: "spin 0.8s linear infinite" }} /> Processing…</>
