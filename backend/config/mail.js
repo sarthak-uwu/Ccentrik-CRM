@@ -799,8 +799,9 @@ const sendMeetingInviteEmail = async ({ to, customerName, title, startTime, endT
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr valign="top">
     <td style="vertical-align:top;">
-      <img src="${LOGO}" alt="Ccentrik" height="32" style="display:block;border:0;max-width:200px;height:32px;margin-bottom:10px;" />
-      <div style="font-size:12.5px;color:#64748B;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;line-height:1.6;">Empowering Modern Sales Teams</div>
+      <img src="${LOGO}" alt="Ccentrik" height="44" style="display:block;border:0;max-width:275px;height:44px;margin-bottom:14px;" />
+      <div style="font-size:14px;font-weight:600;color:#1E293B;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;line-height:1.5;">Outcome is our language</div>
+      <div style="font-size:12.5px;font-style:italic;color:#64748B;font-family:'Inter','Segoe UI',Helvetica,Arial,sans-serif;line-height:1.6;margin-top:2px;">Small steps every day</div>
     </td>
     <td align="right" style="vertical-align:top;">
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 8px auto;">

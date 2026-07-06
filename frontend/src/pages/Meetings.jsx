@@ -1047,7 +1047,7 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
 
         {/* ── SCROLLABLE BODY ── */}
         <div style={{ flex: 1, overflowY: "auto", background: "var(--surface-2)" }}>
-          <form onSubmit={handleSubmit(handleFormSubmit)} style={{ padding: "24px 28px 28px", display: "flex", flexDirection: "column", gap: 20 }}>
+          <form onSubmit={handleSubmit(handleFormSubmit)} style={{ padding: "32px 28px", display: "flex", flexDirection: "column", gap: 20 }}>
 
             {/* Reuse Previous Meeting Panel */}
             {showReuse && !reuseFrom && (
@@ -1468,6 +1468,19 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
               <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
                 <div>
                   <label style={{ display: "flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>
+                    Meeting Purpose <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: 99, background: "#EF4444", marginLeft: 5 }} />
+                  </label>
+                  <select value={purpose} onChange={(e) => { setPurpose(e.target.value); setPurposeError(false); }} style={{ width: "100%", height: 50, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${purposeError ? "rgba(239,68,68,0.5)" : "var(--border)"}`, background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
+                    <option value="">Select purpose…</option>
+                    {MEETING_PURPOSES.map((p) => (<option key={p.key} value={p.key}>{p.label}</option>))}
+                  </select>
+                  {purpose === "others" && (
+                    <input value={purposeOther} onChange={(e) => setPurposeOther(e.target.value)} placeholder="Specify purpose…" style={{ width: "100%", boxSizing: "border-box", height: 50, padding: "0 14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", marginTop: 10 }} />
+                  )}
+                  {purposeError && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><AlertCircle size={11} />Meeting purpose is required</div>}
+                </div>
+                <div>
+                  <label style={{ display: "flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>
                     Agenda <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: 99, background: "#EF4444", marginLeft: 5 }} />
                   </label>
                   <textarea {...register("agenda", { required: "Agenda is required" })} placeholder="What will be discussed? Key topics, goals, expected outcomes…" rows={4} style={{ width: "100%", boxSizing: "border-box", padding: "14px", borderRadius: 12, border: `1.5px solid ${errors.agenda ? "rgba(239,68,68,0.5)" : "var(--border)"}`, background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", resize: "vertical", lineHeight: 1.55 }} />
@@ -1479,19 +1492,6 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                   </label>
                   <input {...register("title", { required: "Title is required" })} placeholder="e.g. Q3 Strategy Review — Acme Corp" style={{ width: "100%", boxSizing: "border-box", height: 50, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${errors.title ? "rgba(239,68,68,0.5)" : "var(--border)"}`, background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none" }} />
                   {errors.title && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><AlertCircle size={11} />{errors.title.message}</div>}
-                </div>
-                <div>
-                  <label style={{ display: "flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>
-                    Meeting Purpose <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: 99, background: "#EF4444", marginLeft: 5 }} />
-                  </label>
-                  <select value={purpose} onChange={(e) => { setPurpose(e.target.value); setPurposeError(false); }} style={{ width: "100%", height: 50, padding: "0 14px", borderRadius: 12, border: `1.5px solid ${purposeError ? "rgba(239,68,68,0.5)" : "var(--border)"}`, background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", cursor: "pointer" }}>
-                    <option value="">Select purpose…</option>
-                    {MEETING_PURPOSES.map((p) => (<option key={p.key} value={p.key}>{p.label}</option>))}
-                  </select>
-                  {purpose === "others" && (
-                    <input value={purposeOther} onChange={(e) => setPurposeOther(e.target.value)} placeholder="Specify purpose…" style={{ width: "100%", boxSizing: "border-box", height: 50, padding: "0 14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", marginTop: 10 }} />
-                  )}
-                  {purposeError && <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><AlertCircle size={11} />Meeting purpose is required</div>}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <button type="button" onClick={() => setAllDay((v) => !v)}
@@ -1666,10 +1666,6 @@ function MeetingFormModal({ meeting, onClose, onSave, teamMembers = [], leads = 
                     </div>
                   </div>
                 )}
-                <div>
-                  <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6, letterSpacing: "0.02em" }}>Internal Notes</label>
-                  <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Private notes for your team (not shared with client)…" rows={3} style={{ width: "100%", boxSizing: "border-box", padding: "14px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--surface)", fontSize: 15, color: "var(--text)", fontFamily: "inherit", outline: "none", resize: "vertical", lineHeight: 1.55 }} />
-                </div>
               </div>
             </div>
 
