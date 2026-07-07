@@ -159,7 +159,9 @@ router.get("/google/authorize", authenticate, (req, res) => {
     client_id:     clientId,
     redirect_uri:  redirectUri,
     response_type: "code",
-    scope:         "https://www.googleapis.com/auth/calendar.events email profile openid",
+    // Combined scope — Google Workspace is the single Google connection point,
+    // covering Calendar/Meet as well as Gmail sync (see /google/callback below).
+    scope:         "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send email profile openid",
     access_type:   "offline",
     prompt:        "consent",
     state,
@@ -218,6 +220,35 @@ router.get("/google/callback", async (req, res) => {
     } catch { /* non-fatal */ }
 
     await storeTokens(decoded.profileId, "google_meet", { ...tokenData, email });
+
+    // Reuse this same token to activate Gmail sync — Google Workspace is the
+    // single Google connection, so no separate Gmail login is ever required.
+    // Restricted to @ccentrik.com accounts, matching the prior Gmail-only flow.
+    if (email && email.split("@")[1]?.toLowerCase() === "ccentrik.com") {
+      try {
+        const gmailProfileRes = await fetch("https://www.googleapis.com/gmail/v1/users/me/profile", {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        });
+        const gmailProfile = await gmailProfileRes.json();
+        const accountPayload = {
+          user_id:      decoded.profileId,
+          provider:     "gmail",
+          email,
+          access_token: tokenData.access_token,
+          token_expiry: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString() : null,
+          history_id:   gmailProfile.historyId?.toString() || null,
+          last_sync_at: new Date().toISOString(),
+          is_active:    true,
+        };
+        // Google only returns refresh_token on first authorization — never
+        // overwrite an existing one with null, or token refresh breaks later.
+        if (tokenData.refresh_token) accountPayload.refresh_token = tokenData.refresh_token;
+        await supabase.from("email_accounts").upsert(accountPayload, { onConflict: "user_id,email" });
+      } catch (gmailErr) {
+        console.warn("Gmail sync activation via Google Workspace failed:", gmailErr.message);
+      }
+    }
+
     res.redirect(`${frontendUrl}/meetings?oauth_success=google`);
   } catch (err) {
     console.error("Google OAuth callback error:", err);
@@ -236,6 +267,13 @@ router.post("/google/revoke", authenticate, async (req, res) => {
     .delete()
     .eq("user_id", req.profile.id)
     .eq("provider", "google_meet");
+
+  // Also deactivate Gmail sync — it shares this same Google connection.
+  await supabase.from("email_accounts")
+    .update({ is_active: false })
+    .eq("user_id", req.profile.id)
+    .eq("provider", "gmail");
+
   res.json({ success: true });
 });
 
@@ -408,27 +446,83 @@ router.post("/microsoft/revoke", authenticate, async (req, res) => {
   res.json({ success: true });
 });
 
+// Obtains an app-only Graph access token via the Client Credentials flow.
+// Requires a tenant-specific MICROSOFT_TENANT_ID (not "common") and an
+// admin-consented application permission (e.g. OnlineMeetings.ReadWrite.All).
+async function getClientCredentialsToken() {
+  const clientId     = process.env.MICROSOFT_CLIENT_ID;
+  const clientSecret = process.env.MICROSOFT_CLIENT_SECRET;
+  const tenant        = process.env.MICROSOFT_TENANT_ID;
+
+  if (!clientId || !clientSecret || !tenant || tenant === "common") {
+    return { error: "Microsoft client-credentials flow not configured. Set MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET and a tenant-specific MICROSOFT_TENANT_ID." };
+  }
+
+  let tokenRes, tokenData;
+  try {
+    tokenRes = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id:     clientId,
+        client_secret: clientSecret,
+        grant_type:    "client_credentials",
+        scope:         "https://graph.microsoft.com/.default",
+      }),
+    });
+    tokenData = await tokenRes.json();
+  } catch {
+    return { error: "Network failure while contacting Microsoft Entra ID" };
+  }
+
+  if (!tokenRes.ok || !tokenData.access_token) {
+    return { error: tokenData.error_description || "Invalid Azure credentials" };
+  }
+  return { accessToken: tokenData.access_token };
+}
+
 // POST /api/oauth/microsoft/create-meeting
 // Creates a Teams online meeting and returns the join URL.
+// Uses the per-user (Authorization Code) flow by default — set
+// MICROSOFT_AUTH_FLOW=client_credentials plus MICROSOFT_ORGANIZER_ID to create
+// meetings app-only against a fixed organizer mailbox instead.
 router.post("/microsoft/create-meeting", authenticate, async (req, res) => {
   const { title, startTime, endTime } = req.body;
 
   if (!title || !startTime || !endTime) {
-    return res.status(400).json({ error: "title, startTime and endTime are required" });
+    return res.status(400).json({ success: false, error: "title, startTime and endTime are required" });
   }
 
-  const tokens = await getTokens(req.profile.id, "microsoft_teams");
-  if (!tokens) {
-    return res.status(400).json({ error: "Microsoft account not connected" });
-  }
+  const flow = (process.env.MICROSOFT_AUTH_FLOW || "authorization_code").toLowerCase();
+  let accessToken, organizerPath, organizerLabel;
 
-  const accessToken = await refreshMicrosoftAccessToken(tokens);
-  if (!accessToken) {
-    return res.status(400).json({ error: "Could not obtain a valid Microsoft access token" });
+  if (flow === "client_credentials") {
+    const organizerId = process.env.MICROSOFT_ORGANIZER_ID;
+    if (!organizerId) {
+      return res.status(500).json({ success: false, error: "MICROSOFT_ORGANIZER_ID is required for the client-credentials flow" });
+    }
+    const token = await getClientCredentialsToken();
+    if (token.error) {
+      return res.status(401).json({ success: false, error: token.error });
+    }
+    accessToken    = token.accessToken;
+    organizerPath  = `users/${organizerId}`;
+    organizerLabel = organizerId;
+  } else {
+    const tokens = await getTokens(req.profile.id, "microsoft_teams");
+    if (!tokens) {
+      return res.status(400).json({ success: false, error: "Microsoft account not connected" });
+    }
+    accessToken = await refreshMicrosoftAccessToken(tokens);
+    if (!accessToken) {
+      return res.status(401).json({ success: false, error: "Could not obtain a valid Microsoft access token — please reconnect your Microsoft account" });
+    }
+    organizerPath  = "me";
+    organizerLabel = tokens.email || null;
   }
 
   try {
-    const r = await fetch("https://graph.microsoft.com/v1.0/me/onlineMeetings", {
+    const r = await fetch(`https://graph.microsoft.com/v1.0/${organizerPath}/onlineMeetings`, {
       method:  "POST",
       headers: {
         Authorization:  `Bearer ${accessToken}`,
@@ -442,15 +536,34 @@ router.post("/microsoft/create-meeting", authenticate, async (req, res) => {
     });
     const meeting = await r.json();
 
-    if (meeting.error) {
+    if (!r.ok || meeting.error) {
+      const code = meeting.error?.code || "";
       console.error("Teams API error:", meeting.error);
-      return res.status(400).json({ error: meeting.error.message || "Failed to create Teams meeting" });
+      if (r.status === 401) {
+        return res.status(401).json({ success: false, error: "Microsoft access token expired or invalid" });
+      }
+      if (r.status === 403 || code === "Forbidden" || code === "AccessDenied") {
+        return res.status(403).json({ success: false, error: "Missing Microsoft Graph permission (OnlineMeetings.ReadWrite) or admin consent required" });
+      }
+      if (r.status === 404) {
+        return res.status(404).json({ success: false, error: "Invalid organizer account — user not found in Microsoft Entra ID" });
+      }
+      return res.status(400).json({ success: false, error: meeting.error?.message || "Failed to create Teams meeting" });
     }
 
-    res.json({ success: true, joinWebUrl: meeting.joinWebUrl, meetingId: meeting.id || null });
+    res.json({
+      success:    true,
+      meetingId:  meeting.id || null,
+      joinUrl:    meeting.joinWebUrl || null,
+      joinWebUrl: meeting.joinWebUrl || null,
+      subject:    meeting.subject || title,
+      startTime:  meeting.startDateTime || startTime,
+      endTime:    meeting.endDateTime || endTime,
+      organizer:  meeting.participants?.organizer?.identity?.user?.displayName || organizerLabel || null,
+    });
   } catch (err) {
     console.error("Microsoft create-meeting error:", err);
-    res.status(500).json({ error: "Failed to create Microsoft Teams meeting" });
+    res.status(500).json({ success: false, error: "Network failure while creating Microsoft Teams meeting" });
   }
 });
 
