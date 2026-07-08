@@ -1599,6 +1599,7 @@ export default function Pipeline() {
   const [filterDateFrom,  setFilterDateFrom]  = useState("");
   const [filterDateTo,    setFilterDateTo]    = useState("");
   const [filterService,   setFilterService]   = useState([]);
+  const [filterMissingContact, setFilterMissingContact] = useState(false);
   const [leadIdSearch,    setLeadIdSearch]    = useState("");
   const [visibleCols,     setVisibleCols]     = useState(() => { try { const s = localStorage.getItem(LS_COL_KEY); return s ? JSON.parse(s) : DEFAULT_COLS; } catch { return DEFAULT_COLS; } });
   // Load user-specific column prefs when profile becomes available
@@ -1695,6 +1696,7 @@ export default function Pipeline() {
       const svcs = parseJSON(e.other_notes).services || [];
       return filterService.some((f) => svcs.includes(f));
     });
+    if (filterMissingContact) rows = rows.filter((e) => !pipelineHasContact(e));
 
     rows.sort((a, b) => {
       let av, bv;
@@ -1712,12 +1714,12 @@ export default function Pipeline() {
       return 0;
     });
     return rows;
-  }, [allEntries, filterStage, filterIndustry, filterCountry, filterSource, filterAssigned, filterDateFrom, filterDateTo, filterService, sortBy, sortDir, leadIdSearch]);
+  }, [allEntries, filterStage, filterIndustry, filterCountry, filterSource, filterAssigned, filterDateFrom, filterDateTo, filterService, filterMissingContact, sortBy, sortDir, leadIdSearch]);
 
   // ── Pagination ────────────────────────────────────────────────────────────
   const PIPELINE_PAGE_SIZE = 30;
   const [pipelinePage, setPipelinePage] = useState(1);
-  useEffect(() => { setPipelinePage(1); }, [filterStage, filterIndustry, filterCountry, filterSource, filterAssigned, filterDateFrom, filterDateTo, filterService, leadIdSearch]);
+  useEffect(() => { setPipelinePage(1); }, [filterStage, filterIndustry, filterCountry, filterSource, filterAssigned, filterDateFrom, filterDateTo, filterService, filterMissingContact, leadIdSearch]);
   const pipelineTotalPages = Math.ceil(filteredEntries.length / PIPELINE_PAGE_SIZE);
   const pagedEntries = filteredEntries.slice((pipelinePage - 1) * PIPELINE_PAGE_SIZE, pipelinePage * PIPELINE_PAGE_SIZE);
 
@@ -1791,7 +1793,12 @@ export default function Pipeline() {
             contact_linkedin_url: primary?.linkedin_url || "",
             notes:                r.notes    || "",
             people_contacts:      contacts,
-            contact_locked:       contacts.length > 0,
+            // CSV-imported records must stay editable immediately (unlike the manual
+            // Add Prospect form, which intentionally locks contact editing on creation)
+            // so the assigned user can complete/fix data right away — no separate
+            // "Unlock" step required. This only affects contact_locked, not is_locked
+            // (the row-level Lock/Unlock button), which CSV import never touches.
+            contact_locked:       false,
           }),
         };
         const { error } = await sb.from("leads").insert([record]);
@@ -2063,8 +2070,24 @@ export default function Pipeline() {
           <option value="">All Sources</option>
           {LEAD_SOURCES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
         </select>
-        {(search || leadIdSearch || filterStage.length || filterIndustry.length || filterCountry.length || filterSource.length || filterService.length || filterAssigned.length || filterDateFrom || filterDateTo) && (
-          <button className="btn-secondary" style={{ height: 34, fontSize: 12, display: "flex", alignItems: "center", gap: 5 }} onClick={() => { setSearch(""); setLeadIdSearch(""); setFilterStage([]); setFilterIndustry([]); setFilterCountry([]); setFilterSource([]); setFilterService([]); setFilterAssigned([]); setFilterDateFrom(""); setFilterDateTo(""); }}>
+        {/* Missing Contact Information toggle — no phone/email on primary or any additional contact */}
+        <button
+          type="button"
+          onClick={() => setFilterMissingContact((v) => !v)}
+          title="Show only records with no Contact Number and no Email Address for any contact"
+          className={filterMissingContact ? "" : "btn-secondary"}
+          style={{
+            height: 34, fontSize: 12, display: "flex", alignItems: "center", gap: 5, padding: "0 12px",
+            borderRadius: 8, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+            ...(filterMissingContact
+              ? { background: "rgba(239,68,68,0.1)", color: "#EF4444", border: "1px solid rgba(239,68,68,0.3)", fontWeight: 700 }
+              : {}),
+          }}
+        >
+          <Filter size={12} /> Missing Contact Information
+        </button>
+        {(search || leadIdSearch || filterStage.length || filterIndustry.length || filterCountry.length || filterSource.length || filterService.length || filterAssigned.length || filterDateFrom || filterDateTo || filterMissingContact) && (
+          <button className="btn-secondary" style={{ height: 34, fontSize: 12, display: "flex", alignItems: "center", gap: 5 }} onClick={() => { setSearch(""); setLeadIdSearch(""); setFilterStage([]); setFilterIndustry([]); setFilterCountry([]); setFilterSource([]); setFilterService([]); setFilterAssigned([]); setFilterDateFrom(""); setFilterDateTo(""); setFilterMissingContact(false); }}>
             <X size={12} /> Clear Filters
           </button>
         )}
@@ -2078,8 +2101,9 @@ export default function Pipeline() {
           <input type="date" value={filterDateTo} onChange={(e) => setFilterDateTo(e.target.value)} className="crm-input" style={{ height: 34, fontSize: 12, width: 136 }} title="To date" />
           </div>
         </div>
-        {(filterStage.length || filterIndustry.length || filterCountry.length || filterSource.length || filterAssigned.length || filterDateFrom || filterDateTo) && (
+        {(filterStage.length || filterIndustry.length || filterCountry.length || filterSource.length || filterAssigned.length || filterDateFrom || filterDateTo || filterMissingContact) && (
           <div style={{ display: "flex", gap: 5, flexWrap: "wrap", width: "100%", paddingTop: 4 }}>
+            {filterMissingContact && <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 99, background: "rgba(239,68,68,0.1)", color: "#EF4444", border: "1px solid rgba(239,68,68,0.2)", display: "flex", alignItems: "center", gap: 4 }}>Missing Contact Information<button type="button" onClick={() => setFilterMissingContact(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#EF4444", lineHeight: 1 }}><X size={9} /></button></span>}
             {filterStage.map((key) => { const s = PIPELINE_STAGES.find((x) => x.key === key); return <span key={key} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", display: "flex", alignItems: "center", gap: 4 }}>Stage: {s?.label || key}<button type="button" onClick={() => setFilterStage((p) => p.filter((k) => k !== key))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#6366F1", lineHeight: 1 }}><X size={9} /></button></span>; })}
             {filterIndustry.map((v) => <span key={v} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", display: "flex", alignItems: "center", gap: 4 }}>Industry: {v}<button type="button" onClick={() => setFilterIndustry((p) => p.filter((x) => x !== v))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#6366F1", lineHeight: 1 }}><X size={9} /></button></span>)}
             {filterCountry.map((v) => { const c = COUNTRIES.find((x) => x.code === v); return <span key={v} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 99, background: "rgba(99,102,241,0.1)", color: "#6366F1", border: "1px solid rgba(99,102,241,0.2)", display: "flex", alignItems: "center", gap: 4 }}>Country: {c?.name || v}<button type="button" onClick={() => setFilterCountry((p) => p.filter((x) => x !== v))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#6366F1", lineHeight: 1 }}><X size={9} /></button></span>; })}
