@@ -245,6 +245,7 @@ async function generateNewDsrPdf({
       {label:"Meetings Today",       value:scopeTotals.meetingsScheduled||0,                               color:C.warning},
       {label:"Prospects Added",      value:scopeTotals.prospectsAdded||0,                                  color:C.accent},
       {label:"Leads Created",        value:scopeTotals.leadsCreated||0,                                    color:C.primary},
+      {label:"New Leads (from Pipeline)", value:scopeTotals.newLeadsFromPipeline||0,                       color:C.purple},
       {label:"Leads Converted",      value:scopeTotals.leadsConverted||0,                                  color:C.success},
       {label:"Deals Won",            value:scopeTotals.dealsWon||0,                                        color:C.success},
       {label:"Revenue Closed",       value:fmtCurrency(scopeTotals.revenue),                               color:C.success},
@@ -257,23 +258,21 @@ async function generateNewDsrPdf({
     // Employee performance table
     y = sectionTitle("Employee Performance Overview", y);
     const perfCols = [
-      {label:"Employee",   width:96, align:"left"},
-      {label:"Role",       width:64, align:"left"},
-      {label:"Prospects",  width:42, align:"center"},
-      {label:"Leads",      width:36, align:"center"},
-      {label:"Converted",  width:42, align:"center"},
-      {label:"Deals",      width:36, align:"center"},
-      {label:"Won",        width:30, align:"center"},
-      {label:"Calls",      width:30, align:"center"},
-      {label:"Emails",     width:34, align:"center"},
-      {label:"Meetings",   width:42, align:"center"},
-      {label:"Done",       width:30, align:"center"},
-      {label:"Pending",    width:34, align:"center"},
-      {label:"Overdue",    width:27, align:"center"},
-    ]; // total: 96+64+42+36+42+36+30+30+34+42+30+34+27 = 543 > 523
-    // Adjust: Employee=86, Role=58 → 86+58+42+36+42+36+30+30+34+42+30+34+27 = 527... still over
-    // Final: Employee=84,Role=56 → 84+56+42+36+42+36+30+30+34+42+30+34+27=523 ✓
-    perfCols[0].width=84; perfCols[1].width=56;
+      {label:"Employee",   width:78, align:"left"},
+      {label:"Role",       width:52, align:"left"},
+      {label:"Prospects",  width:40, align:"center"},
+      {label:"Leads",      width:34, align:"center"},
+      {label:"Pipeline",   width:34, align:"center"},
+      {label:"Converted",  width:40, align:"center"},
+      {label:"Deals",      width:34, align:"center"},
+      {label:"Won",        width:28, align:"center"},
+      {label:"Calls",      width:28, align:"center"},
+      {label:"Emails",     width:32, align:"center"},
+      {label:"Meetings",   width:38, align:"center"},
+      {label:"Done",       width:28, align:"center"},
+      {label:"Pending",    width:32, align:"center"},
+      {label:"Overdue",    width:25, align:"center"},
+    ]; // 78+52+40+34+34+40+34+28+28+32+38+28+32+25 = 523 ✓ ("Pipeline" = New Leads from Pipeline conversions)
 
     const perfRows = scopeProfiles.map(p => {
       const s = statsMap[p.id]||{};
@@ -282,6 +281,7 @@ async function generateNewDsrPdf({
         safe(rl(p.role),18),
         s.prospectsAdded||0,
         s.leadsCreated||0,
+        s.newLeadsFromPipeline||0,
         s.leadsConverted||0,
         s.dealsCreated||0,
         {v:s.dealsWon||0,          c:s.dealsWon>0?C.success:C.text},
@@ -361,6 +361,7 @@ async function generateNewDsrPdf({
       const empStats = [
         {label:"Prospects Added",      value:s.prospectsAdded||0,       color:C.accent},
         {label:"Leads Created",        value:s.leadsCreated||0,         color:C.primary},
+        {label:"New Leads (Pipeline)", value:s.newLeadsFromPipeline||0, color:C.purple},
         {label:"Leads Converted",      value:s.leadsConverted||0,       color:C.success},
         {label:"Deals Created",        value:s.dealsCreated||0,         color:C.accent},
         {label:"Deals Won",            value:s.dealsWon||0,             color:C.success},

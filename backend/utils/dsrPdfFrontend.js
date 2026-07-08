@@ -199,7 +199,7 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
     const totals = {
       activitiesCompleted: 0, activitiesPending: 0, activitiesOverdue: 0,
       callsMade: 0, emailsSent: 0, notesAdded: 0, meetingsScheduled: 0,
-      leadsCreated: 0, leadsConverted: 0, prospectsAdded: 0,
+      leadsCreated: 0, leadsConverted: 0, prospectsAdded: 0, newLeadsFromPipeline: 0,
       dealsCreated: 0, dealsWon: 0, revenue: 0, tasksCompleted: 0,
       followUpsCompleted: 0, followUpsPending: 0,
     };
@@ -305,6 +305,7 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
       { label: 'Emails Sent',       value: totals.emailsSent,           color: C.gray    },
       { label: 'Notes Added',       value: totals.notesAdded,           color: C.gray    },
       { label: 'New Leads',         value: totals.leadsCreated,         color: C.green   },
+      { label: 'New Leads (Pipeline)', value: totals.newLeadsFromPipeline, color: C.accent },
       { label: 'Deals Created',     value: totals.dealsCreated,         color: C.purple  },
       { label: 'Leads Converted',   value: totals.leadsConverted,       color: C.accent  },
       { label: 'Deals Won',         value: totals.dealsWon,             color: C.green   },
@@ -340,30 +341,32 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
       y += 12;
       y = sectionTitle('Team Performance Overview', y);
       y += 6;
-      // Cols: 110+78+55+55+44+44+42+40+55 = 523
+      // Cols: 102+70+50+50+40+40+38+38+40+55 = 523
       const empCols = [
-        { key: 'name',    label: 'Employee',   width: 110 },
-        { key: 'role',    label: 'Role',       width: 78  },
-        { key: 'acts',    label: 'Activities', width: 55  },
-        { key: 'done',    label: 'Completed',  width: 55  },
-        { key: 'calls',   label: 'Calls',      width: 44  },
-        { key: 'emails',  label: 'Emails',     width: 44  },
-        { key: 'leads',   label: 'Leads',      width: 42  },
-        { key: 'deals',   label: 'Deals',      width: 40  },
-        { key: 'revenue', label: 'Revenue',    width: 55  },
+        { key: 'name',     label: 'Employee',   width: 102 },
+        { key: 'role',     label: 'Role',       width: 70  },
+        { key: 'acts',     label: 'Activities', width: 50  },
+        { key: 'done',     label: 'Completed',  width: 50  },
+        { key: 'calls',    label: 'Calls',      width: 40  },
+        { key: 'emails',   label: 'Emails',     width: 40  },
+        { key: 'leads',    label: 'Leads',      width: 38  },
+        { key: 'pipeline', label: 'Pipeline',   width: 38  },
+        { key: 'deals',    label: 'Deals',      width: 40  },
+        { key: 'revenue',  label: 'Revenue',    width: 55  },
       ];
       const empRows = scopeProfiles.map(p => {
         const s = statsMap[p.id];
         return {
-          name:    p.full_name || p.email,
-          role:    fmtType(p.role),
-          acts:    s ? (s.activityTimeline || []).length : 0,
-          done:    s?.activitiesCompleted ?? 0,
-          calls:   s?.callsMade ?? 0,
-          emails:  s?.emailsSent ?? 0,
-          leads:   s?.leadsCreated ?? 0,
-          deals:   s?.dealsCreated ?? 0,
-          revenue: fmtCurrency(s?.revenue ?? 0),
+          name:     p.full_name || p.email,
+          role:     fmtType(p.role),
+          acts:     s ? (s.activityTimeline || []).length : 0,
+          done:     s?.activitiesCompleted ?? 0,
+          calls:    s?.callsMade ?? 0,
+          emails:   s?.emailsSent ?? 0,
+          leads:    s?.leadsCreated ?? 0,
+          pipeline: s?.newLeadsFromPipeline ?? 0,
+          deals:    s?.dealsCreated ?? 0,
+          revenue:  fmtCurrency(s?.revenue ?? 0),
         };
       });
       y = drawTable(empCols, empRows, y, 'Executive Summary');
@@ -439,6 +442,7 @@ async function generateFrontendDsrPdf({ dateLabel, generatedAt, scopeProfiles, s
         { label: 'Calls',         value: s.callsMade,            color: C.accent  },
         { label: 'Emails',        value: s.emailsSent,           color: C.gray    },
         { label: 'Leads',         value: s.leadsCreated,         color: C.green   },
+        { label: 'New (Pipeline)',value: s.newLeadsFromPipeline, color: C.accent  },
         { label: 'Deals',         value: s.dealsCreated,         color: C.purple  },
         { label: 'Converted',     value: s.leadsConverted,       color: C.accent  },
         { label: 'Deals Won',     value: s.dealsWon,             color: C.green   },

@@ -6,11 +6,23 @@ const EMAIL_TYPES    = new Set(["email","email_sent","email_received","follow_up
 const FOLLOWUP_TYPES = new Set(["follow_up","follow_up_call","follow_up_email","followup"]);
 const NOTE_TYPES     = new Set(["note","comment","remark","note_added"]);
 
+// leads.other_notes is JSONB but the app writes it via JSON.stringify(), so a
+// touched row's value is itself a JSON *string* scalar (needs a second parse);
+// an untouched row still holds the plain default object `{}`.
+function parseOtherNotes(raw) {
+  if (!raw) return {};
+  if (typeof raw === "string") {
+    try { return JSON.parse(raw) || {}; } catch { return {}; }
+  }
+  return raw;
+}
+
 function emptyStats(profile) {
   return {
     profile,
     prospectsAdded:      0,
     leadsCreated:        0,
+    newLeadsFromPipeline:0,
     dealsCreated:        0,
     activitiesCompleted: 0,
     activitiesPending:   0,
@@ -56,6 +68,7 @@ async function collectDsrData(dayStart, dayEnd, todayStr) {
   const [
     { data: leadsToday     },
     { data: leadsConverted },
+    { data: otherNotesCandidates },
     { data: dealsCreated   },
     { data: dealsWon       },
     { data: dealsLost      },
@@ -71,7 +84,7 @@ async function collectDsrData(dayStart, dayEnd, todayStr) {
   ] = await Promise.all([
 
     supabase.from("leads")
-      .select("id, stage, created_by, assigned_to, created_at, company_name, contact_name, source, email, phone, sub_status")
+      .select("id, stage, created_by, assigned_to, created_at, company_name, contact_name, source, email, phone, other_notes")
       .gte("created_at", dayStart).lte("created_at", dayEnd),
 
     supabase.from("leads")
@@ -79,22 +92,34 @@ async function collectDsrData(dayStart, dayEnd, todayStr) {
       .eq("stage", "converted")
       .gte("updated_at", dayStart).lte("updated_at", dayEnd),
 
+    // Candidates for Pipeline → Lead conversions. other_notes is populated for nearly every
+    // lead (required contact info at creation), so it can't narrow the set on its own — instead
+    // bound by updated_at, which the conversion endpoint always bumps to "now" at conversion
+    // time. Only a LOWER bound is safe here: a later, unrelated edit only pushes updated_at
+    // further into the future, never earlier, so this can't miss a same-day conversion even
+    // when re-generating a report for a past date. The exact lead_created_at match (and date
+    // range) is checked in JS below, since other_notes is stored double-JSON-encoded.
+    supabase.from("leads")
+      .select("id, created_by, assigned_to, company_name, contact_name, other_notes")
+      .not("other_notes", "is", null)
+      .gte("updated_at", dayStart),
+
     supabase.from("deals")
-      .select("id, name, stage, value, created_by, assigned_to, created_at, company_name, contact_name, expected_close_date")
+      .select("id, title, stage, value, created_by, assigned_to, created_at, company_name, contact_name, expected_close_date")
       .gte("created_at", dayStart).lte("created_at", dayEnd),
 
     supabase.from("deals")
-      .select("id, name, value, assigned_to, updated_at, company_name, contact_name")
+      .select("id, title, value, assigned_to, updated_at, company_name, contact_name")
       .eq("stage", "won")
       .gte("updated_at", dayStart).lte("updated_at", dayEnd),
 
     supabase.from("deals")
-      .select("id, name, assigned_to, updated_at, company_name, value")
+      .select("id, title, assigned_to, updated_at, company_name, value")
       .eq("stage", "lost")
       .gte("updated_at", dayStart).lte("updated_at", dayEnd),
 
     supabase.from("activities")
-      .select("id, type, status, created_by, lead_id, deal_id, created_at, updated_at, description, outcome, notes, due_date, lead:leads(company_name, contact_name), deal:deals(name, company_name)")
+      .select("id, type, status, created_by, lead_id, deal_id, created_at, updated_at, description, note, due_date, lead:leads(company_name, contact_name), deal:deals(title, company_name)")
       .gte("created_at", dayStart).lte("created_at", dayEnd)
       .order("created_at"),
 
@@ -126,7 +151,7 @@ async function collectDsrData(dayStart, dayEnd, todayStr) {
       .gt("due_date", dayEnd),
 
     supabase.from("meetings")
-      .select("id, title, customer_name, company_name, contact_name, start_time, end_time, status, meeting_type, meet_link, location, notes, purpose, created_by")
+      .select("id, title, customer_name, customer_email, customer_phone, company_name, start_time, end_time, status, meeting_type, meeting_link, location, notes, agenda, meeting_purpose, lead_id, created_by, lead:leads!lead_id(lead_code, company_name, contact_name)")
       .gte("start_time", dayStart).lte("start_time", dayEnd)
       .order("start_time"),
 
@@ -157,13 +182,28 @@ async function collectDsrData(dayStart, dayEnd, todayStr) {
     const uid = l.created_by || l.assigned_to;
     if (!uid || !statsMap[uid]) return;
     const stage = (l.stage || "").toLowerCase();
-    if (["pipeline","prospect","awareness"].includes(stage)) bump(uid, "prospectsAdded");
+    // A row counts as "Prospect Added" for its creation day if it's still a pipeline
+    // record OR it was once one — proven by other_notes.lead_created_at, which is only
+    // ever stamped by the pipeline→lead conversion flow (requires stage==='pipeline').
+    // This keeps the count accurate even after the row is later converted to a lead.
+    let wasPipeline = ["pipeline","prospect","awareness"].includes(stage);
+    if (!wasPipeline && l.other_notes) wasPipeline = !!parseOtherNotes(l.other_notes).lead_created_at;
+    if (wasPipeline) bump(uid, "prospectsAdded");
     else bump(uid, "leadsCreated");
     trackLast(uid, l.created_at);
     statsMap[uid].todayLeads.push({
       id: l.id, companyName: l.company_name || "—", contactName: l.contact_name || "—",
       source: l.source || "—", stage: l.stage || "—", createdAt: l.created_at, isConverted: false,
     });
+  });
+
+  // Pipeline → Lead conversions performed today (keyed by conversion date, not creation date)
+  (otherNotesCandidates || []).forEach(l => {
+    const convertedAt = parseOtherNotes(l.other_notes).lead_created_at;
+    if (!convertedAt || convertedAt < dayStart || convertedAt > dayEnd) return;
+    const uid = l.created_by || l.assigned_to;
+    if (!uid || !statsMap[uid]) return;
+    bump(uid, "newLeadsFromPipeline");
   });
 
   (leadsConverted || []).forEach(l => {
@@ -186,7 +226,7 @@ async function collectDsrData(dayStart, dayEnd, todayStr) {
     trackLast(uid, d.created_at);
     if (uid && statsMap[uid]) {
       statsMap[uid].todayDeals.push({
-        id: d.id, name: d.name || "—", companyName: d.company_name || "—",
+        id: d.id, name: d.title || "—", companyName: d.company_name || "—",
         contactName: d.contact_name || "—", value: Number(d.value) || 0,
         stage: d.stage || "—", expectedClose: d.expected_close_date,
         status: "active", createdAt: d.created_at,
@@ -201,7 +241,7 @@ async function collectDsrData(dayStart, dayEnd, todayStr) {
       const ex = statsMap[d.assigned_to].todayDeals.find(x => x.id === d.id);
       if (ex) ex.status = "won";
       else statsMap[d.assigned_to].todayDeals.push({
-        id: d.id, name: d.name || "—", companyName: d.company_name || "—",
+        id: d.id, name: d.title || "—", companyName: d.company_name || "—",
         value: Number(d.value) || 0, stage: "won", status: "won", createdAt: d.updated_at,
       });
     }
@@ -222,7 +262,7 @@ async function collectDsrData(dayStart, dayEnd, todayStr) {
     const t = (a.type || "").toLowerCase();
     const companyName = a.lead?.company_name || a.deal?.company_name || "—";
     const contactName = a.lead?.contact_name || "—";
-    const dealName    = a.deal?.name || "—";
+    const dealName    = a.deal?.title || "—";
 
     if (CALL_TYPES.has(t))     bump(uid, "callsMade");
     if (EMAIL_TYPES.has(t))    bump(uid, "emailsSent");
@@ -234,13 +274,13 @@ async function collectDsrData(dayStart, dayEnd, todayStr) {
 
     statsMap[uid].activityTimeline.push({
       time: a.created_at, type: a.type || "activity", status: a.status || "—",
-      description: a.description || a.notes || "—", outcome: a.outcome || "—",
+      description: a.description || a.note || "—", outcome: a.outcome || "—",
       companyName, contactName, dealName, leadId: a.lead_id, dealId: a.deal_id, dueDate: a.due_date,
     });
 
     if (NOTE_TYPES.has(t)) {
       statsMap[uid].todayNotes.push({
-        time: a.created_at, description: a.description || a.notes || "—",
+        time: a.created_at, description: a.description || a.note || "—",
         companyName, contactName,
       });
     }
@@ -320,7 +360,7 @@ function getScopeProfiles(recipient, allProfiles) {
 
 function calcScopeTotals(scopeProfiles, statsMap) {
   const ADDITIVE = [
-    "prospectsAdded","leadsCreated","dealsCreated","activitiesCompleted",
+    "prospectsAdded","leadsCreated","newLeadsFromPipeline","dealsCreated","activitiesCompleted",
     "activitiesPending","activitiesOverdue","callsMade","emailsSent",
     "meetingsScheduled","meetingsCompleted","tasksCreated","tasksCompleted",
     "followUpsCompleted","followUpsPending","nextFollowUps",

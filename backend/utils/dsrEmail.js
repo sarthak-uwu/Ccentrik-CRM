@@ -114,20 +114,28 @@ function buildDsrEmailHtml({
     const mtRows = meetings.map((m, i) => {
       const bg         = i % 2 === 0 ? "#FFFFFF" : "#F8FAFC";
       const td         = (al) => `style="padding:9px 10px;font-size:12px;color:#334155;border-top:1px solid #F1F5F9;text-align:${al};background:${bg};"`;
-      const emp        = profileMap[m.created_by];
+      const scheduler  = profileMap[m.created_by];
       const statusClr  = m.status === "completed" ? "#059669" : m.status === "cancelled" ? "#DC2626" : m.status === "pending" ? "#D97706" : "#2563EB";
       const statusLbl  = m.status ? (m.status.charAt(0).toUpperCase() + m.status.slice(1)) : "Scheduled";
-      const comments   = m.notes || m.purpose || "—";
+      const agenda     = m.agenda || m.meeting_purpose || "—";
+      const leadName   = m.lead?.company_name || m.company_name || "—";
+      const leadCode   = m.lead?.lead_code || "—";
+      const contact    = m.customer_name || m.lead?.contact_name || "—";
       return `<tr>
         <td ${td("left")}  style="padding:9px 10px;font-size:11px;color:#64748B;font-family:monospace;background:${bg};border-top:1px solid #F1F5F9;">${shortId(m.id)}</td>
-        <td ${td("left")}>${emp ? (emp.full_name || emp.email) : "—"}</td>
         <td ${td("left")}>${m.company_name || "—"}</td>
-        <td ${td("left")}>${m.customer_name || m.contact_name || "—"}</td>
+        <td ${td("left")}>${leadName}</td>
+        <td ${td("left")} style="padding:9px 10px;font-size:11px;color:#64748B;font-family:monospace;background:${bg};border-top:1px solid #F1F5F9;">${leadCode}</td>
+        <td ${td("left")}>${contact}</td>
+        <td ${td("left")}>${m.customer_email || "—"}</td>
+        <td ${td("left")}>${m.customer_phone || "—"}</td>
+        <td ${td("left")} style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${m.title || "—"}</td>
         <td ${td("center")}>${fmtDate(m.start_time)}</td>
         <td ${td("center")}>${fmtTime(m.start_time)}</td>
         <td ${td("center")}>${getMeetingMode(m)}</td>
         <td ${td("center")}><span style="color:${statusClr};font-weight:600;">${statusLbl}</span></td>
-        <td ${td("left")} style="padding:9px 10px;font-size:11px;color:#64748B;background:${bg};border-top:1px solid #F1F5F9;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${comments}</td>
+        <td ${td("left")} style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${agenda}</td>
+        <td ${td("left")}>${scheduler ? (scheduler.full_name || scheduler.email) : "—"}${scheduler ? `<br/><span style="font-size:10px;color:#94A3B8;">${rl(scheduler.role)}</span>` : ""}</td>
       </tr>`;
     }).join("");
 
@@ -136,17 +144,22 @@ function buildDsrEmailHtml({
       <div style="font-size:15px;font-weight:700;color:#1E3A5F;margin-bottom:14px;border-left:3px solid #7C3AED;padding-left:10px;">Meeting Summary</div>
       <div style="overflow-x:auto;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-        style="border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;border-collapse:collapse;min-width:860px;">
+        style="border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;border-collapse:collapse;min-width:1380px;">
         <thead><tr>
           <th style="${mTh("left")}">Meeting ID</th>
-          <th style="${mTh("left")}">Employee</th>
           <th style="${mTh("left")}">Company</th>
+          <th style="${mTh("left")}">Lead Name</th>
+          <th style="${mTh("left")}">Lead ID</th>
           <th style="${mTh("left")}">Contact Person</th>
+          <th style="${mTh("left")}">Email</th>
+          <th style="${mTh("left")}">Phone</th>
+          <th style="${mTh("left")}">Meeting Title</th>
           <th style="${mTh("center")}">Date</th>
           <th style="${mTh("center")}">Time</th>
           <th style="${mTh("center")}">Mode</th>
           <th style="${mTh("center")}">Status</th>
-          <th style="${mTh("left")}">Comments</th>
+          <th style="${mTh("left")}">Agenda</th>
+          <th style="${mTh("left")}">Scheduled By</th>
         </tr></thead>
         <tbody>${mtRows}</tbody>
       </table>
