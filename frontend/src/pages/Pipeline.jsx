@@ -1033,6 +1033,61 @@ function normalizeLinkedInUrl(raw) {
   return `https://linkedin.com/in/${slug}`;
 }
 
+// ── Multi-contact CSV support ───────────────────────────────────────────────
+// Contact-related columns may hold semicolon-separated values to describe more
+// than one contact for the same company row, mapped positionally. Contact Name
+// is the anchor field — its value count sets the number of contact slots.
+// Designation/Email/Phone/LinkedIn are optional per contact: a shorter list (or
+// an entirely blank column) just leaves those positions empty; only a LONGER
+// list than Contact Name's is a real mismatch (there'd be no slot to map it to).
+const CONTACT_FIELD_LABELS = { name: "Contact Name", designation: "Designation", email: "Email", phone: "Phone", linkedin: "LinkedIn URL" };
+const OPTIONAL_CONTACT_FIELDS = ["designation", "email", "phone", "linkedin"];
+
+function splitContactField(raw) {
+  if (!raw || !raw.trim()) return null;
+  return raw.split(";").map((s) => s.trim());
+}
+
+// Returns { contacts, error }. `contacts` is the people_contacts array (position 0 is
+// always the Primary Contact / POC), matching today's single-contact shape exactly when
+// no semicolons are present.
+function buildContactsFromRow(r) {
+  const fields = {
+    name:        splitContactField(r.contact_name),
+    designation: splitContactField(r.designation),
+    email:       splitContactField(r.email),
+    phone:       splitContactField(r.phone),
+    linkedin:    splitContactField(r.contact_linkedin_url),
+  };
+
+  const names = fields.name || [];
+  const count = names.length; // Contact Name is the anchor field
+
+  const overflow = OPTIONAL_CONTACT_FIELDS.filter((k) => fields[k] && fields[k].length > count);
+  if (overflow.length) {
+    const detail = overflow.map((k) => `${CONTACT_FIELD_LABELS[k]}: ${fields[k].length} value(s) vs Contact Name: ${count}`).join(", ");
+    return { contacts: [], error: `Some contact fields have more semicolon-separated values than Contact Name, so they can't be mapped to a contact (${detail}).` };
+  }
+
+  const contacts = [];
+  for (let i = 0; i < count; i++) {
+    const name  = names[i]           || "";
+    const email = fields.email?.[i]  || "";
+    const phone = fields.phone?.[i]  || "";
+    if (!name && !email && !phone) continue; // fully blank slot (e.g. a stray ";;") — skip without failing the row
+    contacts.push({
+      id:           `${Date.now()}-${Math.random()}-${i}`,
+      name,
+      designation:  fields.designation?.[i] || "",
+      email,
+      phone,
+      linkedin_url: fields.linkedin?.[i] || "",
+      is_primary:   contacts.length === 0,
+    });
+  }
+  return { contacts, error: null };
+}
+
 const ROLE_BADGE = { owner: "Super Admin", sales_head: "Sales Head", sales_manager: "Sales Manager", employee: "Sales Executive", inside_sales: "Inside Sales" };
 
 function BulkImportModal({ onClose, onImport, loading, isAdminUser, teamMembers = [], importResult, onResultDone }) {
@@ -1700,50 +1755,44 @@ export default function Pipeline() {
       const failed = [];
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
+
+        const { contacts, error: contactErr } = buildContactsFromRow(r);
+        if (contactErr) {
+          failed.push({ rowNum: i + 2, company: r.company_name || `Row ${i + 2}`, reason: contactErr });
+          continue;
+        }
+        const primary = contacts[0] || null;
+
         const record = {
           stage:          "pipeline",
           company_name:   r.company_name,
-          contact_name:   r.contact_name   || "",
-          designation:    r.designation    || null,
+          contact_name:   primary?.name        || "",
+          designation:    primary?.designation || null,
           pipeline_stage: normalizePipelineStage(r.pipeline_stage),
           source:         normalizeSource(r.source),
           assigned_to:    assignedTo       || profile?.id,
           created_by:     profile?.id,
           is_locked:      false,
-          other_notes: JSON.stringify((() => {
-            const people_contacts = [];
-            if (r.contact_name || r.email || r.phone) {
-              people_contacts.push({
-                id:           `${Date.now()}-${Math.random()}`,
-                name:         r.contact_name        || "",
-                designation:  r.designation         || "",
-                email:        r.email               || "",
-                phone:        r.phone               || "",
-                linkedin_url: r.contact_linkedin_url || "",
-                is_primary:   true,
-              });
-            }
-            return {
-              email:                r.email    || "",
-              phone:                r.phone    || "",
-              website:              r.website  || "",
-              industry:             r.industry || "",
-              country: (() => {
-                const raw = (r.headquarters_country || r.country || "").trim();
-                if (!raw) return "";
-                const byCode = COUNTRIES.find((c) => c.code.toLowerCase() === raw.toLowerCase());
-                if (byCode) return byCode.code;
-                const byName = COUNTRIES.find((c) => c.name.toLowerCase() === raw.toLowerCase());
-                return byName ? byName.code : raw;
-              })(),
-              state:                r.headquarters_state || r.state || "",
-              city:                 r.headquarters_city  || r.city  || "",
-              contact_linkedin_url: r.contact_linkedin_url || "",
-              notes:                r.notes    || "",
-              people_contacts,
-              contact_locked:       people_contacts.length > 0,
-            };
-          })()),
+          other_notes: JSON.stringify({
+            email:                primary?.email        || "",
+            phone:                primary?.phone        || "",
+            website:              r.website  || "",
+            industry:             r.industry || "",
+            country: (() => {
+              const raw = (r.headquarters_country || r.country || "").trim();
+              if (!raw) return "";
+              const byCode = COUNTRIES.find((c) => c.code.toLowerCase() === raw.toLowerCase());
+              if (byCode) return byCode.code;
+              const byName = COUNTRIES.find((c) => c.name.toLowerCase() === raw.toLowerCase());
+              return byName ? byName.code : raw;
+            })(),
+            state:                r.headquarters_state || r.state || "",
+            city:                 r.headquarters_city  || r.city  || "",
+            contact_linkedin_url: primary?.linkedin_url || "",
+            notes:                r.notes    || "",
+            people_contacts:      contacts,
+            contact_locked:       contacts.length > 0,
+          }),
         };
         const { error } = await sb.from("leads").insert([record]);
         if (error) {
