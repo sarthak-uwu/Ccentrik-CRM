@@ -1,12 +1,10 @@
 const express = require("express");
 const router  = express.Router();
 const admin   = require("firebase-admin");
-const axios   = require("axios");
 const { supabase } = require("../config/db");
-const { sendWelcomeEmail } = require("../config/mail");
+const { sendWelcomeEmail, sendPasswordResetEmail } = require("../config/mail");
 const { authenticate, authorize } = require("../middleware/auth");
 
-const FIREBASE_WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY || "AIzaSyAiJrt5Ar6pypMMvCmDIEOyPj_Ze07PYIU";
 const APP_URL = process.env.FRONTEND_URL && !process.env.FRONTEND_URL.includes("localhost")
   ? process.env.FRONTEND_URL
   : "https://ccentrik-crm.web.app";
@@ -90,8 +88,10 @@ router.post("/add-member", authenticate, authorize("owner", "sales_head"), async
   }
 });
 
-// POST /api/auth/send-reset-email — Firebase sends the reset email directly
-// Always returns 200 to prevent email enumeration
+// POST /api/auth/send-reset-email — generates the Firebase reset link server-side and
+// sends it through our own authenticated mail pipeline (config/mail.js) instead of
+// Firebase's built-in sender, so the email arrives from ccentrik.com, not firebaseapp.com.
+// Always returns 200 to prevent email enumeration.
 router.post("/send-reset-email", async (req, res) => {
   const { email } = req.body;
   if (!email || !email.endsWith("@ccentrik.com")) {
@@ -99,22 +99,29 @@ router.post("/send-reset-email", async (req, res) => {
   }
 
   try {
-    // Firebase REST API — triggers Firebase's own email sending (inbox-reliable, DKIM-signed)
-    // Template subject & body are configured in Firebase Console →
-    //   Authentication → Email Templates → Password Reset
-    await axios.post(
-      `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${FIREBASE_WEB_API_KEY}`,
-      {
-        requestType: "PASSWORD_RESET",
-        email,
-        continueUrl: `${APP_URL}/reset-password`,
-      }
-    );
+    // handleCodeInApp: true — link points straight at our /reset-password page with the
+    // oobCode embedded, bypassing the Firebase-hosted action page entirely. ResetPassword.jsx
+    // already reads oobCode from the URL, so no frontend change is needed for this part.
+    const resetLink = await admin.auth().generatePasswordResetLink(email, {
+      url: `${APP_URL}/reset-password`,
+      handleCodeInApp: true,
+    });
+
+    let name;
+    try {
+      const { data } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("email", email.toLowerCase())
+        .single();
+      name = data?.full_name;
+    } catch { /* profile lookup is best-effort — email still sends without a name */ }
+
+    await sendPasswordResetEmail({ to: email, name, resetLink });
   } catch (err) {
     // Swallow all errors — don't reveal whether the account exists
-    const code = err?.response?.data?.error?.message;
-    if (code && code !== "EMAIL_NOT_FOUND") {
-      console.error("send-reset-email error:", code);
+    if (err?.code && err.code !== "auth/user-not-found") {
+      console.error("send-reset-email error:", err.message);
     }
   }
 

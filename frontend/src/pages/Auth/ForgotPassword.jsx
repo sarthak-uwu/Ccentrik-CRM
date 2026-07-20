@@ -1,10 +1,10 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from "../../firebase";
 import { Mail, ArrowLeft, Send, CheckCircle, XCircle, X } from "lucide-react";
 
 import blueLogo from "../../assets/Logo-blue.png";
+
+const API = (import.meta.env.VITE_API_URL ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000").replace(/^﻿/, "");
 
 function Toast({ type, message, onClose }) {
   return (
@@ -40,17 +40,18 @@ export default function ForgotPassword() {
 
     setLoading(true);
     try {
-      await sendPasswordResetEmail(auth, fullEmail);
-      showToast("success", `Reset link sent to ${fullEmail}`);
+      const res = await fetch(`${API}/api/auth/send-reset-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: fullEmail }),
+      });
+      if (!res.ok) throw new Error("Request failed");
+      // Backend always responds { ok: true } regardless of whether the account
+      // exists, to prevent email enumeration.
+      showToast("success", `If an account exists for ${fullEmail}, a reset link has been sent.`);
     } catch (err) {
-      console.error("Password reset error:", err.code, err.message);
-      if (err.code === "auth/user-not-found" || err.code === "auth/invalid-email") {
-        showToast("error", "No account found with this email.");
-      } else if (err.code === "auth/too-many-requests") {
-        showToast("error", "Too many attempts. Please wait a few minutes and try again.");
-      } else {
-        showToast("error", `Error: ${err.message || "Could not send reset email."}`);
-      }
+      console.error("Password reset error:", err.message);
+      showToast("error", "Could not send reset email. Please try again.");
     } finally {
       setLoading(false);
     }
