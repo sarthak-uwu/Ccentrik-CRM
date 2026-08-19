@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import { leadsService } from "../services/leadsService";
+import { pipelineService } from "../services/pipelineService";
 import { changeHistoryService } from "../services/changeHistoryService";
 import { supabase } from "../supabaseClient";
 import { auth } from "../firebase";
@@ -716,7 +717,7 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
 
   const { data: activities, isLoading: actLoading } = useQuery({
     queryKey: ["unified-timeline-pipeline", entry?.id],
-    queryFn:  () => leadsService.getUnifiedTimeline(entry.id),
+    queryFn:  () => pipelineService.getUnifiedTimeline(entry.id),
     enabled:  !!entry?.id,
     staleTime: 20000,
   });
@@ -818,7 +819,7 @@ export default function PipelineDetailPanel({ entry, onClose, onEdit, onConvert,
       <motion.aside key="pipe-panel"
         initial={{ x: "100%", opacity: 0.6 }} animate={{ x: 0, opacity: 1 }} exit={{ x: "100%", opacity: 0 }}
         transition={{ type: "spring", damping: 26, stiffness: 260, mass: 1 }}
-        style={{ position: "fixed", right: 0, top: 0, bottom: 0, zIndex: 9991, width: 520, maxWidth: "100vw", background: "var(--bg)", borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column", boxShadow: "-24px 0 64px rgba(0,0,0,0.18)" }}
+        style={{ position: "fixed", right: 0, top: 0, bottom: 0, zIndex: 9991, width: "50vw", minWidth: 520, maxWidth: "100vw", background: "var(--bg)", borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column", boxShadow: "-24px 0 64px rgba(0,0,0,0.18)" }}
       >
         {/* ── Header ── */}
         <div style={{ padding: "20px 24px 0", borderBottom: "1px solid var(--border)", background: "var(--surface)", flexShrink: 0 }}>

@@ -56,7 +56,7 @@ async function gmailFetch(path, token) {
   return r.json();
 }
 
-// ── Helper: CRM mapping — match recipient email across leads, customers, pipeline
+// ── Helper: CRM mapping — match recipient email across leads, customers, pipeline, deals
 async function mapEmailToCRM(toEmails) {
   for (const raw of toEmails) {
     const email = raw.replace(/^.*<(.+)>$/, "$1").trim().toLowerCase();
@@ -98,6 +98,28 @@ async function mapEmailToCRM(toEmails) {
         leadId: null, dealId: null, customerId: null, pipelineId: pipe.id,
         crmModule: "pipeline",
         crmRecordName: [pipe.contact_name, pipe.company_name].filter(Boolean).join(" / "),
+      };
+    }
+
+    // 4. Check deals — contact email lives in the JSON `notes` field (no plain
+    // email column on deals), so it can't be queried with .ilike() like the
+    // tables above. Fetch candidates and match in JS instead.
+    const { data: dealRows } = await supabase.from("deals")
+      .select("id, contact_name, company_name, title, notes")
+      .not("notes", "is", null)
+      .limit(1000);
+    const deal = (dealRows || []).find((d) => {
+      try {
+        return (JSON.parse(d.notes || "{}").email || "").trim().toLowerCase() === email;
+      } catch {
+        return false;
+      }
+    });
+    if (deal) {
+      return {
+        leadId: null, dealId: deal.id, customerId: null, pipelineId: null,
+        crmModule: "deal",
+        crmRecordName: deal.contact_name || deal.company_name || deal.title || "",
       };
     }
   }
@@ -356,8 +378,8 @@ router.post("/classify", authenticate, async (req, res) => {
   ].filter(Boolean).join("\n");
 
   // Determine related_type / related_id across all mapped modules
-  const related_type = log.lead_id ? "lead" : log.customer_id ? "customer" : log.pipeline_id ? "pipeline" : null;
-  const related_id   = log.lead_id || log.customer_id || log.pipeline_id || null;
+  const related_type = log.lead_id ? "lead" : log.customer_id ? "customer" : log.pipeline_id ? "pipeline" : log.deal_id ? "deal" : null;
+  const related_id   = log.lead_id || log.customer_id || log.pipeline_id || log.deal_id || null;
 
   const { data: activity, error: actErr } = await supabase.from("activities").insert({
     type:         "email_sent",

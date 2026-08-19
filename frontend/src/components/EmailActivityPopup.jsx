@@ -167,7 +167,7 @@ export default function EmailActivityPopup() {
             <span style={{ fontWeight: 600 }}>Sent:</span> {current.sent_at ? new Date(current.sent_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—"}
             {current.attachment_count > 0 && <span style={{ marginLeft: 8 }}>📎 {current.attachment_count} attachment{current.attachment_count > 1 ? "s" : ""}</span>}
           </div>
-          {(current.lead_id || current.customer_id || current.pipeline_id) && (
+          {(current.lead_id || current.customer_id || current.pipeline_id || current.deal_id) && (
             <div style={{ fontSize: 11, color: "#10B981", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
               <Check size={10} strokeWidth={3} />
               Matched to <strong>{current.crm_record_name || "a CRM record"}</strong> ({current.crm_module || "CRM"})

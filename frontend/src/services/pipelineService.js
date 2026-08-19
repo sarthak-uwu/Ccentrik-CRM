@@ -47,6 +47,21 @@ export const pipelineService = {
     if (error) throw error;
   },
 
+  // Activities logged against this pipeline entry (e.g. auto-synced emails,
+  // manually logged calls/follow-ups) — filtered by related_type/related_id
+  // since the activities table has no dedicated pipeline_id column.
+  async getUnifiedTimeline(pipelineId) {
+    const SEL = "*, user:profiles!activities_user_id_fkey(full_name, avatar_url), created_by_profile:profiles!activities_created_by_fkey(full_name, avatar_url)";
+    const { data, error } = await supabase
+      .from("activities")
+      .select(SEL)
+      .eq("related_type", "pipeline")
+      .eq("related_id", pipelineId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data || [];
+  },
+
   async convertToLead(pipelineId, convertedById) {
     const { data: p, error: fetchErr } = await supabase
       .from("pipeline")
