@@ -263,13 +263,20 @@ router.post("/sync", authenticate, async (req, res) => {
     try {
       const token = await getValidToken(account);
 
-      // Fetch sent emails since last sync (or last 24 h for first sync)
-      const since = account.last_sync_at
-        ? Math.floor(new Date(account.last_sync_at).getTime() / 1000)
-        : Math.floor((Date.now() - 24 * 3600 * 1000) / 1000);
+      // Fetch sent emails since last sync (or last 24 h for first sync).
+      // Gmail's after:/before: search operators only support day-granularity
+      // dates (YYYY/MM/DD) — a raw Unix timestamp is not parsed as a date and
+      // silently matches nothing. Use a day-level floor as a coarse search
+      // filter, then filter precisely by each message's actual Date header below.
+      const sinceDate = account.last_sync_at
+        ? new Date(account.last_sync_at)
+        : new Date(Date.now() - 24 * 3600 * 1000);
+      const searchFloor = new Date(sinceDate.getTime() - 24 * 3600 * 1000);
+      const gmailDate = (d) =>
+        `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${String(d.getUTCDate()).padStart(2, "0")}`;
 
       const listData = await gmailFetch(
-        `/messages?q=in:sent after:${since}&maxResults=15`,
+        `/messages?q=${encodeURIComponent(`in:sent after:${gmailDate(searchFloor)}`)}&maxResults=25`,
         token
       );
       const messages = listData.messages || [];
@@ -290,11 +297,15 @@ router.post("/sync", authenticate, async (req, res) => {
           const sentAt    = hdrMap["date"] ? new Date(hdrMap["date"]).toISOString() : new Date().toISOString();
           const attachCount = (msgData.payload?.parts || []).filter((p) => p.filename).length;
 
-          // Auto-map to CRM record across leads / customers / pipeline
+          // The Gmail search above is only day-granular — precisely exclude
+          // messages already covered by a previous sync.
+          if (new Date(sentAt) <= sinceDate) continue;
+
+          // Auto-map to CRM record across leads / customers / pipeline / deals
           const { leadId, dealId, customerId, pipelineId, crmModule, crmRecordName } = await mapEmailToCRM(toEmails);
 
           // Only log emails that match a CRM record — non-CRM emails are skipped
-          if (!leadId && !customerId && !pipelineId) continue;
+          if (!leadId && !customerId && !pipelineId && !dealId) continue;
 
           const { error: upsertErr } = await supabase.from("email_sync_log").upsert({
             email_account_id: account.id,
