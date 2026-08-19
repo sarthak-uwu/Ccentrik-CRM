@@ -167,13 +167,13 @@ const TEMP_CONFIG = {
 };
 
 // ─── CSV helpers ──────────────────────────────────────────────────────────────
-const CSV_HEADERS = ["Status","Company Name","Headquarters","Contact Name","Designation","Contact No","Value","Close Date","Remarks"];
+const CSV_HEADERS = ["Status","Company Name","Headquarters City","Contact Name","Designation","Contact No","Value","Close Date","Remarks"];
 function csvEsc(v) { return `"${(v||"").toString().replace(/"/g,'""')}"`; }
 function exportCSV(rows) {
   const lines = [CSV_HEADERS.map(csvEsc).join(",")];
   rows.forEach((d) => {
     const x = parseJSON(d.notes);
-    lines.push([d.stage, d.company_name||d.title, x.headquarters, d.contact_name, x.designation, x.contact, d.value||"", d.close_date||"", x.remarks].map(csvEsc).join(","));
+    lines.push([d.stage, d.company_name||d.title, x.city || x.headquarters, d.contact_name, x.designation, x.contact, d.value||"", d.close_date||"", x.remarks].map(csvEsc).join(","));
   });
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "deals.csv" });
@@ -199,7 +199,7 @@ function csvToPayload(row, userId) {
     stage: row["Status"] || "new",
     value: row["Value"] ? Number(row["Value"]) : null,
     close_date: row["Close Date"] || null,
-    notes: JSON.stringify({ headquarters: row["Headquarters"], designation: row["Designation"], contact: row["Contact No"], remarks: row["Remarks"] }),
+    notes: JSON.stringify({ city: row["Headquarters City"] || row["Headquarters"] || "", designation: row["Designation"], contact: row["Contact No"], remarks: row["Remarks"] }),
     created_by: userId,
   };
 }
@@ -265,11 +265,11 @@ function PipelineStatsBar({ deals }) {
   const atRisk = active.filter((d) => dealHealth(d).label !== "Active").length;
 
   const items = [
-    { v: fmtVal(totalPipeline) || "—", l: "pipeline",        c: "var(--accent)" },
-    { v: fmtVal(weightedForecast) || "—", l: "wtd forecast", c: "#8B5CF6" },
-    { v: fmtVal(wonMTD) || "—",     l: "won this month",     c: "#10B981" },
-    { v: fmtVal(avgDeal) || "—",    l: "avg deal size",      c: "#3B82F6" },
-    { v: atRisk,                    l: "at risk",             c: atRisk > 0 ? "#EF4444" : "var(--text-muted)" },
+    { v: fmtVal(totalPipeline) || "—", l: "Pipeline",        c: "var(--accent)" },
+    { v: fmtVal(weightedForecast) || "—", l: "WTD Forecast", c: "#8B5CF6" },
+    { v: fmtVal(wonMTD) || "—",     l: "Won This Month",     c: "#10B981" },
+    { v: fmtVal(avgDeal) || "—",    l: "Avg Deal Size",      c: "#3B82F6" },
+    { v: atRisk,                    l: "At Risk",             c: atRisk > 0 ? "#EF4444" : "var(--text-muted)" },
   ];
   return (
     <div style={{ display: "flex", alignItems: "center", padding: "7px 20px", borderBottom: "1px solid var(--border)", overflowX: "auto", gap: 0, flexShrink: 0 }}>
@@ -374,8 +374,10 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
       stage:        deal?.stage || "new",
       temperature:  deal?.temperature || "",
       company_name: deal?.company_name || deal?.title || "",
-      headquarters: extra.headquarters || "",
+      industry:     extra.industry || "",
       country:      findCountry(extra.country)?.code || "",
+      state:        extra.state || "",
+      city:         extra.city || extra.headquarters || "",
       contact_name: deal?.contact_name || "",
       designation:  extra.designation || "",
       email:        extra.email || "",
@@ -395,6 +397,7 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
   const [dealSubStatusRemarks, setDealSubStatusRemarks] = useState(extra.contact_sub_status?.remarks || "");
 
   const [selectedServices, setSelectedServices] = useState(() => extra.services || []);
+  const [customService, setCustomService] = useState(extra.custom_service || "");
   const [svcOpen, setSvcOpen] = useState(false);
   const toggleService = (svc) =>
     setSelectedServices((p) => p.includes(svc) ? p.filter((s) => s !== svc) : [...p, svc]);
@@ -406,6 +409,10 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
     }
     if (DEAL_SUB_STATUS_KEYS.includes(fd.stage) && !dealSubStatusReason) {
       toast.error("Please select a reason for the status before saving.");
+      return;
+    }
+    if (selectedServices.includes("Other Project Services") && !customService.trim()) {
+      toast.error("Please describe the custom / other service before saving.");
       return;
     }
     const subStatus = DEAL_SUB_STATUS_KEYS.includes(fd.stage) && dealSubStatusReason
@@ -420,7 +427,7 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
       value:        fd.value ? Number(fd.value) : null,
       close_date:   fd.close_date || null,
       assigned_to:  fd.assigned_to || null,
-      notes: toJSON({ headquarters: fd.headquarters, country: fd.country, designation: fd.designation, email: fd.email, contact: fd.contact, remarks: fd.remarks, lead_code: extra.lead_code || undefined, source: extra.source || undefined, industry: extra.industry || undefined, services: selectedServices.length ? selectedServices : undefined, contact_sub_status: subStatus }),
+      notes: toJSON({ ...extra, country: fd.country, state: fd.state, city: fd.city, designation: fd.designation, email: fd.email, contact: fd.contact, remarks: fd.remarks, lead_code: extra.lead_code || undefined, source: extra.source || undefined, industry: fd.industry || "", services: selectedServices.length ? selectedServices : undefined, custom_service: selectedServices.includes("Other Project Services") ? customService : "", contact_sub_status: subStatus }),
     });
   };
 
@@ -508,8 +515,11 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
               {errors.company_name && <span style={{ color: "var(--red)", fontSize: 11.5 }}>{errors.company_name.message}</span>}
             </div>
             <div>
-              <label className="crm-label">Headquarters</label>
-              <input className="crm-input" {...register("headquarters")} placeholder="Mumbai, India" />
+              <label className="crm-label">Industry</label>
+              <select className="crm-input" {...register("industry")}>
+                <option value="">Select industry</option>
+                {INDUSTRIES.map((i) => <option key={i}>{i}</option>)}
+              </select>
             </div>
             <div>
               <label className="crm-label">Country</label>
@@ -517,6 +527,14 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
                 <option value="">Select Country</option>
                 {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
               </select>
+            </div>
+            <div>
+              <label className="crm-label">State / Province</label>
+              <input className="crm-input" {...register("state")} placeholder="e.g. Maharashtra" />
+            </div>
+            <div>
+              <label className="crm-label">Headquarters City</label>
+              <input className="crm-input" {...register("city")} placeholder="e.g. Mumbai" />
             </div>
             <div>
               <label className="crm-label">Contact Name</label>
@@ -582,6 +600,11 @@ function DealModal({ deal, onClose, onSave, teamMembers = [], canReassign = fals
                     </span>
                   ))}
                 </div>
+              )}
+              {selectedServices.includes("Other Project Services") && (
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} style={{ marginTop: 8 }}>
+                  <input className="crm-input" value={customService} onChange={(e) => setCustomService(e.target.value)} placeholder="Describe the custom / other service..." />
+                </motion.div>
               )}
             </div>
             {canReassign && (
@@ -877,8 +900,8 @@ function DealCard({ deal, onEdit, onMarkWon, onMarkLost, onDelete, onOpen, onLoc
 
       {/* Footer: health indicator + HQ */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6, paddingTop: 8, borderTop: `1px solid ${divider}` }}>
-        {extra.headquarters && (
-          <span style={{ fontSize: 10.5, color: subMuted }}>📍 {extra.headquarters}</span>
+        {(extra.city || extra.headquarters) && (
+          <span style={{ fontSize: 10.5, color: subMuted }}>📍 {extra.city || extra.headquarters}</span>
         )}
         <span style={{
           display: "inline-flex", alignItems: "center", gap: 4, marginLeft: "auto",
@@ -2121,7 +2144,7 @@ export default function Deals() {
                             )}
                             {isVisible("services") && (() => {
                               const svcs = parseJSON(d.notes).services || parseJSON(d.linked_lead?.other_notes).services || [];
-                              const customSvc = parseJSON(d.linked_lead?.other_notes).custom_service;
+                              const customSvc = parseJSON(d.notes).custom_service || parseJSON(d.linked_lead?.other_notes).custom_service;
                               return (
                                 <td>
                                   {(svcs.length > 0 || customSvc) ? (
@@ -2148,8 +2171,8 @@ export default function Deals() {
                             )}
                             {isVisible("linkedin") && (
                               <td>
-                                {(extra.linkedin || d.linked_lead?.company_linkedin) ? (
-                                  <a href={extra.linkedin || d.linked_lead?.company_linkedin} target="_blank" rel="noopener noreferrer"
+                                {(extra.company_linkedin || extra.linkedin_url || d.linked_lead?.company_linkedin) ? (
+                                  <a href={extra.company_linkedin || extra.linkedin_url || d.linked_lead?.company_linkedin} target="_blank" rel="noopener noreferrer"
                                     onClick={(ev) => ev.stopPropagation()}
                                     style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, color: "#0A66C2", textDecoration: "none" }}>
                                     <ExternalLink size={10} strokeWidth={2} />
@@ -2188,11 +2211,11 @@ export default function Deals() {
                                   </span>
                                 ) : (
                                   <>
-                                    <motion.button className="btn-ghost" style={{ padding: "4px 8px" }} onClick={() => setEditDeal(d)} whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.85 }}><Pencil size={13} strokeWidth={1.75} /></motion.button>
-                                    {d.stage !== "won"  && <motion.button className="btn-ghost" style={{ padding: "4px 8px", color: "#10B981" }} onClick={() => handleMarkWon(d)} whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.85 }}><CheckCircle2 size={13} strokeWidth={1.75} /></motion.button>}
+                                    <motion.button className="btn-ghost" title="Edit" style={{ padding: "4px 8px" }} onClick={() => setEditDeal(d)} whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.85 }}><Pencil size={13} strokeWidth={1.75} /></motion.button>
+                                    {d.stage !== "won"  && <motion.button className="btn-ghost" title="Mark Won" style={{ padding: "4px 8px", color: "#10B981" }} onClick={() => handleMarkWon(d)} whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.85 }}><CheckCircle2 size={13} strokeWidth={1.75} /></motion.button>}
                                     {d.stage === "won"  && <motion.button className="btn-ghost" title="Add to Customers" style={{ padding: "4px 7px", fontSize: 10.5, fontWeight: 700, color: "#10B981", display: "flex", alignItems: "center", gap: 3, background: "rgba(16,185,129,0.08)", borderRadius: 6, border: "1px solid rgba(16,185,129,0.2)" }} onClick={() => setWonCustomerDeal(d)} whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.94 }}><Building2 size={11} /> Customer</motion.button>}
-                                    {d.stage !== "lost" && isSalesHead && <motion.button className="btn-ghost" style={{ padding: "4px 8px", color: "#EF4444" }} onClick={() => handleMarkLost(d)} whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.85 }}><XCircle size={13} strokeWidth={1.75} /></motion.button>}
-                                    {canDelete && <motion.button className="btn-ghost" style={{ padding: "4px 8px", color: "var(--red)" }} onClick={() => { if (window.confirm("Delete?")) deleteMutation.mutate(d.id); }} whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.85 }}><Trash2 size={13} strokeWidth={1.75} /></motion.button>}
+                                    {d.stage !== "lost" && isSalesHead && <motion.button className="btn-ghost" title="Mark Lost" style={{ padding: "4px 8px", color: "#EF4444" }} onClick={() => handleMarkLost(d)} whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.85 }}><XCircle size={13} strokeWidth={1.75} /></motion.button>}
+                                    {canDelete && <motion.button className="btn-ghost" title="Delete" style={{ padding: "4px 8px", color: "var(--red)" }} onClick={() => { if (window.confirm("Delete?")) deleteMutation.mutate(d.id); }} whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.85 }}><Trash2 size={13} strokeWidth={1.75} /></motion.button>}
                                     {canRevert && d.lead_id && (
                                       <div style={{ display: "flex", gap: 2 }}>
                                         <motion.button className="btn-ghost" title="Revert to Lead" style={{ padding: "3px 7px", fontSize: 10, fontWeight: 700, color: "#6366F1", display: "flex", alignItems: "center", gap: 3, background: "rgba(99,102,241,0.08)", borderRadius: 6, border: "1px solid rgba(99,102,241,0.2)" }} onClick={() => setRevertDeal({ deal: d, targetModule: "lead" })} whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.94 }}>

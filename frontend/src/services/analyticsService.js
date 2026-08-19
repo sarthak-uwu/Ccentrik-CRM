@@ -115,11 +115,23 @@ export const analyticsService = {
 
   async getDealsByStage() {
     const { data } = await supabase.from("deals").select("stage, value");
-    const stages = ["prospecting", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"];
-    return stages.map((stage) => {
-      const stageDeals = data?.filter((d) => d.stage === stage) || [];
+    // Must match the real deals.stage values (Deals.jsx FUNNEL_STATUSES) so this widget
+    // stays in sync with Revenue Over Time and every other deals-stage view in the app.
+    const stages = [
+      { key: "new",               label: "New" },
+      { key: "attempted_contact", label: "Attempted Contact" },
+      { key: "engaged",           label: "Engaged" },
+      { key: "contacted",         label: "Contacted" },
+      { key: "meeting_scheduled", label: "Meeting Scheduled" },
+      { key: "proposal_sent",     label: "Proposal Sent" },
+      { key: "negotiation",       label: "Negotiation" },
+      { key: "won",               label: "Won" },
+      { key: "lost",              label: "Lost" },
+    ];
+    return stages.map(({ key, label }) => {
+      const stageDeals = data?.filter((d) => d.stage === key) || [];
       return {
-        stage: stage.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+        stage: label,
         count: stageDeals.length,
         value: stageDeals.reduce((s, d) => s + (Number(d.value) || 0), 0),
       };

@@ -21,6 +21,7 @@ import { leadsService } from "../services/leadsService";
 import { teamService } from "../services/teamService";
 import { LeadModal } from "./Leads";
 import { actService } from "./Activities";
+import { deriveStatus } from "../utils/activityStatus";
 import { supabase } from "../supabaseClient";
 import toast from "react-hot-toast";
 import {
@@ -371,7 +372,7 @@ function SmartActivityStrip({ tasks = [], activities = [], meetings = [], comple
     const allTasks = tasks.filter((t) => !["done","cancelled"].includes(t.status));
     return [
       ...allTasks.filter((t) => t.due_date && isPast(new Date(t.due_date))),
-      ...activities.filter((a) => a.due_date && isPast(new Date(a.due_date))),
+      ...activities.filter((a) => deriveStatus(a) === "overdue"),
     ].length;
   }, [tasks, activities]);
   const [expanded, setExpanded] = useState(false);
@@ -384,7 +385,7 @@ function SmartActivityStrip({ tasks = [], activities = [], meetings = [], comple
 
     const overdue = [
       ...allTasks.filter((t) => t.due_date && isPast(new Date(t.due_date))).map((t) => ({ ...t, _cat: "overdue", _source: "task" })),
-      ...allActs.filter((a)  => a.due_date && isPast(new Date(a.due_date))).map((a) => ({ ...a, _cat: "overdue" })),
+      ...allActs.filter((a)  => deriveStatus(a) === "overdue").map((a) => ({ ...a, _cat: "overdue" })),
     ];
     const todayItems = [
       ...allTasks.filter((t) => t.due_date && isToday(new Date(t.due_date)) && !isPast(new Date(t.due_date))).map((t) => ({ ...t, _cat: "today", _source: "task" })),
@@ -765,7 +766,7 @@ function OrgActivitiesCenter({ tasks = [], activities = [], completedActivities 
 
   // Categorise
   const { overdue, pending, today, upcoming } = useMemo(() => ({
-    overdue:  filteredItems.filter((i) => i.due_date && isPast(new Date(i.due_date)) && !isToday(new Date(i.due_date))),
+    overdue:  filteredItems.filter((i) => i._source === "activity" ? deriveStatus(i) === "overdue" : (i.due_date && isPast(new Date(i.due_date)) && !isToday(new Date(i.due_date)))),
     today:    filteredItems.filter((i) => i.due_date && isToday(new Date(i.due_date))),
     upcoming: filteredItems.filter((i) => i.due_date && !isPast(new Date(i.due_date)) && !isToday(new Date(i.due_date))),
     pending:  filteredItems.filter((i) => !i.due_date),
@@ -780,7 +781,7 @@ function OrgActivitiesCenter({ tasks = [], activities = [], completedActivities 
       const mc = completedActivities.filter((i) => i.assigned_to === m.id || i.created_by === m.id || i.user_id === m.id);
       return {
         ...m,
-        overdue:   mi.filter((i) => i.due_date && isPast(new Date(i.due_date)) && !isToday(new Date(i.due_date))).length,
+        overdue:   mi.filter((i) => i._source === "activity" ? deriveStatus(i) === "overdue" : (i.due_date && isPast(new Date(i.due_date)) && !isToday(new Date(i.due_date)))).length,
         pending:   mi.filter((i) => !i.due_date).length,
         today:     mi.filter((i) => i.due_date && isToday(new Date(i.due_date))).length,
         upcoming:  mi.filter((i) => i.due_date && !isPast(new Date(i.due_date)) && !isToday(new Date(i.due_date))).length,
@@ -1886,11 +1887,11 @@ export default function Dashboard() {
     refetchOnWindowFocus: true,
   });
   const pendingActivities = useMemo(
-    () => _allActivities.filter((a) => !["done", "completed", "cancelled"].includes(a.status) && a.type !== "email_contact").map((a) => ({ ...a, _source: "activity" })),
+    () => _allActivities.filter((a) => { const ds = deriveStatus(a); return ds !== "completed" && ds !== "cancelled"; }).map((a) => ({ ...a, _source: "activity" })),
     [_allActivities]
   );
   const completedActivities = useMemo(
-    () => _allActivities.filter((a) => ["done", "completed"].includes(a.status) && a.type !== "email_contact").map((a) => ({ ...a, _source: "activity" })),
+    () => _allActivities.filter((a) => deriveStatus(a) === "completed").map((a) => ({ ...a, _source: "activity" })),
     [_allActivities]
   );
 
@@ -1946,7 +1947,7 @@ export default function Dashboard() {
     if (reminderFiredRef.current || !pendingActivities.length || !profile?.id) return;
 
     const overdueItems = pendingActivities.filter(
-      (a) => a.due_date && isPast(new Date(a.due_date)) && !isToday(new Date(a.due_date))
+      (a) => deriveStatus(a) === "overdue"
     );
     const todayItems = pendingActivities.filter(
       (a) => a.due_date && isToday(new Date(a.due_date))

@@ -17,7 +17,9 @@ import {
   Plus, PhoneCall, Video, FileText, CheckCircle2,
   Zap, Bell, RefreshCw, Download, Link2, ArrowRightLeft,
   IndianRupee, Target, AlertTriangle, History, RotateCcw, Users,
+  Globe, MapPin,
 } from "lucide-react";
+import { countryName } from "../constants/countries";
 import { format, formatDistanceToNow } from "date-fns";
 
 const FUNNEL_STATUSES = [
@@ -613,7 +615,7 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
       <motion.aside key="deal-panel"
         initial={{ x: "100%", opacity: 0.6 }} animate={{ x: 0, opacity: 1 }} exit={{ x: "100%", opacity: 0 }}
         transition={{ type: "spring", damping: 26, stiffness: 260, mass: 1 }}
-        style={{ position: "fixed", right: 0, top: 0, bottom: 0, zIndex: 9991, width: 520, maxWidth: "100vw", background: "var(--bg)", borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column", boxShadow: "-24px 0 64px rgba(0,0,0,0.18)" }}
+        style={{ position: "fixed", right: 0, top: 0, bottom: 0, zIndex: 9991, width: "50vw", minWidth: 520, maxWidth: "100vw", background: "var(--bg)", borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column", boxShadow: "-24px 0 64px rgba(0,0,0,0.18)" }}
       >
         {/* ── Header ── */}
         <div style={{ padding: "20px 24px 0", borderBottom: "1px solid var(--border)", background: "var(--surface)", flexShrink: 0 }}>
@@ -738,7 +740,7 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
               <span style={{ fontSize: 12, color: "var(--text-2)", fontWeight: 500 }}>{linkedLead.company_name || linkedLead.contact_name}</span>
               <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 8 }}>
                 {LEAD_STAGE_LABELS[linkedLead.stage] || linkedLead.stage}
-                {linkedLead.temperature && <span style={{ color: LEAD_TEMP_COLORS[linkedLead.temperature] || "var(--text-muted)", marginLeft: 4 }}>· {linkedLead.temperature}</span>}
+                {linkedLead.temperature && <span style={{ color: LEAD_TEMP_COLORS[linkedLead.temperature] || "var(--text-muted)", marginLeft: 4 }}>· {linkedLead.temperature.charAt(0).toUpperCase() + linkedLead.temperature.slice(1)}</span>}
               </span>
             </div>
             <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: "rgba(59,130,246,0.12)", color: "#3B82F6" }}>ORIGIN LEAD</span>
@@ -776,7 +778,10 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
               <InfoRow icon={User}        label="Contact Name"   value={deal.contact_name} />
               <InfoRow icon={Briefcase}   label="Designation"    value={extra.designation} />
               <InfoRow icon={Phone}       label="Contact No."    value={extra.contact} isPhone />
-              <InfoRow icon={Building2}   label="Headquarters"   value={extra.headquarters} />
+              {extra.industry && <InfoRow icon={Briefcase} label="Industry" value={extra.industry} />}
+              {extra.country  && <InfoRow icon={Globe}     label="Country"  value={countryName(extra.country) || extra.country} />}
+              {extra.state    && <InfoRow icon={MapPin}    label="State"    value={extra.state} />}
+              {(extra.city || extra.headquarters) && <InfoRow icon={MapPin} label="Headquarters City" value={extra.city || extra.headquarters} />}
               <InfoRow icon={IndianRupee} label="Deal Value"     value={deal.value ? `₹${Number(deal.value).toLocaleString("en-IN")}` : null} />
 
               {/* ── Currency Converter Calculator ── */}
@@ -865,12 +870,14 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
                 const svcs = extra.services?.length
                   ? extra.services
                   : (linkedLead ? parseJSON(linkedLead?.other_notes || "{}").services : []) || [];
-                if (!svcs.length) return null;
+                const customSvc = extra.custom_service || (linkedLead ? parseJSON(linkedLead?.other_notes || "{}").custom_service : "");
+                const allSvcs = [...svcs, ...(customSvc ? [customSvc] : [])];
+                if (!allSvcs.length) return null;
                 return (
                   <>
                     <SectionHead label="Services" />
                     <div style={{ marginTop: 4, marginBottom: 6 }}>
-                      {svcs.map((svc, i) => (
+                      {allSvcs.map((svc, i) => (
                         <div key={svc} style={{ fontSize: 13, padding: "2px 0", color: ["#3B82F6","#10B981","#F59E0B","#EF4444","#8B5CF6","#06B6D4","#EC4899","#84CC16"][i % 8] }}>{i + 1}. {svc}</div>
                       ))}
                     </div>
@@ -1071,6 +1078,7 @@ export default function DealDetailPanel({ deal, onClose, onEdit }) {
                 onCancelEdit={() => setEditingActivity(null)}
                 onSuccess={() => {
                   qc.invalidateQueries({ queryKey: ["unified-timeline-deal", deal.id] });
+                  if (linkedLead?.id) qc.invalidateQueries({ queryKey: ["unified-timeline-lead", linkedLead.id] });
                   qc.invalidateQueries({ queryKey: ["activities"] });
                   qc.invalidateQueries({ queryKey: ["deals-all"] });
                   qc.invalidateQueries({ queryKey: ["my-deals"] });

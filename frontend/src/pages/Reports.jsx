@@ -308,14 +308,7 @@ export default function Reports() {
     if (topPerformer) aiInsights.push(`${topPerformer.name} leads the team with ${topPerformer.won} won deals.`);
     if (avgWonPerMonth > 0) aiInsights.push(`Forecast: ~${forecastLeads} won leads next month based on current trend.`);
 
-    // Service breakdown
-    const serviceData = SAP_SERVICES.map((svc) => ({
-      name: svc.length > 22 ? svc.slice(0, 22) + "…" : svc,
-      fullName: svc,
-      value: leads.filter((l) => (parseJSON(l.other_notes).services || []).includes(svc)).length,
-    })).filter((d) => d.value > 0);
-
-    return { totalLeads, wonLeads, lostLeads, convRate, hotLeads, totalRevenue, openDeals, monthlyLeads, stageFunnel, sourceData, tempData, actData, teamPerf, forecastLeads, forecastData, funnelConversions, aiInsights, serviceData };
+    return { totalLeads, wonLeads, lostLeads, convRate, hotLeads, totalRevenue, openDeals, monthlyLeads, stageFunnel, sourceData, tempData, actData, teamPerf, forecastLeads, forecastData, funnelConversions, aiInsights };
   }, [filtered, raw]);
 
   if (isLoading) return (
@@ -560,23 +553,6 @@ export default function Reports() {
           )}
         </ChartCard>
       </div>
-
-      {/* ── Leads by Service ── */}
-      {computed.serviceData.length > 0 && (
-        <div style={{ marginBottom: 18 }}>
-          <ChartCard title="Leads by SAP Service" icon={Layers} iconColor="#3B82F6">
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={computed.serviceData} layout="vertical" margin={{ left: 8, right: 24 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
-                <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "var(--text-2)" }} axisLine={false} tickLine={false} width={130} />
-                <Tooltip content={<CrmTooltip />} formatter={(v, n, p) => [v, p.payload.fullName || p.payload.name]} />
-                <Bar dataKey="value" name="Leads" fill="#3B82F6" radius={[0, 4, 4, 0]} maxBarSize={20} />
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartCard>
-        </div>
-      )}
 
       {/* ── Revenue Forecast + Funnel Conversion ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 18, marginBottom: 18 }}>

@@ -645,6 +645,10 @@ export function LeadModal({ lead, onClose, onSave, teamMembers, canEditContactIn
       toast.error("Please select a reason for the status before saving.");
       return;
     }
+    if (selectedServices.includes("Other Project Services") && !customService.trim()) {
+      toast.error("Please describe the custom / other service before saving.");
+      return;
+    }
     const personsWithFlag = persons.map((p) => ({ ...p, is_primary: p.id === pocId }));
     await onSave({
       company_name:   formData.company_name,
@@ -757,7 +761,7 @@ export function LeadModal({ lead, onClose, onSave, teamMembers, canEditContactIn
               <input className="crm-input" {...register("state")} placeholder="e.g. Maharashtra" />
             </div>
             <div>
-              <label className="crm-label">City</label>
+              <label className="crm-label">Headquarters City</label>
               <input className="crm-input" {...register("city")} placeholder="e.g. Mumbai" />
             </div>
             <div>
@@ -946,7 +950,7 @@ export function LeadModal({ lead, onClose, onSave, teamMembers, canEditContactIn
             {/* ── Stage + Status ── */}
             <SectionDivider label="Status & Stage" />
             <div style={{ gridColumn: showSubStatus ? "1 / -1" : undefined }}>
-              <label className="crm-label">Lead Status</label>
+              <label className="crm-label">Stage</label>
               <select className="crm-input" {...register("stage")} onChange={(e) => { setValue("stage", e.target.value); setSubStatusReason(""); setSubStatusRemarks(""); }}>
                 {LEAD_STATUSES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
               </select>
@@ -1080,16 +1084,25 @@ function ProposalSentModal({ lead, onClose }) {
         contact_name: data.contact_name,
         value:        Number(data.value) || 0,
         stage:        "proposal_sent",
+        temperature:  lead.temperature || null,
         assigned_to:  lead.assigned_to || profile?.id,
         created_by:   profile?.id,
         lead_id:      lead.id,
         notes:        toJSON({
-          email:     leadEmail,
-          contact:   leadPhone,
-          remarks:   lead.remarks   || leadExtra.remarks || "",
-          lead_code: lead.lead_code || "",
-          industry:  lead.industry  || "",
-          country:   lead.country   || "",
+          email:           leadEmail,
+          contact:         leadPhone,
+          remarks:         lead.remarks   || leadExtra.remarks || "",
+          lead_code:       lead.lead_code || "",
+          industry:        leadExtra.industry || "",
+          country:         leadExtra.country  || "",
+          state:           leadExtra.state    || "",
+          city:            leadExtra.city     || "",
+          headquarters:    [leadExtra.city, leadExtra.state].filter(Boolean).join(", "),
+          services:        leadExtra.services || [],
+          custom_service:  leadExtra.custom_service || "",
+          website:          leadExtra.website || "",
+          company_linkedin: leadExtra.company_linkedin || "",
+          linkedin_url:     leadExtra.linkedin_url || "",
           source:    lead.source    || "",
         }),
       });
@@ -1199,16 +1212,25 @@ function ConvertDealModal({ lead, onClose }) {
         contact_name: data.contact_name,
         value:        Number(data.value) || 0,
         stage:        data.stage,
+        temperature:  lead.temperature || null,
         assigned_to:  lead.assigned_to || profile?.id,
         created_by:   profile?.id,
         lead_id:      lead.id,
         notes:        toJSON({
-          email:     leadEmail,
-          contact:   leadPhone,
-          remarks:   lead.remarks   || leadExtra.remarks || "",
-          lead_code: lead.lead_code || "",
-          industry:  lead.industry  || "",
-          country:   lead.country   || "",
+          email:           leadEmail,
+          contact:         leadPhone,
+          remarks:         lead.remarks   || leadExtra.remarks || "",
+          lead_code:       lead.lead_code || "",
+          industry:        leadExtra.industry || "",
+          country:         leadExtra.country  || "",
+          state:           leadExtra.state    || "",
+          city:            leadExtra.city     || "",
+          headquarters:    [leadExtra.city, leadExtra.state].filter(Boolean).join(", "),
+          services:        leadExtra.services || [],
+          custom_service:  leadExtra.custom_service || "",
+          website:          leadExtra.website || "",
+          company_linkedin: leadExtra.company_linkedin || "",
+          linkedin_url:     leadExtra.linkedin_url || "",
           source:    lead.source    || "",
         }),
       }).select().single();

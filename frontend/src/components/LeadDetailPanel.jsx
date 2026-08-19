@@ -828,7 +828,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
       <motion.aside key="panel"
         initial={{ x: "100%", opacity: 0.6 }} animate={{ x: 0, opacity: 1 }} exit={{ x: "100%", opacity: 0 }}
         transition={{ type: "spring", damping: 26, stiffness: 260, mass: 1 }}
-        style={{ position: "fixed", right: 0, top: 0, bottom: 0, zIndex: 9991, width: 520, maxWidth: "100vw", background: "var(--bg)", borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column", boxShadow: "-24px 0 64px rgba(0,0,0,0.18)" }}
+        style={{ position: "fixed", right: 0, top: 0, bottom: 0, zIndex: 9991, width: "50vw", minWidth: 520, maxWidth: "100vw", background: "var(--bg)", borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column", boxShadow: "-24px 0 64px rgba(0,0,0,0.18)" }}
       >
         {/* ── Header ── */}
         <div style={{ padding: "20px 24px 0", borderBottom: "1px solid var(--border)", background: "var(--surface)", flexShrink: 0 }}>
@@ -979,7 +979,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
               <InfoRow icon={Briefcase} label="Industry"         value={extra.industry} />
               {extra.country && <InfoRow icon={Globe}   label="Country" value={countryName(extra.country) || extra.country} />}
               {extra.state   && <InfoRow icon={MapPin}  label="State"   value={extra.state} />}
-              {extra.city    && <InfoRow icon={MapPin}  label="City"    value={extra.city} />}
+              {extra.city    && <InfoRow icon={MapPin}  label="Headquarters City"    value={extra.city} />}
               {(extra.services?.length > 0 || extra.custom_service) && (
                 <>
                   <SectionHead label="Services" />
@@ -1031,7 +1031,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                 </div>
               )}
               <div style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
-                <div style={{ fontSize: 10.5, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>Lead Stage</div>
+                <div style={{ fontSize: 10.5, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>Stage</div>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "6px 16px", borderRadius: 99, background: statusInfo.bg, border: `1px solid ${statusInfo.color}30`, fontSize: 13, fontWeight: 700, color: statusInfo.color }}>
                   <span style={{ width: 7, height: 7, borderRadius: "50%", background: statusInfo.color, boxShadow: `0 0 8px ${statusInfo.color}80` }} />
                   {statusInfo.label}
@@ -1247,6 +1247,7 @@ export default function LeadDetailPanel({ lead, onClose, onEdit, onConvert }) {
                 onCancelEdit={() => setEditingActivity(null)}
                 onSuccess={() => {
                   qc.invalidateQueries({ queryKey: ["unified-timeline-lead", lead.id] });
+                  if (linkedDeal?.id) qc.invalidateQueries({ queryKey: ["unified-timeline-deal", linkedDeal.id] });
                   qc.invalidateQueries({ queryKey: ["activities"] });
                   qc.invalidateQueries({ queryKey: ["inactive-lead-summary"] });
                   qc.invalidateQueries({ queryKey: ["dashboard-stats"] });

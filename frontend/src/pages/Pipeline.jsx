@@ -340,6 +340,7 @@ function PipelineFormModal({ entry, onClose, onSave, teamMembers = [], canAssign
   const [selectedCountry, setSelectedCountry] = useState(extra.country || "IN");
   const [supervisorId, setSupervisorId] = useState(extra.supervisor_id || "");
   const [selectedServices, setSelectedServices] = useState(extra.services || []);
+  const [customService, setCustomService] = useState(extra.custom_service || "");
   const [svcOpen, setSvcOpen] = useState(false);
 
   // Additional contact methods (LinkedIn, WhatsApp, etc. — not the contact person level)
@@ -416,6 +417,10 @@ function PipelineFormModal({ entry, onClose, onSave, teamMembers = [], canAssign
   const watchSource = watch("source");
 
   const handleSave = async (formData) => {
+    if (selectedServices.includes("Other Project Services") && !customService.trim()) {
+      toast.error("Please describe the custom / other service before saving.");
+      return;
+    }
     const filledPersons = persons.filter((p) => p.name?.trim());
     const activePoc = filledPersons.find((p) => p.id === pocId) || filledPersons[0] || {};
     const personsWithFlag = filledPersons.map((p) => ({ ...p, is_primary: p.id === (activePoc.id || pocId) }));
@@ -448,6 +453,7 @@ function PipelineFormModal({ entry, onClose, onSave, teamMembers = [], canAssign
         industry:             formData.industry || "",
         custom_source:        formData.source === "other" ? formData.custom_source : "",
         services:             selectedServices,
+        custom_service:       selectedServices.includes("Other Project Services") ? customService : "",
         contact_locked:       true,
         supervisor_id:        supervisorId || null,
       }),
@@ -498,7 +504,7 @@ function PipelineFormModal({ entry, onClose, onSave, teamMembers = [], canAssign
               <input className="crm-input" {...register("state")} placeholder="e.g. Maharashtra" />
             </div>
             <div>
-              <label className="crm-label">City</label>
+              <label className="crm-label">Headquarters City</label>
               <input className="crm-input" {...register("city")} placeholder="e.g. Mumbai" />
             </div>
 
@@ -603,6 +609,11 @@ function PipelineFormModal({ entry, onClose, onSave, teamMembers = [], canAssign
                   )}
                 </AnimatePresence>
               </div>
+              {selectedServices.includes("Other Project Services") && (
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} style={{ marginTop: 8 }}>
+                  <input className="crm-input" value={customService} onChange={(e) => setCustomService(e.target.value)} placeholder="Describe the custom / other service..." />
+                </motion.div>
+              )}
             </div>
 
             {/* ── 5. Lead Details ── */}

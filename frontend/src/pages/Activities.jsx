@@ -14,6 +14,7 @@ import Targets from "./Targets";
 import EmailActivityLog from "../components/EmailActivityLog";
 import EmailCommunicationCenter from "../components/EmailCommunicationCenter";
 import toast from "react-hot-toast";
+import { AUTO_COMPLETED_TYPES, CLOSED_STATUSES, deriveStatus } from "../utils/activityStatus";
 import {
   Plus, Search, Pencil, Trash2, X, Phone, Mail, FileText, Bell,
   Video, RefreshCw, Clock, Columns, CalendarDays,
@@ -243,32 +244,8 @@ function groupByTimeline(activities) {
 }
 
 // ─── Status Engine ────────────────────────────────────────────────────────────
-const AUTO_COMPLETED_TYPES = new Set(["note", "email_sent", "stage_change", "deal_created", "email_contact"]);
-
-// Statuses that close an activity (it leaves openEvents)
-const CLOSED_STATUSES = new Set(["done", "completed", "cancelled"]);
-
-// Derives the display status for a single activity — single source of truth.
-function deriveStatus(activity) {
-  if (AUTO_COMPLETED_TYPES.has(activity.type)) return "completed";
-  const s = activity.status || "";
-  // Explicitly set terminal/manual statuses
-  if (s === "done" || s === "completed")  return "completed";
-  if (s === "cancelled")                  return "cancelled";
-  if (s === "no_response")                return "no_response";
-  if (s === "follow_up_required")         return "follow_up_required";
-  if (s === "rescheduled")                return "rescheduled";
-  // Auto-compute from due_date for everything else (todo/in_progress/scheduled/empty)
-  if (activity.due_date) {
-    const due = new Date(activity.due_date);
-    const now = new Date();
-    const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
-    const todayEnd   = new Date(now); todayEnd.setHours(23, 59, 59, 999);
-    if (due >= todayStart && due <= todayEnd) return "due_today";
-    if (due < now) return "overdue";
-  }
-  return "scheduled";
-}
+// AUTO_COMPLETED_TYPES, CLOSED_STATUSES, deriveStatus now live in ../utils/activityStatus
+// (shared with Dashboard.jsx so both pages agree on activity status derivation).
 
 // ─── Group Activities By Entity (Company + POC) ───────────────────────────────
 function groupActivitiesByEntity(activities) {
@@ -2901,12 +2878,28 @@ export default function Activities() {
   const allGroupsFull  = useMemo(() => groupActivitiesByEntity(filtered), [filtered]);
   const selectedGroup  = selectedGroupKey ? (allGroupsFull.find(g => g.key === selectedGroupKey) ?? null) : null;
 
+  // Display order: Overdue -> Due Today -> Scheduled -> Completed. Stable sort — only
+  // reorders by group, does not change existing relative ordering within a group.
+  const orderedFiltered = useMemo(() => {
+    const rank = (a) => {
+      const ds = deriveStatus(a);
+      if (ds === "overdue") return 0;
+      if (ds === "due_today") return 1;
+      if (ds === "completed" || ds === "cancelled") return 3;
+      return 2; // scheduled + no_response/follow_up_required/rescheduled/pending
+    };
+    return filtered
+      .map((a, i) => ({ a, i }))
+      .sort((x, y) => (rank(x.a) - rank(y.a)) || (x.i - y.i))
+      .map(({ a }) => a);
+  }, [filtered]);
+
   // ── Table View Pagination ──────────────────────────────────────────────────
   const ACT_PAGE_SIZE = 30;
   const [actPage, setActPage] = useState(1);
   useEffect(() => { setActPage(1); }, [search, typeFilter, priorityFilter, assignedFilter, visibilityFilter, statusFilter, quickFilter]);
-  const actTotalPages = Math.ceil(filtered.length / ACT_PAGE_SIZE);
-  const pagedFiltered = filtered.slice((actPage - 1) * ACT_PAGE_SIZE, actPage * ACT_PAGE_SIZE);
+  const actTotalPages = Math.ceil(orderedFiltered.length / ACT_PAGE_SIZE);
+  const pagedFiltered = orderedFiltered.slice((actPage - 1) * ACT_PAGE_SIZE, actPage * ACT_PAGE_SIZE);
 
   // Card counts must use deriveStatus() — same logic as the filters — to avoid mismatches
   const _tStart = new Date(); _tStart.setHours(0, 0, 0, 0);

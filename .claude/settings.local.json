@@ -91,7 +91,12 @@
       "Bash(curl -s \"https://backend-gamma-nine-32.vercel.app/api/reports/role-dsr-cron?force=true\")",
       "Bash(vercel --prod --yes)",
       "Bash(node -e ' *)",
-      "Bash(node -e \"const fs=require\\('fs'\\);const f='C:/Users/Admin/Desktop/Ccentrik CRM/Ccentrik-CRM-Version 1/frontend/src/pages/Meetings.jsx';const c=fs.readFileSync\\(f,'utf8'\\);const endIdx=c.indexOf\\('// ─── Meeting Detail Panel'\\);console.log\\('endIdx:',endIdx\\);console.log\\('chars before \\(50\\):',JSON.stringify\\(c.slice\\(endIdx-50,endIdx+10\\)\\)\\);const startIdx=c.lastIndexOf\\('  return \\(', endIdx\\);const returnLine=c.indexOf\\('modal-overlay',startIdx\\);console.log\\('\\\\\\\\nreturn starts at:',startIdx\\);console.log\\('chars:',JSON.stringify\\(c.slice\\(startIdx,startIdx+150\\)\\)\\);\")"
+      "Bash(node -e \"const fs=require\\('fs'\\);const f='C:/Users/Admin/Desktop/Ccentrik CRM/Ccentrik-CRM-Version 1/frontend/src/pages/Meetings.jsx';const c=fs.readFileSync\\(f,'utf8'\\);const endIdx=c.indexOf\\('// ─── Meeting Detail Panel'\\);console.log\\('endIdx:',endIdx\\);console.log\\('chars before \\(50\\):',JSON.stringify\\(c.slice\\(endIdx-50,endIdx+10\\)\\)\\);const startIdx=c.lastIndexOf\\('  return \\(', endIdx\\);const returnLine=c.indexOf\\('modal-overlay',startIdx\\);console.log\\('\\\\\\\\nreturn starts at:',startIdx\\);console.log\\('chars:',JSON.stringify\\(c.slice\\(startIdx,startIdx+150\\)\\)\\);\")",
+      "Bash(firebase projects:list)",
+      "Bash(node shot2.mjs)",
+      "Bash(find . -maxdepth 2 -iname \"vercel.json\")",
+      "Bash(cat backend/vercel.json)",
+      "Bash(node --check routes/oauth.js)"
     ]
   }
 }
