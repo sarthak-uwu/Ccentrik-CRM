@@ -12,6 +12,7 @@ import {
   useSortable, arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import GlobalSearchBar from "../components/GlobalSearchBar";
 import { useAuth } from "../context/AuthContext";
 import { useCurrency } from "../context/CurrencyContext";
 import { analyticsService } from "../services/analyticsService";
@@ -2094,6 +2095,9 @@ export default function Dashboard() {
 
   return (
     <div style={{ padding: "20px 24px", maxWidth: 1500, margin: "0 auto" }}>
+
+      {/* ── Global Search ── */}
+      <GlobalSearchBar />
 
       {/* ── KPI Strip ── */}
       <div style={{ marginBottom: 16 }}>
