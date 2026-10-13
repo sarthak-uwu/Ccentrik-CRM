@@ -21,7 +21,6 @@ const Deals       = lazy(() => import("./pages/Deals"));
 const Customers   = lazy(() => import("./pages/Customers"));
 const Tasks       = lazy(() => import("./pages/Tasks"));
 const Meetings    = lazy(() => import("./pages/Meetings"));
-const Chat        = lazy(() => import("./pages/Chat"));
 const Team        = lazy(() => import("./pages/Team"));
 const Settings    = lazy(() => import("./pages/Settings"));
 const Activities  = lazy(() => import("./pages/Activities"));
@@ -112,7 +111,6 @@ export default function App() {
               <Route path="/meetings"    element={<Meetings />} />
               <Route path="/activities"  element={<Activities />} />
               <Route path="/dsr"         element={<DSR />} />
-              <Route path="/chat"        element={<Chat />} />
               <Route path="/reports"     element={<OwnerOrHeadRoute><Reports /></OwnerOrHeadRoute>} />
               <Route path="/analytics"   element={<Analytics />} />
               <Route path="/team"        element={<Team />} />

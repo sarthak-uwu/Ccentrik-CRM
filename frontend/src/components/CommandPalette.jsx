@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../supabaseClient";
 import {
   Search, LayoutDashboard, UserPlus, BriefcaseBusiness, Building2,
-  CalendarCheck, CalendarDays, PhoneCall, MessageSquare, BarChart3,
+  CalendarCheck, CalendarDays, PhoneCall, BarChart3,
   Users, Brain, Settings2, ArrowRight, Command, X, Zap, TrendingUp,
   Flame, Clock, Globe, Mic, Sparkles, PieChart,
 } from "lucide-react";
@@ -18,7 +18,6 @@ const NAV_ITEMS = [
   { label: "Tasks",        path: "/tasks",        icon: CalendarCheck,     category: "Navigate", hint: "Productivity center" },
   { label: "Meetings",     path: "/meetings",     icon: CalendarDays,      category: "Navigate", hint: "Schedule & calls" },
   { label: "Activities",   path: "/activities",   icon: PhoneCall,         category: "Navigate", hint: "Activity feed" },
-  { label: "Chat",         path: "/chat",         icon: MessageSquare,     category: "Navigate", hint: "Team collaboration" },
   { label: "Reports",      path: "/reports",      icon: BarChart3,         category: "Navigate", hint: "Analytics & insights" },
   { label: "Analytics",    path: "/analytics",    icon: PieChart,          category: "Navigate", hint: "Performance metrics" },
   { label: "Team",         path: "/team",         icon: Users,             category: "Navigate", hint: "Team management" },

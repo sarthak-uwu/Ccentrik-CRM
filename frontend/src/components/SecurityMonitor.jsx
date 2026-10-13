@@ -15,7 +15,7 @@ const PAGE_NAMES = {
   "/dashboard": "Dashboard", "/pipeline": "Pipeline", "/leads": "Leads",
   "/deals": "Deals", "/activities": "Activities", "/meetings": "Meetings",
   "/targets": "Targets", "/analytics": "Analytics", "/reports": "Reports",
-  "/dsr": "DSR", "/team": "Team", "/chat": "Chat",
+  "/dsr": "DSR", "/team": "Team",
   "/security-logs": "Security Logs", "/settings": "Settings",
 };
 

@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight,
   LayoutDashboard, Workflow, UserSearch, Handshake,
   Target, CalendarDays, Activity, ClipboardList,
-  MessageCircle, PieChart, TrendingUp, Users2, ShieldCheck, Brain,
+  PieChart, TrendingUp, Users2, ShieldCheck, Brain,
 } from "lucide-react";
 import logoWhite from "../../assets/logo-white.png";
 import logoBlue from "../../assets/Logo-blue.png";
@@ -30,7 +30,6 @@ const NAV = [
       { to: "/meetings",   icon: CalendarDays,   label: "Meetings"   },
       { to: "/activities", icon: Activity,       label: "Activities" },
       { to: "/dsr",        icon: ClipboardList,  label: "DSR"        },
-      { to: "/chat",       icon: MessageCircle,  label: "Chat"       },
     ],
   },
   {

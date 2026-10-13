@@ -25,7 +25,6 @@ const PAGE_TITLES = {
   "/customers":    { label: "Customer Hub",    sub: "Account management" },
   "/tasks":        { label: "Task Center",     sub: "" },
   "/meetings":     { label: "Meetings",        sub: "Schedule & manage calls" },
-  "/chat":         { label: "Team Chat",       sub: "Real-time collaboration" },
   "/analytics":    { label: "Analytics",       sub: "Performance metrics" },
   "/team":         { label: "Team",            sub: "Manage your team" },
   "/settings":     { label: "Settings",        sub: "Account & preferences" },

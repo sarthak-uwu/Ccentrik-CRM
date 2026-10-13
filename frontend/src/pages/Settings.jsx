@@ -409,7 +409,6 @@ function NotificationsTab({ profile, onUpdate }) {
     { key: "lead_assigned",    label: "Lead Assignments",  desc: "When a lead is assigned to you"     },
     { key: "task_due",         label: "Task Reminders",    desc: "When a task is due soon"            },
     { key: "deal_updated",     label: "Deal Updates",      desc: "When a deal you own is updated"    },
-    { key: "mention",          label: "Mentions",          desc: "When someone mentions you in chat" },
     { key: "meeting_reminder", label: "Meeting Reminders", desc: "Before your meetings start"        },
     { key: "team_update",      label: "Team Updates",      desc: "General team announcements"        },
   ];
