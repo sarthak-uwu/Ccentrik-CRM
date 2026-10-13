@@ -139,9 +139,13 @@ export const analyticsService = {
   },
 
   async getTeamPerformance() {
+    // Same filter the real Team page (teamService.getAll) uses — without it,
+    // this included every profile ever created, so a removed team member
+    // still showed up on the Dashboard leaderboard forever.
     const { data: profiles } = await supabase
       .from("profiles")
-      .select("id, full_name, avatar_url, role");
+      .select("id, full_name, avatar_url, role")
+      .neq("status", "deleted");
 
     const { data: leads } = await supabase.from("leads").select("assigned_to, stage");
     const { data: deals } = await supabase.from("deals").select("assigned_to, stage, value");
