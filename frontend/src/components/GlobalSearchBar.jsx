@@ -49,25 +49,30 @@ export default function GlobalSearchBar() {
     setLoading(true);
 
     Promise.all([
-      supabase.from("pipeline").select("id, company_name, contact_name, stage, temperature")
-        .or(`company_name.ilike.%${q}%,contact_name.ilike.%${q}%`).limit(5),
+      // "Pipeline" has no table of its own — a migration unified it into
+      // leads (stage='pipeline'); Dashboard's own getContextRoute() makes
+      // this exact distinction already. One query, split by stage below,
+      // rather than a second query against a table that no longer exists.
       supabase.from("leads").select("id, company_name, contact_name, stage, temperature")
-        .or(`company_name.ilike.%${q}%,contact_name.ilike.%${q}%`).limit(5),
+        .or(`company_name.ilike.%${q}%,contact_name.ilike.%${q}%`).limit(10),
       supabase.from("deals").select("id, company_name, title, stage, value")
         .or(`company_name.ilike.%${q}%,title.ilike.%${q}%`).limit(5),
       supabase.from("customers").select("id, company_name, contact_name, status")
         .or(`company_name.ilike.%${q}%,contact_name.ilike.%${q}%`).limit(5),
     ])
-      .then(([pipelineRes, leadsRes, dealsRes, customersRes]) => {
+      .then(([leadsRes, dealsRes, customersRes]) => {
         if (cancelled) return;
+        const leadRows = leadsRes.data || [];
+        const pipelineRows = leadRows.filter((r) => r.stage === "pipeline").slice(0, 5);
+        const leadOnlyRows = leadRows.filter((r) => r.stage !== "pipeline").slice(0, 5);
         setResults([
-          ...(pipelineRes.data || []).map((r) => ({
+          ...pipelineRows.map((r) => ({
             type: "pipeline", id: r.id,
             title: r.company_name || r.contact_name || "Pipeline entry",
-            sub: [r.contact_name, r.stage].filter(Boolean).join(" · "),
+            sub: [r.contact_name, r.temperature].filter(Boolean).join(" · "),
             path: `/pipeline?entry=${r.id}`,
           })),
-          ...(leadsRes.data || []).map((r) => ({
+          ...leadOnlyRows.map((r) => ({
             type: "lead", id: r.id,
             title: r.company_name || r.contact_name || "Lead",
             sub: [r.contact_name, r.stage].filter(Boolean).join(" · "),
