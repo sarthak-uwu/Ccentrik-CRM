@@ -774,17 +774,13 @@ function EmailTab({ profile }) {
     <div style={{ maxWidth: 560 }}>
 
       {/* ── Section 0: Calendar & Video Integrations ───────────────────── */}
-      <h2 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.3px" }}>Email &amp; Calendar Integrations</h2>
-      <p style={{ margin: "0 0 24px", fontSize: 14, fontWeight: 500, color: "var(--text-muted)", lineHeight: 1.6 }}>
-        Connect your business accounts once to enable email sync, meeting scheduling, calendar integration, and automatic meeting link generation.
-      </p>
+      <h2 style={{ margin: "0 0 12px", fontSize: 18, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.3px" }}>Email &amp; Calendar</h2>
 
-      {/* Google Workspace card */}
-      <div style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 16, padding: 28, marginBottom: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
-          {/* Google Logo */}
-          <div style={{ width: 44, height: 44, borderRadius: 12, border: "1px solid #E5E7EB", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: "#FAFAFA" }}>
-            <svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      {/* Google Workspace card — compact single row */}
+      <div style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 12, padding: "14px 16px", marginBottom: 10, boxShadow: "0 1px 4px rgba(0,0,0,0.03)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #E5E7EB", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: "#FAFAFA" }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
               <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
               <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
@@ -792,68 +788,44 @@ function EmailTab({ profile }) {
             </svg>
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 17, fontWeight: 700, color: "var(--text)" }}>Google Workspace</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>Google Workspace</span>
               {googleConnected
-                ? <span style={{ fontSize: 12, fontWeight: 600, color: "#16A34A", background: "#DCFCE7", padding: "3px 10px", borderRadius: 100, border: "1px solid #BBF7D0" }}>Connected</span>
-                : <span style={{ fontSize: 12, fontWeight: 600, color: "#64748B", background: "#F1F5F9", padding: "3px 10px", borderRadius: 100, border: "1px solid #E2E8F0" }}>Not Connected</span>}
+                ? <span style={{ fontSize: 11, fontWeight: 600, color: "#16A34A", background: "#DCFCE7", padding: "2px 8px", borderRadius: 100 }}>Connected</span>
+                : <span style={{ fontSize: 11, fontWeight: 600, color: "#64748B", background: "#F1F5F9", padding: "2px 8px", borderRadius: 100 }}>Not Connected</span>}
             </div>
-            <p style={{ margin: "0 0 12px", fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
-              Syncs sent email, calendar, and generates Google Meet links automatically.
-              {hasAppPassword && !googleConnected && (
-                <> Emails already send via your App Password below — this only adds Calendar sync &amp; Meet links.</>
-              )}
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>
+              {googleConnected ? (oauthStatus.google_meet?.email || "Email sync, Calendar, Meet links") : "Email sync, Calendar sync, Meet links"}
             </p>
-            {googleConnected && oauthStatus.google_meet?.email && (
-              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
-                <Mail size={12} />
-                <span>{oauthStatus.google_meet.email}</span>
-              </div>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+            <button
+              onClick={handleConnectGoogle}
+              disabled={oauthConnecting.google}
+              style={{ display: "flex", alignItems: "center", gap: 5, padding: googleConnected ? "6px 12px" : "6px 14px", borderRadius: 7, background: googleConnected ? "#EFF6FF" : "#2563EB", border: googleConnected ? "1px solid #BFDBFE" : "none", cursor: oauthConnecting.google ? "wait" : "pointer", fontSize: 12.5, fontWeight: 600, color: googleConnected ? "#2563EB" : "#FFFFFF", fontFamily: "inherit", whiteSpace: "nowrap" }}
+            >
+              {oauthConnecting.google ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : googleConnected ? <RefreshCw size={12} /> : <Link2 size={12} />}
+              {oauthConnecting.google ? "…" : googleConnected ? "Reconnect" : "Connect"}
+            </button>
+            {googleConnected && (
+              <button
+                onClick={handleDisconnectGoogle}
+                disabled={oauthDisconnecting.google}
+                aria-label="Disconnect Google"
+                style={{ display: "flex", alignItems: "center", padding: "6px 8px", borderRadius: 7, background: "var(--surface-2)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)" }}
+              >
+                {oauthDisconnecting.google ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
+              </button>
             )}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {googleConnected ? (
-                <>
-                  <button
-                    onClick={handleConnectGoogle}
-                    disabled={oauthConnecting.google}
-                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 9, background: "#EFF6FF", border: "1px solid #BFDBFE", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#2563EB", fontFamily: "inherit" }}
-                  >
-                    {oauthConnecting.google ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={13} />}
-                    Reconnect
-                  </button>
-                  <button
-                    onClick={handleDisconnectGoogle}
-                    disabled={oauthDisconnecting.google}
-                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 9, background: "var(--surface-2)", border: "1px solid var(--border)", cursor: "pointer", fontSize: 13, fontWeight: 500, color: "var(--text-muted)", fontFamily: "inherit" }}
-                  >
-                    {oauthDisconnecting.google ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />}
-                    Disconnect
-                  </button>
-                </>
-              ) : (
-                <button
-                  onClick={handleConnectGoogle}
-                  disabled={oauthConnecting.google}
-                  style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 20px", borderRadius: 9, background: "#2563EB", border: "none", cursor: oauthConnecting.google ? "wait" : "pointer", fontSize: 13, fontWeight: 600, color: "#FFFFFF", fontFamily: "inherit" }}
-                >
-                  {oauthConnecting.google ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Link2 size={13} />}
-                  {oauthConnecting.google ? "Redirecting…" : "Connect Google"}
-                </button>
-              )}
-            </div>
-            <p style={{ margin: "12px 0 0", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
-              Only sent-email metadata is stored, never content. Gmail Sync requires an @ccentrik.com account.
-            </p>
           </div>
         </div>
       </div>
 
-      {/* Microsoft 365 card */}
-      <div style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 16, padding: 28, marginBottom: 28, boxShadow: "0 2px 12px rgba(0,0,0,0.05)" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
-          {/* Microsoft Logo */}
-          <div style={{ width: 44, height: 44, borderRadius: 12, border: "1px solid #E5E7EB", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: "#FAFAFA" }}>
-            <svg width="22" height="22" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg">
+      {/* Microsoft 365 card — compact single row */}
+      <div style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 12, padding: "14px 16px", marginBottom: 20, boxShadow: "0 1px 4px rgba(0,0,0,0.03)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #E5E7EB", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: "#FAFAFA" }}>
+            <svg width="15" height="15" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg">
               <rect x="1" y="1" width="10" height="10" fill="#F25022"/>
               <rect x="12" y="1" width="10" height="10" fill="#7FBA00"/>
               <rect x="1" y="12" width="10" height="10" fill="#00A4EF"/>
@@ -861,52 +833,35 @@ function EmailTab({ profile }) {
             </svg>
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 17, fontWeight: 700, color: "var(--text)" }}>Microsoft 365</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>Microsoft 365</span>
               {microsoftConnected
-                ? <span style={{ fontSize: 12, fontWeight: 600, color: "#16A34A", background: "#DCFCE7", padding: "3px 10px", borderRadius: 100, border: "1px solid #BBF7D0" }}>Connected</span>
-                : <span style={{ fontSize: 12, fontWeight: 600, color: "#64748B", background: "#F1F5F9", padding: "3px 10px", borderRadius: 100, border: "1px solid #E2E8F0" }}>Not Connected</span>}
+                ? <span style={{ fontSize: 11, fontWeight: 600, color: "#16A34A", background: "#DCFCE7", padding: "2px 8px", borderRadius: 100 }}>Connected</span>
+                : <span style={{ fontSize: 11, fontWeight: 600, color: "#64748B", background: "#F1F5F9", padding: "2px 8px", borderRadius: 100 }}>Not Connected</span>}
             </div>
-            <p style={{ margin: "0 0 12px", fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
-              Syncs Outlook email and calendar, and generates Microsoft Teams meeting links automatically.
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>
+              {microsoftConnected ? (oauthStatus.microsoft_teams?.email || "Outlook sync, Teams links") : "Outlook sync, Teams links"}
             </p>
-            {microsoftConnected && oauthStatus.microsoft_teams?.email && (
-              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
-                <Mail size={12} />
-                <span>{oauthStatus.microsoft_teams.email}</span>
-              </div>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+            <button
+              onClick={handleConnectMicrosoft}
+              disabled={oauthConnecting.microsoft}
+              style={{ display: "flex", alignItems: "center", gap: 5, padding: microsoftConnected ? "6px 12px" : "6px 14px", borderRadius: 7, background: microsoftConnected ? "#EFF6FF" : "#5B21B6", border: microsoftConnected ? "1px solid #BFDBFE" : "none", cursor: oauthConnecting.microsoft ? "wait" : "pointer", fontSize: 12.5, fontWeight: 600, color: microsoftConnected ? "#2563EB" : "#FFFFFF", fontFamily: "inherit", whiteSpace: "nowrap" }}
+            >
+              {oauthConnecting.microsoft ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : microsoftConnected ? <RefreshCw size={12} /> : <Link2 size={12} />}
+              {oauthConnecting.microsoft ? "…" : microsoftConnected ? "Reconnect" : "Connect"}
+            </button>
+            {microsoftConnected && (
+              <button
+                onClick={handleDisconnectMicrosoft}
+                disabled={oauthDisconnecting.microsoft}
+                aria-label="Disconnect Microsoft"
+                style={{ display: "flex", alignItems: "center", padding: "6px 8px", borderRadius: 7, background: "var(--surface-2)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)" }}
+              >
+                {oauthDisconnecting.microsoft ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
+              </button>
             )}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {microsoftConnected ? (
-                <>
-                  <button
-                    onClick={handleConnectMicrosoft}
-                    disabled={oauthConnecting.microsoft}
-                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 9, background: "#EFF6FF", border: "1px solid #BFDBFE", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#2563EB", fontFamily: "inherit" }}
-                  >
-                    {oauthConnecting.microsoft ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={13} />}
-                    Reconnect
-                  </button>
-                  <button
-                    onClick={handleDisconnectMicrosoft}
-                    disabled={oauthDisconnecting.microsoft}
-                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 9, background: "var(--surface-2)", border: "1px solid var(--border)", cursor: "pointer", fontSize: 13, fontWeight: 500, color: "var(--text-muted)", fontFamily: "inherit" }}
-                  >
-                    {oauthDisconnecting.microsoft ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />}
-                    Disconnect
-                  </button>
-                </>
-              ) : (
-                <button
-                  onClick={handleConnectMicrosoft}
-                  disabled={oauthConnecting.microsoft}
-                  style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 20px", borderRadius: 9, background: "#5B21B6", border: "none", cursor: oauthConnecting.microsoft ? "wait" : "pointer", fontSize: 13, fontWeight: 600, color: "#FFFFFF", fontFamily: "inherit" }}
-                >
-                  {oauthConnecting.microsoft ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Link2 size={13} />}
-                  {oauthConnecting.microsoft ? "Redirecting…" : "Connect Microsoft"}
-                </button>
-              )}
-            </div>
           </div>
         </div>
       </div>
@@ -914,62 +869,66 @@ function EmailTab({ profile }) {
       <div style={{ height: 1, background: "var(--border)", margin: "4px 0 28px" }} />
 
       {/* ── Section 1: Meeting Email Password ─────────────────────────── */}
-      <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700, color: "var(--text)" }}>Meeting Email Settings</h3>
-      <p style={{ margin: "0 0 16px", fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
-        Meeting invites send from <strong>{profile?.email}</strong> once a Gmail App Password is on file.
-      </p>
-
-      {hasAppPassword && !replacing ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: "#DCFCE7", border: "1px solid #BBF7D0", borderRadius: 10, padding: "12px 14px", color: "#166534", fontSize: 13.5 }}>
-          <Check size={16} />
-          <span style={{ flex: "1 1 220px" }}><strong>Connected.</strong> Invites are sent from {profile?.email}.</span>
-          <button type="button" onClick={() => setReplacing(true)}
-            style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #86EFAC", background: "#fff", cursor: "pointer", fontWeight: 600, fontFamily: "inherit" }}>
-            Replace
-          </button>
-        </div>
-      ) : hasAppPassword === null ? null : (
-        <>
-          <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 12.5, color: "#1E40AF", lineHeight: 1.6 }}>
-            myaccount.google.com → Security → 2-Step Verification → App passwords → create one, then paste the 16-character code below.
-          </div>
-
-          <div style={{ marginBottom: 14 }}>
-            <label className="crm-label">Gmail App Password <span style={{ color: "#EF4444" }}>*</span></label>
-            <div style={{ position: "relative" }}>
-              <input
-                className="crm-input"
-                type={showPw ? "text" : "password"}
-                value={appPassword}
-                onChange={(e) => setAppPassword(e.target.value)}
-                placeholder="xxxx xxxx xxxx xxxx"
-                style={{ paddingRight: 40, fontFamily: "monospace", letterSpacing: "0.12em" }}
-              />
-              <button type="button" onClick={() => setShowPw((v) => !v)}
-                style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 2 }}>
-                {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
-              </button>
+      <div style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 12, padding: "14px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.03)" }}>
+        {hasAppPassword && !replacing ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #E5E7EB", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: "#FAFAFA" }}>
+              <Mail size={14} />
             </div>
-          </div>
-
-          <div style={{ display: "flex", gap: 10 }}>
-            <button
-              className="btn-primary"
-              onClick={handleSave}
-              disabled={saving || !appPassword.trim()}
-              style={{ display: "flex", alignItems: "center", gap: 6 }}
-            >
-              {saving ? "Saving…" : saved ? <><Check size={14} /> Saved!</> : "Save Email Password"}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>Meeting Email</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#16A34A", background: "#DCFCE7", padding: "2px 8px", borderRadius: 100 }}>Connected</span>
+              </div>
+              <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>{profile?.email}</p>
+            </div>
+            <button type="button" onClick={() => setReplacing(true)}
+              style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap" }}>
+              Replace
             </button>
-            {replacing && (
-              <button type="button" onClick={() => { setReplacing(false); setAppPassword(""); }}
-                style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontFamily: "inherit" }}>
-                Cancel
-              </button>
-            )}
           </div>
-        </>
-      )}
+        ) : hasAppPassword === null ? null : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>Meeting Email</span>
+              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>— sends as {profile?.email}</span>
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ position: "relative" }}>
+                <input
+                  className="crm-input"
+                  type={showPw ? "text" : "password"}
+                  value={appPassword}
+                  onChange={(e) => setAppPassword(e.target.value)}
+                  placeholder="Gmail App Password — xxxx xxxx xxxx xxxx"
+                  style={{ paddingRight: 36, fontFamily: "monospace", letterSpacing: "0.1em", fontSize: 13 }}
+                />
+                <button type="button" onClick={() => setShowPw((v) => !v)}
+                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 2 }}>
+                  {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+              <p style={{ margin: "5px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>myaccount.google.com → Security → App passwords</p>
+            </div>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={handleSave}
+                disabled={saving || !appPassword.trim()}
+                style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 7, border: "none", background: saving || !appPassword.trim() ? "#93C5FD" : "#2563EB", color: "#fff", fontSize: 12.5, fontWeight: 600, cursor: saving ? "wait" : "pointer", fontFamily: "inherit" }}
+              >
+                {saving ? "Saving…" : saved ? <><Check size={13} /> Saved</> : "Save"}
+              </button>
+              {replacing && (
+                <button type="button" onClick={() => { setReplacing(false); setAppPassword(""); }}
+                  style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 12.5, fontFamily: "inherit" }}>
+                  Cancel
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
