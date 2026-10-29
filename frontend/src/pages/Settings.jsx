@@ -932,69 +932,6 @@ function EmailTab({ profile }) {
         </div>
       </div>
 
-      <div style={{ height: 1, background: "var(--border)", margin: "4px 0 28px" }} />
-
-      {/* ── Section 1: Meeting Email Password ─────────────────────────── */}
-      <div style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 12, padding: "14px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.03)" }}>
-        {hasAppPassword && !replacing ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #E5E7EB", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: "#FAFAFA" }}>
-              <Mail size={14} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>Meeting Email</span>
-                <span style={{ fontSize: 11, fontWeight: 600, color: "#16A34A", background: "#DCFCE7", padding: "2px 8px", borderRadius: 100 }}>Connected</span>
-              </div>
-              <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>{profile?.email}</p>
-            </div>
-            <button type="button" onClick={() => setReplacing(true)}
-              style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap" }}>
-              Replace
-            </button>
-          </div>
-        ) : hasAppPassword === null ? null : (
-          <>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>Meeting Email</span>
-              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>— sends as {profile?.email}</span>
-            </div>
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ position: "relative" }}>
-                <input
-                  className="crm-input"
-                  type={showPw ? "text" : "password"}
-                  value={appPassword}
-                  onChange={(e) => setAppPassword(e.target.value)}
-                  placeholder="Gmail App Password — xxxx xxxx xxxx xxxx"
-                  style={{ paddingRight: 36, fontFamily: "monospace", letterSpacing: "0.1em", fontSize: 13 }}
-                />
-                <button type="button" onClick={() => setShowPw((v) => !v)}
-                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 2 }}>
-                  {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-              <p style={{ margin: "5px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>myaccount.google.com → Security → App passwords</p>
-            </div>
-
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                onClick={handleSave}
-                disabled={saving || !appPassword.trim()}
-                style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 7, border: "none", background: saving || !appPassword.trim() ? "#93C5FD" : "#2563EB", color: "#fff", fontSize: 12.5, fontWeight: 600, cursor: saving ? "wait" : "pointer", fontFamily: "inherit" }}
-              >
-                {saving ? "Saving…" : saved ? <><Check size={13} /> Saved</> : "Save"}
-              </button>
-              {replacing && (
-                <button type="button" onClick={() => { setReplacing(false); setAppPassword(""); }}
-                  style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 12.5, fontFamily: "inherit" }}>
-                  Cancel
-                </button>
-              )}
-            </div>
-          </>
-        )}
-      </div>
     </div>
   );
 }
