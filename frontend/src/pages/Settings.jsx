@@ -776,9 +776,75 @@ function EmailTab({ profile }) {
       {/* ── Section 0: Calendar & Video Integrations ───────────────────── */}
       <h2 style={{ margin: "0 0 12px", fontSize: 18, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.3px" }}>Email &amp; Calendar</h2>
 
-      {/* Google Workspace card — compact single row */}
+      {/* Email card — ONE control, not two. The App Password is what actually
+          sends meeting invites (backend/routes/meetings.js only ever reads
+          mail_app_password, never the Google OAuth grant) — Google Workspace
+          below is a genuinely separate, additive capability (Calendar sync +
+          real Meet links), not an alternate way to send email, so it lives
+          as a secondary row inside the same card instead of its own card. */}
       <div style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 12, padding: "14px 16px", marginBottom: 10, boxShadow: "0 1px 4px rgba(0,0,0,0.03)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {hasAppPassword && !replacing ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #E5E7EB", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: "#FAFAFA" }}>
+              <Mail size={14} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>Email</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#16A34A", background: "#DCFCE7", padding: "2px 8px", borderRadius: 100 }}>Connected</span>
+              </div>
+              <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>Meeting invites send from {profile?.email}</p>
+            </div>
+            <button type="button" onClick={() => setReplacing(true)}
+              style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap" }}>
+              Replace
+            </button>
+          </div>
+        ) : hasAppPassword === null ? null : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>Email</span>
+              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>— sends meeting invites as {profile?.email}</span>
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ position: "relative" }}>
+                <input
+                  className="crm-input"
+                  type={showPw ? "text" : "password"}
+                  value={appPassword}
+                  onChange={(e) => setAppPassword(e.target.value)}
+                  placeholder="Gmail App Password — xxxx xxxx xxxx xxxx"
+                  style={{ paddingRight: 36, fontFamily: "monospace", letterSpacing: "0.1em", fontSize: 13 }}
+                />
+                <button type="button" onClick={() => setShowPw((v) => !v)}
+                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 2 }}>
+                  {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+              <p style={{ margin: "5px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>myaccount.google.com → Security → App passwords</p>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={handleSave}
+                disabled={saving || !appPassword.trim()}
+                style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 7, border: "none", background: saving || !appPassword.trim() ? "#93C5FD" : "#2563EB", color: "#fff", fontSize: 12.5, fontWeight: 600, cursor: saving ? "wait" : "pointer", fontFamily: "inherit" }}
+              >
+                {saving ? "Saving…" : saved ? <><Check size={13} /> Saved</> : "Save"}
+              </button>
+              {replacing && (
+                <button type="button" onClick={() => { setReplacing(false); setAppPassword(""); }}
+                  style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 12.5, fontFamily: "inherit" }}>
+                  Cancel
+                </button>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Google Workspace — same weight as Email above, just one row of the
+            same card instead of its own separate card. Equally important:
+            this is the only way to get real Calendar sync + auto Meet links. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
           <div style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #E5E7EB", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: "#FAFAFA" }}>
             <svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -795,7 +861,7 @@ function EmailTab({ profile }) {
                 : <span style={{ fontSize: 11, fontWeight: 600, color: "#64748B", background: "#F1F5F9", padding: "2px 8px", borderRadius: 100 }}>Not Connected</span>}
             </div>
             <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>
-              {googleConnected ? (oauthStatus.google_meet?.email || "Email sync, Calendar, Meet links") : "Email sync, Calendar sync, Meet links"}
+              {googleConnected ? (oauthStatus.google_meet?.email || "Calendar sync + Meet links") : "Calendar sync + real Meet links for meetings"}
             </p>
           </div>
           <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
