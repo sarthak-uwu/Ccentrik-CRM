@@ -737,6 +737,18 @@ function EmailTab({ profile }) {
   const [showPw, setShowPw]           = useState(false);
   const [saving, setSaving]           = useState(false);
   const [saved,  setSaved]            = useState(false);
+  // Whether a password is ALREADY on file — without this, the form has no way
+  // to know it was already saved, so it kept showing "not connected" forever
+  // even right after a successful save (only a 3s toast said otherwise).
+  const [hasAppPassword, setHasAppPassword] = useState(null); // null = loading
+  const [replacing, setReplacing] = useState(false);
+
+  useEffect(() => {
+    if (!profile?.id) return;
+    supabase.from("profiles").select("mail_app_password").eq("id", profile.id).single()
+      .then(({ data }) => setHasAppPassword(!!data?.mail_app_password))
+      .catch(() => setHasAppPassword(false));
+  }, [profile?.id]);
 
   const handleSave = async () => {
     if (!appPassword.trim()) { toast.error("Enter your Gmail App Password"); return; }
@@ -749,6 +761,8 @@ function EmailTab({ profile }) {
     if (error) { toast.error("Failed to save"); return; }
     setSaved(true);
     setAppPassword("");
+    setHasAppPassword(true);
+    setReplacing(false);
     setTimeout(() => setSaved(false), 3000);
     toast.success("Email password saved — meeting invites will now send from your account");
   };
@@ -784,14 +798,12 @@ function EmailTab({ profile }) {
                 ? <span style={{ fontSize: 12, fontWeight: 600, color: "#16A34A", background: "#DCFCE7", padding: "3px 10px", borderRadius: 100, border: "1px solid #BBF7D0" }}>Connected</span>
                 : <span style={{ fontSize: 12, fontWeight: 600, color: "#64748B", background: "#F1F5F9", padding: "3px 10px", borderRadius: 100, border: "1px solid #E2E8F0" }}>Not Connected</span>}
             </div>
-            <p style={{ margin: "0 0 10px", fontSize: 14, color: "var(--text-muted)", lineHeight: 1.65 }}>
-              Connect your Google account to enable:
+            <p style={{ margin: "0 0 12px", fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
+              Syncs sent email, calendar, and generates Google Meet links automatically.
+              {hasAppPassword && !googleConnected && (
+                <> Emails already send via your App Password below — this only adds Calendar sync &amp; Meet links.</>
+              )}
             </p>
-            <ul style={{ margin: "0 0 14px", padding: "0 0 0 18px", fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8 }}>
-              <li>Gmail Sync — auto-track sent emails</li>
-              <li>Google Calendar Sync</li>
-              <li>Automatic Google Meet link generation</li>
-            </ul>
             {googleConnected && oauthStatus.google_meet?.email && (
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
                 <Mail size={12} />
@@ -830,11 +842,8 @@ function EmailTab({ profile }) {
               )}
             </div>
             <p style={{ margin: "12px 0 0", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
-              Only <strong>sent</strong> emails are fetched for auto-sync. Your email content is never stored — only subject, recipient, date, and thread ID.
+              Only sent-email metadata is stored, never content. Gmail Sync requires an @ccentrik.com account.
             </p>
-            <div style={{ marginTop: 8, padding: "9px 13px", borderRadius: 8, background: "#FEF3C7", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", lineHeight: 1.6 }}>
-              <strong>Domain restriction:</strong> Gmail Sync only activates for <strong>@ccentrik.com</strong> accounts. Personal Gmail accounts can still connect for Calendar/Meet, but won't sync email.
-            </div>
           </div>
         </div>
       </div>
@@ -858,14 +867,9 @@ function EmailTab({ profile }) {
                 ? <span style={{ fontSize: 12, fontWeight: 600, color: "#16A34A", background: "#DCFCE7", padding: "3px 10px", borderRadius: 100, border: "1px solid #BBF7D0" }}>Connected</span>
                 : <span style={{ fontSize: 12, fontWeight: 600, color: "#64748B", background: "#F1F5F9", padding: "3px 10px", borderRadius: 100, border: "1px solid #E2E8F0" }}>Not Connected</span>}
             </div>
-            <p style={{ margin: "0 0 10px", fontSize: 14, color: "var(--text-muted)", lineHeight: 1.65 }}>
-              Connect your Microsoft account to enable:
+            <p style={{ margin: "0 0 12px", fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
+              Syncs Outlook email and calendar, and generates Microsoft Teams meeting links automatically.
             </p>
-            <ul style={{ margin: "0 0 14px", padding: "0 0 0 18px", fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8 }}>
-              <li>Outlook Email Sync</li>
-              <li>Outlook Calendar Sync</li>
-              <li>Automatic Microsoft Teams meeting link generation</li>
-            </ul>
             {microsoftConnected && oauthStatus.microsoft_teams?.email && (
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
                 <Mail size={12} />
@@ -911,49 +915,61 @@ function EmailTab({ profile }) {
 
       {/* ── Section 1: Meeting Email Password ─────────────────────────── */}
       <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700, color: "var(--text)" }}>Meeting Email Settings</h3>
-      <p style={{ margin: "0 0 24px", fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
-        When you schedule a meeting, the invite email is sent <strong>from your own CRM email</strong> ({profile?.email}). Enter your Gmail App Password below to enable this.
+      <p style={{ margin: "0 0 16px", fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
+        Meeting invites send from <strong>{profile?.email}</strong> once a Gmail App Password is on file.
       </p>
 
-      <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderLeft: "4px solid #3B82F6", borderRadius: 8, padding: "12px 16px", marginBottom: 24, fontSize: 13, color: "#1E40AF", lineHeight: 1.65 }}>
-        <strong>How to get your App Password:</strong><br />
-        1. Go to <strong>myaccount.google.com</strong> → Security → 2-Step Verification<br />
-        2. Scroll to <strong>App passwords</strong> → Create → name it "Ccentrik CRM"<br />
-        3. Copy the 16-character code and paste it below.
-      </div>
-
-      <div style={{ marginBottom: 16 }}>
-        <label className="crm-label">Your CRM Email</label>
-        <input className="crm-input" value={profile?.email || ""} disabled style={{ background: "var(--surface-2)", color: "var(--text-muted)" }} />
-      </div>
-
-      <div style={{ marginBottom: 20 }}>
-        <label className="crm-label">Gmail App Password <span style={{ color: "#EF4444" }}>*</span></label>
-        <div style={{ position: "relative" }}>
-          <input
-            className="crm-input"
-            type={showPw ? "text" : "password"}
-            value={appPassword}
-            onChange={(e) => setAppPassword(e.target.value)}
-            placeholder="xxxx xxxx xxxx xxxx"
-            style={{ paddingRight: 40, fontFamily: "monospace", letterSpacing: "0.12em" }}
-          />
-          <button type="button" onClick={() => setShowPw((v) => !v)}
-            style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 2 }}>
-            {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+      {hasAppPassword && !replacing ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: "#DCFCE7", border: "1px solid #BBF7D0", borderRadius: 10, padding: "12px 14px", color: "#166534", fontSize: 13.5 }}>
+          <Check size={16} />
+          <span style={{ flex: "1 1 220px" }}><strong>Connected.</strong> Invites are sent from {profile?.email}.</span>
+          <button type="button" onClick={() => setReplacing(true)}
+            style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #86EFAC", background: "#fff", cursor: "pointer", fontWeight: 600, fontFamily: "inherit" }}>
+            Replace
           </button>
         </div>
-        <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--text-muted)" }}>Stored securely. Used only for sending meeting invites from your account.</p>
-      </div>
+      ) : hasAppPassword === null ? null : (
+        <>
+          <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 12.5, color: "#1E40AF", lineHeight: 1.6 }}>
+            myaccount.google.com → Security → 2-Step Verification → App passwords → create one, then paste the 16-character code below.
+          </div>
 
-      <button
-        className="btn-primary"
-        onClick={handleSave}
-        disabled={saving || !appPassword.trim()}
-        style={{ display: "flex", alignItems: "center", gap: 6 }}
-      >
-        {saving ? "Saving…" : saved ? <><Check size={14} /> Saved!</> : "Save Email Password"}
-      </button>
+          <div style={{ marginBottom: 14 }}>
+            <label className="crm-label">Gmail App Password <span style={{ color: "#EF4444" }}>*</span></label>
+            <div style={{ position: "relative" }}>
+              <input
+                className="crm-input"
+                type={showPw ? "text" : "password"}
+                value={appPassword}
+                onChange={(e) => setAppPassword(e.target.value)}
+                placeholder="xxxx xxxx xxxx xxxx"
+                style={{ paddingRight: 40, fontFamily: "monospace", letterSpacing: "0.12em" }}
+              />
+              <button type="button" onClick={() => setShowPw((v) => !v)}
+                style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 2 }}>
+                {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              className="btn-primary"
+              onClick={handleSave}
+              disabled={saving || !appPassword.trim()}
+              style={{ display: "flex", alignItems: "center", gap: 6 }}
+            >
+              {saving ? "Saving…" : saved ? <><Check size={14} /> Saved!</> : "Save Email Password"}
+            </button>
+            {replacing && (
+              <button type="button" onClick={() => { setReplacing(false); setAppPassword(""); }}
+                style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontFamily: "inherit" }}>
+                Cancel
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
